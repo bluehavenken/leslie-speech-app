@@ -209,6 +209,7 @@
             flex-grow: 1;
             display: flex;
             flex-direction: column;
+            position: relative;
         }
 
         .speech-header {
@@ -217,6 +218,9 @@
             font-size: 14px;
             font-weight: bold;
             color: #0099cc;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         .speech-content {
@@ -239,6 +243,27 @@
             border-radius: 4px;
             margin-bottom: 8px;
             border-left: 4px solid #0099cc;
+        }
+
+        /* Speak button in speech display header */
+        .speak-phrase-btn {
+            background: #0099cc;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .speak-phrase-btn:hover {
+            background: #007acc;
+        }
+
+        .speak-phrase-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
         }
 
         /* Enhanced Recognition Section */
@@ -380,42 +405,10 @@
             min-height: 300px;
         }
 
-        .text-input-header {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 12px 16px;
-            background-color: #9933cc;
-            z-index: 1000;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-
-        .text-input-title {
-            font-size: 16px;
-            font-weight: bold;
-            color: white;
-        }
-
-        .speak-current-btn {
-            background: #fff;
-            color: #9933cc;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            font-size: 14px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-
         .text-input-page {
             display: flex;
             flex-direction: column;
             height: calc(100vh - 100px);
-            padding-top: 60px;
         }
 
         .text-input-content {
@@ -916,7 +909,10 @@
                 
                 <div class="speech-display">
                     <div class="speech-header">
-                        Speech Recognition - Current Phrase
+                        <span>Speech Recognition - Current Phrase</span>
+                        <button class="speak-phrase-btn" id="speakPhraseBtn" onclick="speakCurrentPhrase()" disabled>
+                            🔊 SPEAK
+                        </button>
                     </div>
                     <div class="speech-content">
                         <div class="speech-text" id="recognizedText">
@@ -948,6 +944,9 @@
                     <button class="control-btn btn-listen" id="listenButton" onclick="toggleListening()">
                         START TALKING
                     </button>
+                    <button class="icon-btn btn-clear" onclick="clearSpeechText()" title="Clear Text">
+                        🗑️
+                    </button>
                 </div>
             </div>
         </div>
@@ -966,7 +965,7 @@
                 <input type="text" id="contactSearch" class="contact-search-input" 
                        placeholder="Type contact name or phone..." oninput="filterContacts(this.value)">
                 <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                    Enable contacts access to see your real contacts.
+                    Click "Load Contacts" to access your device contacts.
                 </div>
             </div>
             
@@ -976,10 +975,10 @@
                 </div>
                 <div class="contacts-list" id="contactsList">
                     <div style="padding: 16px; text-align: center; color: #666;">
-                        <p>No contacts found.</p>
-                        <p>Please allow contacts access or add contacts manually.</p>
-                        <button onclick="requestContactsAccess()" style="margin-top: 10px; padding: 8px 16px; background: #669900; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                            Request Contacts Access
+                        <p>No contacts loaded.</p>
+                        <p>Click the button below to access your device contacts.</p>
+                        <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 8px 16px; background: #669900; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            Load Contacts
                         </button>
                     </div>
                 </div>
@@ -1064,24 +1063,19 @@
                     <button class="close-btn" onclick="navigateBack()">&times;</button>
                 </div>
                 
-                <div class="text-input-header" id="textInputHeader">
-                    <div class="text-input-title">Type Your MESSAGE:</div>
-                    <button class="speak-current-btn" onclick="speakCurrentText()" id="speakCurrentBtn">
-                        SPEAK
-                    </button>
-                </div>
-                
                 <div class="text-input-content">
                     <div class="status-text" id="textInputStatusText" style="display: none;">
                     </div>
                     
                     <textarea class="text-input large-text-input" id="largeTextInputField" 
-                              placeholder="Type your message here..." oninput="updateSpeakButton()" 
-                              onfocus="scrollToShowHeader()" onblur="scrollToTop()"></textarea>
+                              placeholder="Type your message here..." oninput="updateSpeakButton()"></textarea>
                     
                     <div style="padding: 16px; text-align: center; background-color: #f0f0f0; margin-top: 8px; position: fixed; bottom: 0; left: 0; right: 0; z-index: 999;">
                         <button class="btn-home" onclick="showPage('home')">
                             🏠 HOME
+                        </button>
+                        <button class="btn-home" onclick="speakTextInput()" id="speakTextBtn" style="margin-left: 10px; background: #9933cc;">
+                            🔊 SPEAK TEXT
                         </button>
                     </div>
                 </div>
@@ -1156,7 +1150,6 @@
     <script>
         // Global variables
         let recognition = null;
-        let globalRecognition = null;
         let mediaRecorder = null;
         let audioChunks = [];
         let isListening = false;
@@ -1175,7 +1168,7 @@
         let finalSpeechResult = '';
         let speechProcessed = false;
         let microphonePermissionGranted = false;
-        let globalRecognitionActive = false;
+        let recognitionRestarting = false;
         
         // Settings
         let settings = {
@@ -1211,7 +1204,7 @@
             // Setup back button handling
             setupBackButtonHandling();
             
-            // Request microphone permission
+            // Request microphone permission and setup voice commands
             requestMicrophonePermission();
             
             // Check if we should show enhanced section
@@ -1220,17 +1213,17 @@
             console.log('Leslie Speech Assistant initialized successfully');
         }
 
-        // Request microphone permission for voice commands
+        // Request microphone permission and setup voice commands
         function requestMicrophonePermission() {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 navigator.mediaDevices.getUserMedia({ audio: true })
                     .then(function(stream) {
-                        console.log('Microphone permission granted for voice commands');
+                        console.log('Microphone permission granted');
                         microphonePermissionGranted = true;
                         stream.getTracks().forEach(track => track.stop());
                         
-                        // Set up global voice command listener
-                        setTimeout(setupGlobalVoiceCommandListener, 1000);
+                        // Set up voice command listener immediately
+                        setupVoiceCommandListener();
                     })
                     .catch(function(error) {
                         console.log('Microphone permission denied:', error);
@@ -1239,74 +1232,63 @@
             }
         }
 
-        // Set up global voice command recognition
-        function setupGlobalVoiceCommandListener() {
+        // Setup voice command listener (always listening for "Hey Leslie")
+        function setupVoiceCommandListener() {
             if (!microphonePermissionGranted) return;
             
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) return;
+
+            const voiceCommandRecognition = new SpeechRecognition();
+            voiceCommandRecognition.continuous = true;
+            voiceCommandRecognition.interimResults = false;
+            voiceCommandRecognition.lang = 'en-US';
             
-            globalRecognition = new SpeechRecognition();
-            globalRecognition.continuous = true;
-            globalRecognition.interimResults = false;
-            globalRecognition.lang = 'en-US';
-            
-            globalRecognition.onresult = function(event) {
+            voiceCommandRecognition.onresult = function(event) {
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     if (event.results[i].isFinal) {
                         const transcript = event.results[i][0].transcript.toLowerCase().trim();
-                        console.log('Global voice command heard:', transcript);
+                        console.log('Voice command heard:', transcript);
                         if (transcript.includes('hey leslie')) {
-                            processGlobalVoiceCommand(transcript);
+                            processVoiceCommand(transcript);
                         }
                     }
                 }
             };
             
-            globalRecognition.onerror = function(event) {
-                if (event.error !== 'no-speech' && event.error !== 'audio-capture') {
-                    console.log('Global voice command error:', event.error);
-                }
-                // Restart global recognition after error
-                setTimeout(startGlobalListening, 2000);
+            voiceCommandRecognition.onerror = function(event) {
+                console.log('Voice command error:', event.error);
+                // Restart after error
+                setTimeout(startVoiceCommandListening, 2000);
             };
             
-            globalRecognition.onend = function() {
-                // Restart global listening if it should be active
-                if (currentPage !== 'speech' && !isListening && globalRecognitionActive) {
-                    setTimeout(startGlobalListening, 1000);
+            voiceCommandRecognition.onend = function() {
+                // Always restart voice command listening unless we're on speech page
+                if (currentPage !== 'speech' || !isListening) {
+                    setTimeout(startVoiceCommandListening, 1000);
                 }
             };
+
+            function startVoiceCommandListening() {
+                if ((currentPage !== 'speech' || !isListening) && microphonePermissionGranted) {
+                    try {
+                        voiceCommandRecognition.start();
+                        console.log('Voice command listening started');
+                    } catch (error) {
+                        console.log('Voice command recognition already running');
+                    }
+                }
+            }
+
+            // Start voice command listening
+            startVoiceCommandListening();
             
-            startGlobalListening();
+            // Keep voice commands active by restarting every 30 seconds
+            setInterval(startVoiceCommandListening, 30000);
         }
 
-        function startGlobalListening() {
-            if (currentPage !== 'speech' && !isListening && microphonePermissionGranted && globalRecognition) {
-                try {
-                    globalRecognition.start();
-                    globalRecognitionActive = true;
-                    console.log('Global voice recognition started');
-                } catch (error) {
-                    console.log('Global recognition already running or error:', error);
-                }
-            }
-        }
-
-        function stopGlobalListening() {
-            if (globalRecognition && globalRecognitionActive) {
-                try {
-                    globalRecognition.stop();
-                    globalRecognitionActive = false;
-                    console.log('Global voice recognition stopped');
-                } catch (error) {
-                    console.log('Error stopping global recognition:', error);
-                }
-            }
-        }
-
-        function processGlobalVoiceCommand(transcript) {
-            console.log('Processing global voice command:', transcript);
+        function processVoiceCommand(transcript) {
+            console.log('Processing voice command:', transcript);
             
             if (transcript.includes('what time is it')) {
                 const now = new Date();
@@ -1332,10 +1314,12 @@
                 speak('Showing weather information');
             } else if (transcript.includes('close')) {
                 hideWeather();
-                speak('Closing weather display');
             } else if (transcript.includes('help')) {
                 showPage('commands');
                 speak('Showing Leslie commands');
+            } else if (transcript.includes('clear text')) {
+                clearSpeechText();
+                speak('Text cleared');
             } else {
                 speak('I heard Hey Leslie, but I didn\'t understand the command. Say Hey Leslie help for available commands.');
             }
@@ -1353,21 +1337,19 @@
         }
 
         function setupBackButtonHandling() {
-            // Override the browser back button
             window.addEventListener('popstate', function(event) {
                 event.preventDefault();
                 navigateBack();
             });
             
-            // Push initial state
             history.pushState({page: 'home'}, '', '');
         }
 
         function navigateBack() {
             if (pageHistory.length > 1) {
-                pageHistory.pop(); // Remove current page
+                pageHistory.pop();
                 const previousPage = pageHistory[pageHistory.length - 1];
-                showPage(previousPage, false); // false = don't add to history
+                showPage(previousPage, false);
             } else {
                 showPage('home', false);
             }
@@ -1377,119 +1359,93 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
             
-            recognition.continuous = true;
+            recognition.continuous = false; // Changed to false to prevent repeating
             recognition.interimResults = true;
             recognition.lang = 'en-US';
             
             recognition.onstart = function() {
                 isListening = true;
-                speechProcessed = false;
-                finalSpeechResult = '';
+                recognitionRestarting = false;
                 updateListenButton();
-                updateStatus('🎤 Listening continuously... Say something!');
-                recognitionAttempts++;
+                updateStatus('🎤 Listening... Say something!');
                 
-                // Stop global recognition while speech page is active
-                stopGlobalListening();
-                
-                // Scroll to top to show Stop button
-                const speechPage = document.getElementById('speechPage');
-                if (speechPage) {
-                    speechPage.scrollTop = 0;
-                }
+                // Clear previous results
+                currentPhrase = '';
+                finalSpeechResult = '';
+                speechProcessed = false;
+                updateCurrentPhraseDisplay();
+                updateSpeakButton();
             };
             
             recognition.onend = function() {
-                if (isListening && !speechProcessed && finalSpeechResult.trim()) {
-                    // Process the final result before restarting
-                    speechProcessed = true;
-                    processVoiceCommand(finalSpeechResult);
-                    speakBackPhrase(finalSpeechResult);
-                }
+                console.log('Recognition ended, isListening:', isListening);
                 
-                // Auto-restart if we're supposed to be listening
-                if (isListening && currentPage === 'speech') {
+                if (isListening && !recognitionRestarting) {
+                    // Restart recognition if we should still be listening
+                    recognitionRestarting = true;
                     setTimeout(() => {
                         if (isListening && currentPage === 'speech') {
                             try {
                                 recognition.start();
                             } catch (error) {
-                                console.log('Recognition restart failed:', error);
+                                console.log('Error restarting recognition:', error);
                                 isListening = false;
                                 updateListenButton();
                                 updateStatus('Ready to listen - Click "START TALKING" below');
-                                // Restart global listening
-                                setTimeout(startGlobalListening, 1000);
                             }
                         }
-                    }, 500);
-                } else {
+                        recognitionRestarting = false;
+                    }, 100);
+                } else if (!isListening) {
                     updateStatus('Ready to listen - Click "START TALKING" below');
                     updateListenButton();
-                    // Restart global listening when not on speech page
-                    if (currentPage !== 'speech') {
-                        setTimeout(startGlobalListening, 1000);
-                    }
                 }
             };
             
             recognition.onerror = function(event) {
                 console.error('Speech recognition error:', event.error);
                 
-                // Don't stop listening for network errors
-                if (event.error === 'network') {
-                    console.log('Network error in speech recognition, continuing...');
-                    return;
-                }
-                
-                // For other errors, suggest enhanced mode
-                updateStatus('Recognition issue. Try Enhanced Recognition for better accuracy.');
-                
-                if (settings.autoEnhanced) {
-                    showEnhancedSuggestion();
+                if (event.error === 'no-speech') {
+                    updateStatus('No speech detected. Try speaking again.');
+                } else if (event.error === 'audio-capture') {
+                    updateStatus('Microphone error. Please check permissions.');
+                } else if (event.error === 'not-allowed') {
+                    updateStatus('Microphone permission denied.');
+                } else {
+                    updateStatus('Recognition error. Try Enhanced Recognition for better accuracy.');
+                    if (settings.autoEnhanced) {
+                        showEnhancedSuggestion();
+                    }
                 }
             };
             
             recognition.onresult = function(event) {
                 let interimTranscript = '';
-                let newFinalTranscript = '';
-                let confidence = 0;
+                let finalTranscript = '';
                 
-                // Process all results
                 for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
-                    confidence = event.results[i][0].confidence || 1;
                     
                     if (event.results[i].isFinal) {
-                        newFinalTranscript += transcript;
-                        lastRecognitionConfidence = confidence;
+                        finalTranscript += transcript;
                     } else {
                         interimTranscript += transcript;
                     }
                 }
                 
-                // Update display with current state
-                const displayText = (finalSpeechResult + newFinalTranscript + interimTranscript).trim();
-                if (displayText) {
-                    currentPhrase = displayText;
+                // Update display
+                const displayText = finalTranscript || interimTranscript;
+                if (displayText.trim()) {
+                    currentPhrase = displayText.trim();
                     updateCurrentPhraseDisplay();
-                }
-                
-                // If we have new final results, add them to our accumulated result
-                if (newFinalTranscript.trim()) {
-                    finalSpeechResult += newFinalTranscript;
+                    updateSpeakButton();
                     
-                    // Show enhanced suggestion for low confidence
-                    if (settings.autoEnhanced && confidence < 0.7) {
-                        showEnhancedSuggestion();
+                    if (finalTranscript) {
+                        updateStatus('✅ Heard: ' + finalTranscript.trim());
+                        finalSpeechResult = finalTranscript.trim();
+                    } else {
+                        updateStatus('🔄 Listening: ' + interimTranscript.trim());
                     }
-                }
-                
-                // Show status
-                if (interimTranscript) {
-                    updateStatus('🔄 Listening: ' + displayText);
-                } else if (newFinalTranscript) {
-                    updateStatus('✅ Heard: ' + finalSpeechResult);
                 }
             };
         }
@@ -1498,46 +1454,31 @@
             const currentPhraseEl = document.getElementById('currentPhrase');
             if (currentPhrase.trim()) {
                 currentPhraseEl.textContent = currentPhrase;
-                currentPhraseEl.style.display = 'block';
             } else {
-                currentPhraseEl.textContent = 'Say something... I\'m listening continuously';
-                currentPhraseEl.style.display = 'block';
+                currentPhraseEl.textContent = 'Your speech will appear here...';
             }
         }
 
-        function speakBackPhrase(text) {
-            if (settings.speakVoiceCommands && text.trim() && !isSpeaking) {
-                isSpeaking = true;
-                
-                // Cancel any ongoing speech
-                speechSynth.cancel();
-                
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = settings.speechSpeed;
-                utterance.pitch = 1;
-                utterance.volume = 0.8;
-                
-                utterance.onstart = function() {
-                    isSpeaking = true;
-                };
-                
-                utterance.onend = function() {
-                    isSpeaking = false;
-                    // Auto-clear after speaking
-                    setTimeout(() => {
-                        currentPhrase = '';
-                        finalSpeechResult = '';
-                        speechProcessed = false;
-                        updateCurrentPhraseDisplay();
-                    }, 500);
-                };
-                
-                utterance.onerror = function() {
-                    isSpeaking = false;
-                };
-                
-                speechSynth.speak(utterance);
+        function updateSpeakButton() {
+            const speakBtn = document.getElementById('speakPhraseBtn');
+            if (speakBtn) {
+                speakBtn.disabled = !currentPhrase.trim();
             }
+        }
+
+        function speakCurrentPhrase() {
+            if (currentPhrase.trim()) {
+                speak(currentPhrase);
+            }
+        }
+
+        function clearSpeechText() {
+            currentPhrase = '';
+            finalSpeechResult = '';
+            speechProcessed = false;
+            updateCurrentPhraseDisplay();
+            updateSpeakButton();
+            updateStatus('Text cleared - Ready to listen');
         }
 
         // Initialize contacts (start with empty array)
@@ -1547,6 +1488,33 @@
             displayContacts();
         }
 
+        // Load real contacts using Contact Picker API
+        async function loadRealContacts() {
+            try {
+                if ('contacts' in navigator && 'ContactsManager' in window) {
+                    const props = ['name', 'tel'];
+                    const opts = {multiple: true};
+                    
+                    const contactList = await navigator.contacts.select(props, opts);
+                    
+                    contacts = contactList.map(contact => ({
+                        name: contact.name[0] || 'Unknown',
+                        phone: contact.tel[0] || 'No phone'
+                    }));
+                    
+                    filteredContacts = [...contacts];
+                    displayContacts();
+                    
+                } else {
+                    // Fallback: show manual entry option
+                    alert('Contact access not available. You can manually dial numbers or ask your browser to enable contact permissions.');
+                }
+            } catch (error) {
+                console.log('Contact access error:', error);
+                alert('Unable to access contacts. You can manually dial phone numbers.');
+            }
+        }
+
         function displayContacts() {
             const contactsList = document.getElementById('contactsList');
             contactsList.innerHTML = '';
@@ -1554,20 +1522,17 @@
             if (filteredContacts.length === 0) {
                 contactsList.innerHTML = `
                     <div style="padding: 16px; text-align: center; color: #666;">
-                        <p>No contacts found.</p>
-                        <p>Please allow contacts access or add contacts manually.</p>
-                        <button onclick="requestContactsAccess()" style="margin-top: 10px; padding: 8px 16px; background: #669900; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                            Request Contacts Access
+                        <p>No contacts loaded.</p>
+                        <p>Click the button below to access your device contacts.</p>
+                        <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 8px 16px; background: #669900; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            Load Contacts
                         </button>
                     </div>
                 `;
                 return;
             }
             
-            // Show all filtered contacts, limited to 200 for performance
-            const contactsToShow = filteredContacts.slice(0, 200);
-            
-            contactsToShow.forEach((contact, index) => {
+            filteredContacts.forEach((contact, index) => {
                 const contactEl = document.createElement('div');
                 contactEl.className = 'contact-item';
                 contactEl.innerHTML = `
@@ -1577,28 +1542,12 @@
                 contactEl.onclick = () => callContact(contact);
                 contactsList.appendChild(contactEl);
             });
-            
-            if (filteredContacts.length > 200) {
-                const infoEl = document.createElement('div');
-                infoEl.style.padding = '16px';
-                infoEl.style.textAlign = 'center';
-                infoEl.style.color = '#666';
-                infoEl.style.fontStyle = 'italic';
-                infoEl.textContent = `Showing first 200 of ${filteredContacts.length} matching contacts`;
-                contactsList.appendChild(infoEl);
-            }
-        }
-
-        function requestContactsAccess() {
-            // For now, this is a placeholder - real contacts API would require native app
-            alert('Contacts access requires device permissions. This demo app cannot access your real contacts. You can manually add emergency contacts or use voice dialing by saying phone numbers.');
         }
 
         function filterContacts(searchTerm) {
             if (!searchTerm.trim()) {
                 filteredContacts = [...contacts];
             } else {
-                // Search contacts by name and phone with case-insensitive matching
                 const searchLower = searchTerm.toLowerCase().trim();
                 filteredContacts = contacts.filter(contact => {
                     const nameLower = contact.name.toLowerCase();
@@ -1615,7 +1564,6 @@
         }
 
         function callContact(contact) {
-            // Immediately open phone app to call
             window.location.href = `tel:${contact.phone.replace(/[^0-9]/g, '')}`;
         }
 
@@ -1633,7 +1581,6 @@
                 targetPage.classList.add('active');
                 currentPage = pageId;
                 
-                // Add to history if requested
                 if (addToHistory) {
                     pageHistory.push(pageId);
                     history.pushState({page: pageId}, '', '');
@@ -1644,11 +1591,14 @@
                     stopListening();
                 }
                 
-                // Restart global listening if not on speech page
-                if (pageId !== 'speech') {
-                    setTimeout(startGlobalListening, 500);
-                } else {
-                    stopGlobalListening();
+                // Auto-focus text input and show keyboard
+                if (pageId === 'textInput') {
+                    setTimeout(() => {
+                        const textInput = document.getElementById('largeTextInputField');
+                        if (textInput) {
+                            textInput.focus();
+                        }
+                    }, 100);
                 }
             }
         }
@@ -1670,7 +1620,7 @@
         }
 
         function startListening() {
-            if (recognition && !isListening) {
+            if (recognition && !isListening && !recognitionRestarting) {
                 try {
                     recognition.start();
                 } catch (error) {
@@ -1683,6 +1633,7 @@
         function stopListening() {
             if (recognition && isListening) {
                 isListening = false;
+                recognitionRestarting = false;
                 recognition.stop();
                 updateStatus('Stopped listening');
                 updateListenButton();
@@ -1710,7 +1661,7 @@
         }
 
         // Text input functions
-        function speakCurrentText() {
+        function speakTextInput() {
             const textInput = document.getElementById('largeTextInputField');
             const text = textInput.value.trim();
             if (text) {
@@ -1719,25 +1670,7 @@
         }
 
         function updateSpeakButton() {
-            const textInput = document.getElementById('largeTextInputField');
-            const speakBtn = document.getElementById('speakCurrentBtn');
-            if (speakBtn) {
-                speakBtn.disabled = !textInput.value.trim();
-            }
-        }
-
-        function scrollToShowHeader() {
-            const textInputPage = document.querySelector('.text-input-page');
-            if (textInputPage) {
-                textInputPage.scrollTop = 0;
-            }
-        }
-
-        function scrollToTop() {
-            const textInputPage = document.querySelector('.text-input-page');
-            if (textInputPage) {
-                textInputPage.scrollTop = 0;
-            }
+            // This function can be used for text input speak button if needed
         }
 
         // Weather functions
@@ -1747,10 +1680,10 @@
             const weatherContent = document.getElementById('weatherContent');
             
             const currentTime = new Date();
-            const temperature = Math.floor(Math.random() * 30) + 60; // 60-90°F
+            const temperature = Math.floor(Math.random() * 30) + 60;
             const conditions = ['Sunny', 'Partly Cloudy', 'Cloudy', 'Light Rain', 'Clear'][Math.floor(Math.random() * 5)];
-            const humidity = Math.floor(Math.random() * 40) + 40; // 40-80%
-            const windSpeed = Math.floor(Math.random() * 15) + 5; // 5-20 mph
+            const humidity = Math.floor(Math.random() * 40) + 40;
+            const windSpeed = Math.floor(Math.random() * 15) + 5;
             
             weatherTitle.textContent = 'Current Weather';
             weatherContent.innerHTML = `
@@ -1762,9 +1695,6 @@
                     <strong>Humidity:</strong> ${humidity}%<br>
                     <strong>Wind:</strong> ${windSpeed} mph<br>
                     <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
-                </div>
-                <div style="margin-top: 12px; font-style: italic; color: #666; text-align: center;">
-                    Swipe from very edge areas for hourly/weekly forecasts
                 </div>
             `;
             
@@ -1787,7 +1717,6 @@
                 const temp = Math.floor(Math.random() * 20) + 65;
                 const conditions = ['Sunny', 'Cloudy', 'Rain', 'Clear'][Math.floor(Math.random() * 4)];
                 
-                // Convert to 12-hour format
                 const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
                 const ampm = hour >= 12 ? 'PM' : 'AM';
                 
@@ -1799,7 +1728,7 @@
                 `;
             }
             
-            hourlyData += '</div><div style="margin-top: 12px; font-style: italic; color: #666; text-align: center;">Simulated hourly forecast</div>';
+            hourlyData += '</div>';
             weatherContent.innerHTML = hourlyData;
             weatherDisplay.classList.remove('hidden');
         }
@@ -1829,7 +1758,7 @@
                 `;
             }
             
-            weeklyData += '</div><div style="margin-top: 12px; font-style: italic; color: #666; text-align: center;">Simulated 7-day forecast</div>';
+            weeklyData += '</div>';
             weatherContent.innerHTML = weeklyData;
             weatherDisplay.classList.remove('hidden');
         }
@@ -1839,7 +1768,7 @@
             weatherDisplay.classList.add('hidden');
         }
 
-        // Swipe detection for very small edge areas only
+        // Swipe detection
         function setupSwipeDetection() {
             const swipeBottom = document.getElementById('swipeBottom');
             const swipeLeft = document.getElementById('swipeLeft');
@@ -1850,7 +1779,6 @@
             let touchEndX = 0;
             let touchEndY = 0;
             
-            // Bottom edge swipe - very specific area
             swipeBottom.addEventListener('touchstart', function(e) {
                 touchStartY = e.changedTouches[0].screenY;
                 e.stopPropagation();
@@ -1859,13 +1787,12 @@
             swipeBottom.addEventListener('touchend', function(e) {
                 touchEndY = e.changedTouches[0].screenY;
                 const swipeDistance = touchStartY - touchEndY;
-                if (swipeDistance > 30) { // Swipe up from bottom center
+                if (swipeDistance > 30) {
                     showCurrentWeather();
                 }
                 e.stopPropagation();
             });
 
-            // Left edge swipe - very specific area
             swipeLeft.addEventListener('touchstart', function(e) {
                 touchStartX = e.changedTouches[0].screenX;
                 e.stopPropagation();
@@ -1874,13 +1801,12 @@
             swipeLeft.addEventListener('touchend', function(e) {
                 touchEndX = e.changedTouches[0].screenX;
                 const swipeDistance = touchEndX - touchStartX;
-                if (swipeDistance > 30) { // Swipe right from left edge
+                if (swipeDistance > 30) {
                     showHourlyWeather();
                 }
                 e.stopPropagation();
             });
 
-            // Right edge swipe - very specific area
             swipeRight.addEventListener('touchstart', function(e) {
                 touchStartX = e.changedTouches[0].screenX;
                 e.stopPropagation();
@@ -1889,7 +1815,7 @@
             swipeRight.addEventListener('touchend', function(e) {
                 touchEndX = e.changedTouches[0].screenX;
                 const swipeDistance = touchStartX - touchEndX;
-                if (swipeDistance > 30) { // Swipe left from right edge
+                if (swipeDistance > 30) {
                     showWeeklyWeather();
                 }
                 e.stopPropagation();
@@ -1983,7 +1909,6 @@
                 return;
             }
             
-            // This would implement Whisper API integration
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
 
@@ -2000,35 +1925,22 @@
             }
         }
 
-        // Voice command processing (placeholder)
-        function processVoiceCommand(transcript) {
-            console.log('Processing voice command:', transcript);
-            // This could include commands like "call mom", "text john", etc.
-        }
-
-        function clearSpeechText() {
-            currentPhrase = '';
-            finalSpeechResult = '';
-            speechProcessed = false;
-            updateCurrentPhraseDisplay();
-            updateStatus('Text cleared - Continue speaking');
-        }
-
         // Initialize app when page loads
         document.addEventListener('DOMContentLoaded', function() {
             console.log('DOM loaded, initializing app...');
             initApp();
         });
 
-        // Handle page visibility changes
+        // Handle page visibility changes to manage voice recognition
         document.addEventListener('visibilitychange', function() {
             if (document.hidden) {
-                // Page is hidden, stop global recognition
-                stopGlobalListening();
+                // Page is hidden - you might want to pause recognition
+                console.log('Page hidden');
             } else {
-                // Page is visible, restart global recognition if not on speech page
-                if (currentPage !== 'speech' && !isListening) {
-                    setTimeout(startGlobalListening, 1000);
+                // Page is visible - ensure voice commands are working
+                console.log('Page visible');
+                if (microphonePermissionGranted && !isListening) {
+                    // Voice commands should automatically restart
                 }
             }
         });
