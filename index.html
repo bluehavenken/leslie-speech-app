@@ -1029,9 +1029,9 @@
                     <button class="close-btn" onclick="navigateBack()">&times;</button>
                 </div>
                 
-                <div class="text-input-content" style="padding-top: 70px;">
-                    <!-- Speak button moved to top of text area with more space -->
-                    <div style="margin-bottom: 16px; text-align: right; background-color: white; padding: 8px 0; position: fixed; top: 80px; right: 16px; left: 16px; z-index: 100; border-bottom: 2px solid #9933cc;">
+                <div class="text-input-content" style="padding: 16px; padding-top: 120px; padding-bottom: 50px;">
+                    <!-- Speak button at top right, always visible -->
+                    <div style="position: fixed; top: 80px; right: 16px; z-index: 100; background: white; padding: 8px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
                         <button class="speak-phrase-btn" onclick="speakTextInput()" id="speakTextBtn">
                             🔊 SPEAK TEXT
                         </button>
@@ -1039,13 +1039,14 @@
                     
                     <textarea class="text-input large-text-input" id="largeTextInputField" 
                               placeholder="Type your message here..." oninput="updateTextSpeakButton()" 
-                              style="margin-top: 60px;"></textarea>
-                    
-                    <div style="padding: 16px; text-align: center; background-color: #f0f0f0; margin-top: 8px; position: fixed; bottom: 0; left: 0; right: 0; z-index: 999;">
-                        <button class="btn-home" onclick="showPage('home')">
-                            🏠 HOME
-                        </button>
-                    </div>
+                              style="width: 100%; min-height: 400px; padding: 16px; font-size: 18px; border: 2px solid #ddd; border-radius: 8px;"></textarea>
+                </div>
+                
+                <!-- Home button at bottom, positioned to avoid keyboard -->
+                <div style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 99;">
+                    <button class="btn-home" onclick="showPage('home')">
+                        🏠 HOME
+                    </button>
                 </div>
             </div>
         </div>
@@ -1133,7 +1134,7 @@
 
         // Initialize the app
         function initApp() {
-            console.log('Initializing Leslie Speech Assistant...');
+            console.log('🚀 Initializing Leslie Speech Assistant...');
             
             // Load settings
             loadSettings();
@@ -1147,7 +1148,7 @@
             // Initialize speech recognition
             setupSpeechRecognition();
             
-            // Initialize contacts (empty by default)
+            // Initialize contacts (will auto-load)
             initializeContacts();
             
             // Setup swipe detection
@@ -1156,13 +1157,108 @@
             // Setup back button handling
             setupBackButtonHandling();
             
-            // Request microphone permission and setup voice commands
-            requestMicrophonePermission();
+            // Request microphone permission and setup voice commands immediately
+            console.log('🎤 Requesting microphone permission...');
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(function(stream) {
+                        console.log('✅ Microphone permission granted');
+                        microphonePermissionGranted = true;
+                        stream.getTracks().forEach(track => track.stop());
+                        
+                        // Start voice commands immediately
+                        console.log('🔊 Starting voice commands...');
+                        startVoiceCommands();
+                    })
+                    .catch(function(error) {
+                        console.log('❌ Microphone permission denied:', error);
+                        microphonePermissionGranted = false;
+                        alert('Microphone permission is required for voice commands and speech recognition. Please allow access.');
+                    });
+            }
             
             // Check if we should show enhanced section
             updateEnhancedSectionVisibility();
 
-            console.log('Leslie Speech Assistant initialized successfully');
+            console.log('✅ Leslie Speech Assistant initialized');
+        }
+
+        // Simple voice command setup
+        function startVoiceCommands() {
+            if (!microphonePermissionGranted) {
+                console.log('❌ No microphone permission for voice commands');
+                return;
+            }
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                console.log('❌ Speech Recognition not supported');
+                return;
+            }
+
+            if (voiceCommandActive) {
+                console.log('⚠️ Voice commands already active');
+                return;
+            }
+
+            voiceCommandRecognition = new SpeechRecognition();
+            voiceCommandRecognition.continuous = true;
+            voiceCommandRecognition.interimResults = false;
+            voiceCommandRecognition.lang = 'en-US';
+            
+            voiceCommandRecognition.onstart = function() {
+                voiceCommandActive = true;
+                console.log('✅ Voice commands ACTIVE and listening for "Hey Leslie"');
+            };
+            
+            voiceCommandRecognition.onresult = function(event) {
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        const transcript = event.results[i][0].transcript.toLowerCase().trim();
+                        console.log('🎤 Voice heard:', transcript);
+                        
+                        if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
+                            console.log('🔊 LESLIE COMMAND DETECTED!');
+                            processVoiceCommand(transcript);
+                        }
+                    }
+                }
+            };
+            
+            voiceCommandRecognition.onerror = function(event) {
+                console.log('❌ Voice command error:', event.error);
+                voiceCommandActive = false;
+                
+                if (event.error !== 'not-allowed') {
+                    console.log('🔄 Restarting voice commands in 3 seconds...');
+                    setTimeout(startVoiceCommands, 3000);
+                }
+            };
+            
+            voiceCommandRecognition.onend = function() {
+                voiceCommandActive = false;
+                console.log('🔄 Voice commands ended - restarting immediately');
+                
+                if (currentPage !== 'speech' || !isListening) {
+                    setTimeout(startVoiceCommands, 1000);
+                }
+            };
+
+            try {
+                voiceCommandRecognition.start();
+                console.log('🚀 Voice command recognition started');
+            } catch (error) {
+                console.log('❌ Failed to start voice commands:', error);
+                setTimeout(startVoiceCommands, 5000);
+            }
+
+            // Keep alive - restart every 30 seconds if not active
+            setInterval(() => {
+                if (!voiceCommandActive && microphonePermissionGranted && (currentPage !== 'speech' || !isListening)) {
+                    console.log('🔄 Voice commands not active - restarting');
+                    startVoiceCommands();
+                }
+            }, 30000);
         }
 
         // Request microphone permission and setup voice commands
@@ -1361,7 +1457,7 @@
             }
 
             recognition = new SpeechRecognition();
-            recognition.continuous = false; // Single phrase at a time
+            recognition.continuous = true;
             recognition.interimResults = true;
             recognition.lang = 'en-US';
             
@@ -1369,18 +1465,7 @@
                 console.log('🎤 Speech recognition started');
                 isListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening... Say your complete phrase!');
-                
-                // Stop voice commands while speech recognition is active
-                if (voiceCommandRecognition && voiceCommandActive) {
-                    try {
-                        voiceCommandRecognition.stop();
-                        voiceCommandActive = false;
-                        console.log('🛑 Stopped voice commands for speech recognition');
-                    } catch (e) {
-                        console.log('Error stopping voice commands:', e);
-                    }
-                }
+                updateStatus('🎤 Listening... Say something!');
                 
                 // Scroll to top to show stop button
                 const speechPage = document.getElementById('speechPage');
@@ -1397,72 +1482,25 @@
             recognition.onend = function() {
                 console.log('🔚 Speech recognition ended');
                 
-                // Speak back the complete phrase if we have one
-                if (finalTranscript.trim() && !isSpeaking) {
-                    isSpeaking = true;
-                    currentPhrase = finalTranscript;
-                    updateCurrentPhraseDisplay();
-                    updateStatus('🔊 Speaking back: ' + finalTranscript);
-                    
-                    // Speak the COMPLETE phrase
-                    speak(finalTranscript);
-                    
+                // Auto-restart if we should still be listening
+                if (isListening && currentPage === 'speech') {
                     setTimeout(() => {
-                        isSpeaking = false;
-                        if (isListening) {
-                            updateStatus('✅ Ready for next phrase - listening...');
-                            // Start listening for next phrase
-                            setTimeout(() => {
-                                if (isListening && currentPage === 'speech') {
-                                    // Clear for next phrase
-                                    currentPhrase = '';
-                                    finalTranscript = '';
-                                    updateCurrentPhraseDisplay();
-                                    try {
-                                        recognition.start();
-                                    } catch (error) {
-                                        console.log('❌ Error restarting for next phrase:', error);
-                                        isListening = false;
-                                        updateListenButton();
-                                        updateStatus('Click START TALKING for next phrase');
-                                        setTimeout(() => {
-                                            if (!voiceCommandActive) setupVoiceCommandListener();
-                                        }, 1000);
-                                    }
-                                }
-                            }, 1000);
-                        } else {
-                            updateStatus('Ready to listen - Click "START TALKING" below');
-                            setTimeout(() => {
-                                if (!voiceCommandActive) setupVoiceCommandListener();
-                            }, 1000);
-                        }
-                    }, 2000);
-                } else {
-                    // No final transcript - restart if still listening
-                    if (isListening && currentPage === 'speech') {
-                        setTimeout(() => {
-                            if (isListening && currentPage === 'speech') {
-                                try {
-                                    recognition.start();
-                                } catch (error) {
-                                    console.log('❌ Error restarting recognition:', error);
-                                    isListening = false;
-                                    updateListenButton();
-                                    updateStatus('Click START TALKING to try again');
-                                    setTimeout(() => {
-                                        if (!voiceCommandActive) setupVoiceCommandListener();
-                                    }, 1000);
-                                }
+                        if (isListening && currentPage === 'speech') {
+                            try {
+                                console.log('🔄 Restarting speech recognition');
+                                recognition.start();
+                            } catch (error) {
+                                console.log('❌ Error restarting recognition:', error);
+                                isListening = false;
+                                updateListenButton();
+                                updateStatus('Speech recognition stopped. Click START TALKING to begin again.');
                             }
-                        }, 1000);
-                    } else {
-                        updateStatus('Ready to listen - Click "START TALKING" below');
-                        updateListenButton();
-                        setTimeout(() => {
-                            if (!voiceCommandActive) setupVoiceCommandListener();
-                        }, 1000);
-                    }
+                        }
+                    }, 500);
+                } else {
+                    console.log('📴 Speech recognition not restarting');
+                    updateStatus('Ready to listen - Click "START TALKING" below');
+                    updateListenButton();
                 }
             };
             
@@ -1470,9 +1508,9 @@
                 console.error('❌ Speech recognition error:', event.error);
                 
                 if (event.error === 'no-speech') {
-                    updateStatus('No speech detected. Try speaking louder or closer to microphone.');
+                    updateStatus('No speech detected. Keep talking...');
                 } else if (event.error === 'audio-capture') {
-                    updateStatus('Microphone error. Please check permissions and try again.');
+                    updateStatus('Microphone error. Please check permissions.');
                 } else if (event.error === 'not-allowed') {
                     updateStatus('Microphone permission denied. Please allow microphone access.');
                     isListening = false;
@@ -1480,34 +1518,44 @@
                 } else if (event.error === 'network') {
                     updateStatus('Network error. Please check your connection.');
                 } else {
-                    updateStatus(`Recognition error (${event.error}). Click START TALKING to try again.`);
+                    updateStatus(`Recognition error: ${event.error}. Try again.`);
                 }
             };
             
             recognition.onresult = function(event) {
                 let interimTranscript = '';
-                let newFinalTranscript = '';
+                let finalText = '';
                 
                 for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     
                     if (event.results[i].isFinal) {
-                        newFinalTranscript += transcript;
+                        finalText += transcript;
                     } else {
                         interimTranscript += transcript;
                     }
                 }
                 
-                // Update display with current recognition
-                if (newFinalTranscript.trim()) {
-                    finalTranscript = newFinalTranscript.trim();
-                    currentPhrase = finalTranscript;
+                // Update display
+                const displayText = finalText || interimTranscript;
+                if (displayText.trim()) {
+                    currentPhrase = displayText.trim();
                     updateCurrentPhraseDisplay();
-                    updateStatus('✅ Got complete phrase: ' + finalTranscript);
-                } else if (interimTranscript.trim()) {
-                    currentPhrase = interimTranscript.trim();
-                    updateCurrentPhraseDisplay();
-                    updateStatus('🔄 Listening: ' + interimTranscript.trim());
+                    
+                    if (finalText.trim()) {
+                        updateStatus('✅ Heard: ' + finalText.trim());
+                        
+                        // Speak back the final result
+                        if (!isSpeaking) {
+                            isSpeaking = true;
+                            speak(finalText.trim());
+                            setTimeout(() => {
+                                isSpeaking = false;
+                            }, 3000);
+                        }
+                    } else {
+                        updateStatus('🔄 Listening: ' + displayText.trim());
+                    }
                 }
             };
         }
@@ -1528,11 +1576,12 @@
             updateStatus('Text cleared - Ready to listen');
         }
 
-        // Initialize contacts (start with empty array - NO FAKE CONTACTS)
+        // Initialize contacts (auto-load them)
         function initializeContacts() {
             contacts = [];
             filteredContacts = [];
-            displayContacts();
+            // Auto-load contacts when page initializes
+            setTimeout(loadRealContacts, 1000);
         }
 
         // Load real contacts using Contact Picker API
@@ -1542,47 +1591,16 @@
                     const props = ['name', 'tel'];
                     const opts = {multiple: true};
                     
-                    // Show loading message with mobile instructions
+                    // Show simple loading message
                     const contactsList = document.getElementById('contactsList');
                     contactsList.innerHTML = `
                         <div style="padding: 20px; text-align: center; color: #0099cc;">
                             <p><strong>📱 Loading Your Contacts...</strong></p>
-                            <p>A contact picker will open.</p>
-                            <br>
-                            <p><strong>📱 On MOBILE/PHONE:</strong></p>
-                            <p>• Tap "Select All" if available</p>
-                            <p>• Or manually tap each contact you want</p>
-                            <p>• Look for "All" or "Select All" option</p>
-                            <br>
-                            <p><strong>💻 On DESKTOP:</strong></p>
-                            <p>• Use Ctrl+A (PC) or Cmd+A (Mac)</p>
                         </div>
                     `;
                     
                     const contactList = await navigator.contacts.select(props, opts);
                     console.log(`Loaded ${contactList.length} real contacts`);
-                    
-                    if (contactList.length === 0) {
-                        contactsList.innerHTML = `
-                            <div style="padding: 20px; text-align: center; color: #666;">
-                                <p><strong>No contacts selected</strong></p>
-                                <br>
-                                <p><strong>📱 For PHONES/TABLETS:</strong></p>
-                                <p>1. Try again and look for "Select All" button</p>
-                                <p>2. Or manually select contacts you want</p>
-                                <p>3. Some browsers show "All" option at top</p>
-                                <br>
-                                <p><strong>💻 For COMPUTERS:</strong></p>
-                                <p>1. Use Ctrl+A (PC) or Cmd+A (Mac)</p>
-                                <p>2. Then click "Select" or "Done"</p>
-                                <br>
-                                <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                                    📞 Try Again
-                                </button>
-                            </div>
-                        `;
-                        return;
-                    }
                     
                     contacts = contactList.map(contact => ({
                         name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
@@ -1596,19 +1614,12 @@
                     displayContacts();
                     
                 } else {
-                    // Show help for unsupported browsers
+                    // Show simple message for unsupported browsers
                     const contactsList = document.getElementById('contactsList');
                     contactsList.innerHTML = `
                         <div style="padding: 20px; text-align: center; color: #666;">
-                            <p><strong>⚠️ Contact Access Not Available</strong></p>
-                            <p>Your browser/device doesn't support contact access.</p>
-                            <br>
-                            <p><strong>Try these browsers on mobile:</strong></p>
-                            <p>• Chrome on Android</p>
-                            <p>• Safari on iOS (limited support)</p>
-                            <p>• Edge on Android</p>
-                            <br>
-                            <p><strong>Alternative:</strong> For full contact access, this needs to be a native mobile app from an app store.</p>
+                            <p><strong>Contact access not available in this browser</strong></p>
+                            <p>Try Chrome on Android or Safari on iOS</p>
                         </div>
                     `;
                 }
@@ -1619,32 +1630,17 @@
                 if (error.name === 'AbortError') {
                     contactsList.innerHTML = `
                         <div style="padding: 20px; text-align: center; color: #666;">
-                            <p><strong>Contact selection cancelled</strong></p>
-                            <br>
-                            <p><strong>📱 To load ALL contacts on PHONE:</strong></p>
-                            <p>1. Click "Try Again" below</p>
-                            <p>2. Look for "Select All" or "All" button</p>
-                            <p>3. If no "Select All", manually tap contacts</p>
-                            <p>4. Tap "Done" or "Select"</p>
-                            <br>
-                            <p><strong>💻 On computer:</strong> Use Ctrl+A or Cmd+A</p>
-                            <br>
-                            <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                                📞 Try Again
+                            <p><strong>Contact access cancelled</strong></p>
+                            <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 8px 16px; background: #669900; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                Try Again
                             </button>
                         </div>
                     `;
                 } else {
                     contactsList.innerHTML = `
                         <div style="padding: 20px; text-align: center; color: #666;">
-                            <p><strong>Unable to access contacts</strong></p>
-                            <p>Error: ${error.message}</p>
-                            <br>
-                            <p>Contact access may not be supported on this device/browser combination.</p>
-                            <br>
-                            <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                                📞 Try Again
-                            </button>
+                            <p><strong>Cannot access contacts</strong></p>
+                            <p>Contact permissions not available</p>
                         </div>
                     `;
                 }
