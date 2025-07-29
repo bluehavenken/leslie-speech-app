@@ -934,11 +934,14 @@
                         <p>Your contacts are accessed locally on your device only.</p>
                         <p>No contact data is sent to servers or made public.</p>
                         <br>
-                        <p><strong>💡 To select ALL contacts:</strong></p>
+                        <p><strong>📱 On PHONE/TABLET:</strong></p>
                         <p>1. Click the button below</p>
-                        <p>2. In the contact picker that opens, press:</p>
-                        <p><strong>Ctrl+A</strong> (Windows/Linux) or <strong>Cmd+A</strong> (Mac)</p>
-                        <p>3. Click "Select" or "Done"</p>
+                        <p>2. Look for "Select All" or "All" button in the picker</p>
+                        <p>3. If no "Select All", manually tap contacts you want</p>
+                        <p>4. Tap "Done" or "Select"</p>
+                        <br>
+                        <p><strong>💻 On COMPUTER:</strong></p>
+                        <p>Press Ctrl+A (PC) or Cmd+A (Mac) to select all</p>
                         <br>
                         <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
                             📞 Load Your Contacts
@@ -1170,13 +1173,16 @@
                         microphonePermissionGranted = true;
                         stream.getTracks().forEach(track => track.stop());
                         
-                        // Set up voice command listener
-                        setTimeout(setupVoiceCommandListener, 1000);
+                        // Set up voice command listener immediately
+                        setTimeout(setupVoiceCommandListener, 500);
                     })
                     .catch(function(error) {
                         console.log('Microphone permission denied:', error);
                         microphonePermissionGranted = false;
+                        alert('Microphone permission is required for voice commands and speech recognition. Please allow access when prompted.');
                     });
+            } else {
+                alert('Microphone access not supported in this browser.');
             }
         }
 
@@ -1320,13 +1326,18 @@
 
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                alert('Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari.');
+                return;
+            }
+
             recognition = new SpeechRecognition();
-            
-            recognition.continuous = false; // Changed to false to prevent multiple repeats
+            recognition.continuous = true;
             recognition.interimResults = true;
             recognition.lang = 'en-US';
             
             recognition.onstart = function() {
+                console.log('🎤 Speech recognition started');
                 isListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening... Say something!');
@@ -1336,8 +1347,9 @@
                     try {
                         voiceCommandRecognition.stop();
                         voiceCommandActive = false;
+                        console.log('🛑 Stopped voice commands for speech recognition');
                     } catch (e) {
-                        console.log('Error stopping voice commands');
+                        console.log('Error stopping voice commands:', e);
                     }
                 }
                 
@@ -1354,42 +1366,20 @@
             };
             
             recognition.onend = function() {
-                console.log('Recognition ended');
-                
-                // Process and speak the final result only once
-                if (finalTranscript.trim() && !isSpeaking) {
-                    isSpeaking = true;
-                    
-                    // Update display
-                    currentPhrase = finalTranscript;
-                    updateCurrentPhraseDisplay();
-                    updateStatus('✅ Speaking: ' + finalTranscript);
-                    
-                    // Speak it back
-                    speak(finalTranscript);
-                    
-                    // Reset speaking flag after a delay
-                    setTimeout(() => {
-                        isSpeaking = false;
-                        updateStatus('Ready for next phrase - Click "START TALKING" to continue');
-                    }, 3000);
-                }
+                console.log('🔚 Speech recognition ended');
                 
                 // Auto-restart if we should still be listening
-                if (isListening && currentPage === 'speech' && !isSpeaking) {
+                if (isListening && currentPage === 'speech') {
                     setTimeout(() => {
-                        if (isListening && currentPage === 'speech' && !isSpeaking) {
+                        if (isListening && currentPage === 'speech') {
                             try {
-                                // Clear for next phrase
-                                currentPhrase = '';
-                                finalTranscript = '';
-                                updateCurrentPhraseDisplay();
+                                console.log('🔄 Restarting speech recognition');
                                 recognition.start();
                             } catch (error) {
-                                console.log('Error restarting recognition:', error);
+                                console.log('❌ Error restarting recognition:', error);
                                 isListening = false;
                                 updateListenButton();
-                                updateStatus('Ready to listen - Click "START TALKING" below');
+                                updateStatus('Speech recognition stopped. Click START TALKING to begin again.');
                                 
                                 // Restart voice commands
                                 setTimeout(() => {
@@ -1397,8 +1387,9 @@
                                 }, 1000);
                             }
                         }
-                    }, 1500); // Longer delay to prevent conflicts
-                } else if (!isListening) {
+                    }, 500);
+                } else {
+                    console.log('📴 Speech recognition not restarting - not listening or not on speech page');
                     updateStatus('Ready to listen - Click "START TALKING" below');
                     updateListenButton();
                     
@@ -1410,16 +1401,20 @@
             };
             
             recognition.onerror = function(event) {
-                console.error('Speech recognition error:', event.error);
+                console.error('❌ Speech recognition error:', event.error);
                 
                 if (event.error === 'no-speech') {
-                    updateStatus('No speech detected. Try speaking again.');
+                    updateStatus('No speech detected. Keep talking or click START TALKING again.');
                 } else if (event.error === 'audio-capture') {
-                    updateStatus('Microphone error. Please check permissions.');
+                    updateStatus('Microphone error. Please check permissions and try again.');
                 } else if (event.error === 'not-allowed') {
-                    updateStatus('Microphone permission denied.');
+                    updateStatus('Microphone permission denied. Please allow microphone access.');
+                    isListening = false;
+                    updateListenButton();
+                } else if (event.error === 'network') {
+                    updateStatus('Network error. Please check your connection.');
                 } else {
-                    updateStatus('Recognition error. Try again or use Enhanced Recognition.');
+                    updateStatus(`Recognition error (${event.error}). Try again or use Enhanced Recognition.`);
                     if (settings.autoEnhanced) {
                         showEnhancedSuggestion();
                     }
@@ -1428,28 +1423,39 @@
             
             recognition.onresult = function(event) {
                 let interimTranscript = '';
-                let newFinalTranscript = '';
+                let finalText = '';
                 
                 for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     
                     if (event.results[i].isFinal) {
-                        newFinalTranscript += transcript;
+                        finalText += transcript;
                     } else {
                         interimTranscript += transcript;
                     }
                 }
                 
-                // Update display with current recognition
-                if (newFinalTranscript.trim()) {
-                    finalTranscript = newFinalTranscript.trim(); // Replace, don't accumulate
-                    currentPhrase = finalTranscript;
+                // Update display
+                const displayText = finalText || interimTranscript;
+                if (displayText.trim()) {
+                    currentPhrase = displayText.trim();
                     updateCurrentPhraseDisplay();
-                    updateStatus('✅ Heard: ' + finalTranscript);
-                } else if (interimTranscript.trim()) {
-                    currentPhrase = interimTranscript.trim();
-                    updateCurrentPhraseDisplay();
-                    updateStatus('🔄 Listening: ' + interimTranscript.trim());
+                    
+                    if (finalText.trim()) {
+                        finalTranscript = finalText.trim();
+                        updateStatus('✅ Heard: ' + finalTranscript);
+                        
+                        // Speak back the final result
+                        if (!isSpeaking) {
+                            isSpeaking = true;
+                            speak(finalTranscript);
+                            setTimeout(() => {
+                                isSpeaking = false;
+                            }, 3000);
+                        }
+                    } else {
+                        updateStatus('🔄 Listening: ' + displayText.trim());
+                    }
                 }
             };
         }
@@ -1484,13 +1490,20 @@
                     const props = ['name', 'tel'];
                     const opts = {multiple: true};
                     
-                    // Show loading message
+                    // Show loading message with mobile instructions
                     const contactsList = document.getElementById('contactsList');
                     contactsList.innerHTML = `
                         <div style="padding: 20px; text-align: center; color: #0099cc;">
                             <p><strong>📱 Loading Your Contacts...</strong></p>
-                            <p>Please select contacts in the picker that opens.</p>
-                            <p>Use Ctrl+A (or Cmd+A) to select all contacts.</p>
+                            <p>A contact picker will open.</p>
+                            <br>
+                            <p><strong>📱 On MOBILE/PHONE:</strong></p>
+                            <p>• Tap "Select All" if available</p>
+                            <p>• Or manually tap each contact you want</p>
+                            <p>• Look for "All" or "Select All" option</p>
+                            <br>
+                            <p><strong>💻 On DESKTOP:</strong></p>
+                            <p>• Use Ctrl+A (PC) or Cmd+A (Mac)</p>
                         </div>
                     `;
                     
@@ -1501,10 +1514,15 @@
                         contactsList.innerHTML = `
                             <div style="padding: 20px; text-align: center; color: #666;">
                                 <p><strong>No contacts selected</strong></p>
-                                <p>To select all contacts:</p>
-                                <p>1. Click "Load Your Contacts" again</p>
-                                <p>2. In the contact picker, use Ctrl+A (PC) or Cmd+A (Mac)</p>
-                                <p>3. Or manually select the contacts you want</p>
+                                <br>
+                                <p><strong>📱 For PHONES/TABLETS:</strong></p>
+                                <p>1. Try again and look for "Select All" button</p>
+                                <p>2. Or manually select contacts you want</p>
+                                <p>3. Some browsers show "All" option at top</p>
+                                <br>
+                                <p><strong>💻 For COMPUTERS:</strong></p>
+                                <p>1. Use Ctrl+A (PC) or Cmd+A (Mac)</p>
+                                <p>2. Then click "Select" or "Done"</p>
                                 <br>
                                 <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
                                     📞 Try Again
@@ -1530,13 +1548,15 @@
                     const contactsList = document.getElementById('contactsList');
                     contactsList.innerHTML = `
                         <div style="padding: 20px; text-align: center; color: #666;">
-                            <p><strong>⚠️ Contact Picker Not Supported</strong></p>
-                            <p>Your browser doesn't support the Contact Picker API.</p>
-                            <p>For full contact access, this app needs to be:</p>
-                            <p>• A native mobile app (iOS/Android)</p>
-                            <p>• Or use a supported browser like Chrome on Android</p>
+                            <p><strong>⚠️ Contact Access Not Available</strong></p>
+                            <p>Your browser/device doesn't support contact access.</p>
                             <br>
-                            <p><strong>Alternative:</strong> You can manually dial numbers using voice commands like "Hey Leslie, call 555-1234"</p>
+                            <p><strong>Try these browsers on mobile:</strong></p>
+                            <p>• Chrome on Android</p>
+                            <p>• Safari on iOS (limited support)</p>
+                            <p>• Edge on Android</p>
+                            <br>
+                            <p><strong>Alternative:</strong> For full contact access, this needs to be a native mobile app from an app store.</p>
                         </div>
                     `;
                 }
@@ -1548,10 +1568,14 @@
                     contactsList.innerHTML = `
                         <div style="padding: 20px; text-align: center; color: #666;">
                             <p><strong>Contact selection cancelled</strong></p>
-                            <p>To load all your contacts:</p>
-                            <p>1. Click "Load Your Contacts"</p>
-                            <p>2. In the contact picker, press Ctrl+A (PC) or Cmd+A (Mac) to select all</p>
-                            <p>3. Click "Select" or "Done"</p>
+                            <br>
+                            <p><strong>📱 To load ALL contacts on PHONE:</strong></p>
+                            <p>1. Click "Try Again" below</p>
+                            <p>2. Look for "Select All" or "All" button</p>
+                            <p>3. If no "Select All", manually tap contacts</p>
+                            <p>4. Tap "Done" or "Select"</p>
+                            <br>
+                            <p><strong>💻 On computer:</strong> Use Ctrl+A or Cmd+A</p>
                             <br>
                             <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
                                 📞 Try Again
@@ -1563,7 +1587,8 @@
                         <div style="padding: 20px; text-align: center; color: #666;">
                             <p><strong>Unable to access contacts</strong></p>
                             <p>Error: ${error.message}</p>
-                            <p>Contact access requires device permissions.</p>
+                            <br>
+                            <p>Contact access may not be supported on this device/browser combination.</p>
                             <br>
                             <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
                                 📞 Try Again
