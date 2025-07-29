@@ -1029,16 +1029,17 @@
                     <button class="close-btn" onclick="navigateBack()">&times;</button>
                 </div>
                 
-                <div class="text-input-content">
-                    <!-- Speak button moved to top of text area -->
-                    <div style="margin-bottom: 8px; text-align: right;">
+                <div class="text-input-content" style="padding-top: 70px;">
+                    <!-- Speak button moved to top of text area with more space -->
+                    <div style="margin-bottom: 16px; text-align: right; background-color: white; padding: 8px 0; position: fixed; top: 80px; right: 16px; left: 16px; z-index: 100; border-bottom: 2px solid #9933cc;">
                         <button class="speak-phrase-btn" onclick="speakTextInput()" id="speakTextBtn">
                             🔊 SPEAK TEXT
                         </button>
                     </div>
                     
                     <textarea class="text-input large-text-input" id="largeTextInputField" 
-                              placeholder="Type your message here..." oninput="updateTextSpeakButton()"></textarea>
+                              placeholder="Type your message here..." oninput="updateTextSpeakButton()" 
+                              style="margin-top: 60px;"></textarea>
                     
                     <div style="padding: 16px; text-align: center; background-color: #f0f0f0; margin-top: 8px; position: fixed; bottom: 0; left: 0; right: 0; z-index: 999;">
                         <button class="btn-home" onclick="showPage('home')">
@@ -1257,13 +1258,24 @@
         }
 
         function processVoiceCommand(transcript) {
-            console.log('Processing voice command:', transcript);
+            console.log('🔊 Processing voice command:', transcript);
             
-            if (transcript.includes('what time is it')) {
+            // Stop voice commands temporarily to prevent feedback
+            if (voiceCommandRecognition && voiceCommandActive) {
+                try {
+                    voiceCommandRecognition.stop();
+                    voiceCommandActive = false;
+                } catch (e) {
+                    console.log('Error stopping voice commands during processing');
+                }
+            }
+            
+            if (transcript.includes('what time is it') || transcript.includes('time')) {
                 const now = new Date();
                 const timeString = now.toLocaleTimeString();
                 speak(`The current time is ${timeString}`);
-            } else if (transcript.includes('what\'s the date') || transcript.includes('whats the date')) {
+                console.log('✅ Responded with time');
+            } else if (transcript.includes('what\'s the date') || transcript.includes('whats the date') || transcript.includes('date')) {
                 const now = new Date();
                 const dateString = now.toLocaleDateString('en-US', { 
                     weekday: 'long', 
@@ -1272,26 +1284,43 @@
                     day: 'numeric' 
                 });
                 speak(`Today is ${dateString}`);
+                console.log('✅ Responded with date');
             } else if (transcript.includes('start talking')) {
                 startTalkingFromHome();
                 speak('Starting speech recognition');
+                console.log('✅ Started speech recognition');
             } else if (transcript.includes('go home')) {
                 showPage('home');
                 speak('Going to home page');
+                console.log('✅ Went home');
             } else if (transcript.includes('weather')) {
                 showCurrentWeather();
                 speak('Showing weather information');
+                console.log('✅ Showed weather');
             } else if (transcript.includes('close')) {
                 hideWeather();
+                speak('Closing weather display');
+                console.log('✅ Closed weather');
             } else if (transcript.includes('help')) {
                 showPage('commands');
                 speak('Showing Leslie commands');
+                console.log('✅ Showed help');
             } else if (transcript.includes('clear text')) {
                 clearSpeechText();
                 speak('Text cleared');
+                console.log('✅ Cleared text');
             } else {
-                speak('I heard you, but didn\'t understand the command. Say Hey Leslie help for available commands.');
+                speak('I heard Hey Leslie, but I didn\'t understand that command. Try saying Hey Leslie help for available commands.');
+                console.log('❓ Command not understood');
             }
+            
+            // Restart voice commands after processing
+            setTimeout(() => {
+                if (!voiceCommandActive && (currentPage !== 'speech' || !isListening)) {
+                    console.log('🔄 Restarting voice commands after processing');
+                    setupVoiceCommandListener();
+                }
+            }, 3000);
         }
 
         function speak(text) {
@@ -1332,7 +1361,7 @@
             }
 
             recognition = new SpeechRecognition();
-            recognition.continuous = true;
+            recognition.continuous = false; // Single phrase at a time
             recognition.interimResults = true;
             recognition.lang = 'en-US';
             
@@ -1340,7 +1369,7 @@
                 console.log('🎤 Speech recognition started');
                 isListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening... Say something!');
+                updateStatus('🎤 Listening... Say your complete phrase!');
                 
                 // Stop voice commands while speech recognition is active
                 if (voiceCommandRecognition && voiceCommandActive) {
@@ -1368,35 +1397,72 @@
             recognition.onend = function() {
                 console.log('🔚 Speech recognition ended');
                 
-                // Auto-restart if we should still be listening
-                if (isListening && currentPage === 'speech') {
-                    setTimeout(() => {
-                        if (isListening && currentPage === 'speech') {
-                            try {
-                                console.log('🔄 Restarting speech recognition');
-                                recognition.start();
-                            } catch (error) {
-                                console.log('❌ Error restarting recognition:', error);
-                                isListening = false;
-                                updateListenButton();
-                                updateStatus('Speech recognition stopped. Click START TALKING to begin again.');
-                                
-                                // Restart voice commands
-                                setTimeout(() => {
-                                    if (!voiceCommandActive) setupVoiceCommandListener();
-                                }, 1000);
-                            }
-                        }
-                    }, 500);
-                } else {
-                    console.log('📴 Speech recognition not restarting - not listening or not on speech page');
-                    updateStatus('Ready to listen - Click "START TALKING" below');
-                    updateListenButton();
+                // Speak back the complete phrase if we have one
+                if (finalTranscript.trim() && !isSpeaking) {
+                    isSpeaking = true;
+                    currentPhrase = finalTranscript;
+                    updateCurrentPhraseDisplay();
+                    updateStatus('🔊 Speaking back: ' + finalTranscript);
                     
-                    // Restart voice commands when not listening
+                    // Speak the COMPLETE phrase
+                    speak(finalTranscript);
+                    
                     setTimeout(() => {
-                        if (!voiceCommandActive) setupVoiceCommandListener();
-                    }, 1000);
+                        isSpeaking = false;
+                        if (isListening) {
+                            updateStatus('✅ Ready for next phrase - listening...');
+                            // Start listening for next phrase
+                            setTimeout(() => {
+                                if (isListening && currentPage === 'speech') {
+                                    // Clear for next phrase
+                                    currentPhrase = '';
+                                    finalTranscript = '';
+                                    updateCurrentPhraseDisplay();
+                                    try {
+                                        recognition.start();
+                                    } catch (error) {
+                                        console.log('❌ Error restarting for next phrase:', error);
+                                        isListening = false;
+                                        updateListenButton();
+                                        updateStatus('Click START TALKING for next phrase');
+                                        setTimeout(() => {
+                                            if (!voiceCommandActive) setupVoiceCommandListener();
+                                        }, 1000);
+                                    }
+                                }
+                            }, 1000);
+                        } else {
+                            updateStatus('Ready to listen - Click "START TALKING" below');
+                            setTimeout(() => {
+                                if (!voiceCommandActive) setupVoiceCommandListener();
+                            }, 1000);
+                        }
+                    }, 2000);
+                } else {
+                    // No final transcript - restart if still listening
+                    if (isListening && currentPage === 'speech') {
+                        setTimeout(() => {
+                            if (isListening && currentPage === 'speech') {
+                                try {
+                                    recognition.start();
+                                } catch (error) {
+                                    console.log('❌ Error restarting recognition:', error);
+                                    isListening = false;
+                                    updateListenButton();
+                                    updateStatus('Click START TALKING to try again');
+                                    setTimeout(() => {
+                                        if (!voiceCommandActive) setupVoiceCommandListener();
+                                    }, 1000);
+                                }
+                            }
+                        }, 1000);
+                    } else {
+                        updateStatus('Ready to listen - Click "START TALKING" below');
+                        updateListenButton();
+                        setTimeout(() => {
+                            if (!voiceCommandActive) setupVoiceCommandListener();
+                        }, 1000);
+                    }
                 }
             };
             
@@ -1404,7 +1470,7 @@
                 console.error('❌ Speech recognition error:', event.error);
                 
                 if (event.error === 'no-speech') {
-                    updateStatus('No speech detected. Keep talking or click START TALKING again.');
+                    updateStatus('No speech detected. Try speaking louder or closer to microphone.');
                 } else if (event.error === 'audio-capture') {
                     updateStatus('Microphone error. Please check permissions and try again.');
                 } else if (event.error === 'not-allowed') {
@@ -1414,48 +1480,34 @@
                 } else if (event.error === 'network') {
                     updateStatus('Network error. Please check your connection.');
                 } else {
-                    updateStatus(`Recognition error (${event.error}). Try again or use Enhanced Recognition.`);
-                    if (settings.autoEnhanced) {
-                        showEnhancedSuggestion();
-                    }
+                    updateStatus(`Recognition error (${event.error}). Click START TALKING to try again.`);
                 }
             };
             
             recognition.onresult = function(event) {
                 let interimTranscript = '';
-                let finalText = '';
+                let newFinalTranscript = '';
                 
                 for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     
                     if (event.results[i].isFinal) {
-                        finalText += transcript;
+                        newFinalTranscript += transcript;
                     } else {
                         interimTranscript += transcript;
                     }
                 }
                 
-                // Update display
-                const displayText = finalText || interimTranscript;
-                if (displayText.trim()) {
-                    currentPhrase = displayText.trim();
+                // Update display with current recognition
+                if (newFinalTranscript.trim()) {
+                    finalTranscript = newFinalTranscript.trim();
+                    currentPhrase = finalTranscript;
                     updateCurrentPhraseDisplay();
-                    
-                    if (finalText.trim()) {
-                        finalTranscript = finalText.trim();
-                        updateStatus('✅ Heard: ' + finalTranscript);
-                        
-                        // Speak back the final result
-                        if (!isSpeaking) {
-                            isSpeaking = true;
-                            speak(finalTranscript);
-                            setTimeout(() => {
-                                isSpeaking = false;
-                            }, 3000);
-                        }
-                    } else {
-                        updateStatus('🔄 Listening: ' + displayText.trim());
-                    }
+                    updateStatus('✅ Got complete phrase: ' + finalTranscript);
+                } else if (interimTranscript.trim()) {
+                    currentPhrase = interimTranscript.trim();
+                    updateCurrentPhraseDisplay();
+                    updateStatus('🔄 Listening: ' + interimTranscript.trim());
                 }
             };
         }
