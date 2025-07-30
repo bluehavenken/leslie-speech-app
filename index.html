@@ -278,7 +278,7 @@
         }
         .speak-text-container {
             position: relative;
-            margin-bottom: 16px;
+            margin-top: 16px;
         }
         .speak-phrase-btn {
             background: #9933cc;
@@ -291,7 +291,7 @@
             font-weight: bold;
             position: absolute;
             right: 8px;
-            top: 8px;
+            top: -48px;
             z-index: 10;
         }
         .speak-phrase-btn:hover { background: #7a2a99; }
@@ -620,9 +620,6 @@
                     <button class="control-btn btn-listen" id="listenButton">
                         START TALKING
                     </button>
-                    <button class="icon-btn btn-clear" id="btnClearSpeech" title="Clear Text">
-                        🗑️
-                    </button>
                 </div>
             </div>
         </div>
@@ -852,7 +849,6 @@
         // Speech Page
         document.getElementById('btnCloseSpeech').onclick = navigateBack;
         document.getElementById('listenButton').onclick = toggleListening;
-        document.getElementById('btnClearSpeech').onclick = clearSpeechText;
         document.getElementById('enhancedButton').onclick = startEnhancedRecognition;
 
         // Phone Page
@@ -931,6 +927,7 @@
         voiceCommandRecognition.continuous = true;
         voiceCommandRecognition.interimResults = false;
         voiceCommandRecognition.lang = 'en-US';
+        voiceCommandRecognition.maxAlternatives = 1;
 
         voiceCommandRecognition.onstart = function() {
             voiceCommandActive = true;
@@ -940,6 +937,7 @@
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 if (event.results[i].isFinal) {
                     const transcript = event.results[i][0].transcript.toLowerCase().trim();
+                    console.log('Voice command heard:', transcript); // Debug log
                     if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
                         processVoiceCommand(transcript);
                     }
@@ -948,31 +946,39 @@
         };
 
         voiceCommandRecognition.onerror = function(event) {
+            console.log('Voice command error:', event.error); // Debug log  
             voiceCommandActive = false;
-            if (event.error !== 'not-allowed') {
-                setTimeout(startVoiceCommandListening, 3000);
+            if (event.error !== 'not-allowed' && event.error !== 'aborted') {
+                setTimeout(startVoiceCommandListening, 2000);
             }
         };
 
         voiceCommandRecognition.onend = function() {
             voiceCommandActive = false;
             if (currentPage !== 'speech' || !isListening) {
-                setTimeout(startVoiceCommandListening, 2000);
+                setTimeout(startVoiceCommandListening, 1000);
             }
         };
 
         function startVoiceCommandListening() {
             if ((currentPage !== 'speech' || !isListening) && microphonePermissionGranted && !voiceCommandActive) {
-                try { voiceCommandRecognition.start(); } catch (error) {}
+                try { 
+                    voiceCommandRecognition.start(); 
+                    console.log('Voice command listener started'); // Debug log
+                } catch (error) {
+                    console.log('Voice command start error:', error); // Debug log
+                }
             }
         }
 
         startVoiceCommandListening();
+        
+        // More frequent restart attempts
         setInterval(() => {
             if (!voiceCommandActive && (currentPage !== 'speech' || !isListening)) {
                 startVoiceCommandListening();
             }
-        }, 30000);
+        }, 15000); // Every 15 seconds instead of 30
     }
 
     function processVoiceCommand(transcript) {
@@ -1016,6 +1022,15 @@
                 const nameOrNumber = callMatch[1].trim();
                 handleCallCommand(nameOrNumber);
             }
+        }
+        // Leslie Commands
+        else if (transcript.includes('commands') && !transcript.includes('close')) {
+            showPage('commands');
+            speak('Opening Leslie commands');
+        }
+        else if (transcript.includes('close commands')) {
+            showPage('home');
+            speak('Closing commands, going home');
         }
         // Weather commands
         else if (transcript.includes('current weather') || (transcript.includes('weather') && !transcript.includes('forecast'))) {
@@ -1111,33 +1126,42 @@
         updatePauseBetweenWords(settings.pauseBetweenWords);
     }
 
-    function speak(text) {
+    function speak(text, useWordPauses = false) {
         if (settings.speakVoiceCommands && text.trim()) {
             speechSynth.cancel();
             
-            // Split text into words for pause control
-            const words = text.split(' ');
-            let wordIndex = 0;
-            
-            function speakNextWord() {
-                if (wordIndex < words.length) {
-                    const utterance = new SpeechSynthesisUtterance(words[wordIndex]);
-                    utterance.rate = settings.speechSpeed;
-                    utterance.pitch = 1;
-                    utterance.volume = 0.8;
-                    
-                    utterance.onend = function() {
-                        wordIndex++;
-                        if (wordIndex < words.length) {
-                            setTimeout(speakNextWord, settings.pauseBetweenWords * 1000);
-                        }
-                    };
-                    
-                    speechSynth.speak(utterance);
+            if (useWordPauses && settings.pauseBetweenWords > 0) {
+                // Split text into words for pause control (only for speech recognition)
+                const words = text.split(' ');
+                let wordIndex = 0;
+                
+                function speakNextWord() {
+                    if (wordIndex < words.length) {
+                        const utterance = new SpeechSynthesisUtterance(words[wordIndex]);
+                        utterance.rate = settings.speechSpeed;
+                        utterance.pitch = 1;
+                        utterance.volume = 0.8;
+                        
+                        utterance.onend = function() {
+                            wordIndex++;
+                            if (wordIndex < words.length) {
+                                setTimeout(speakNextWord, settings.pauseBetweenWords * 1000);
+                            }
+                        };
+                        
+                        speechSynth.speak(utterance);
+                    }
                 }
+                
+                speakNextWord();
+            } else {
+                // Speak normally for voice commands
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = settings.speechSpeed;
+                utterance.pitch = 1;
+                utterance.volume = 0.8;
+                speechSynth.speak(utterance);
             }
-            
-            speakNextWord();
         }
     }
 
@@ -1263,14 +1287,15 @@
                 finalTranscript = finalText.trim();
                 updateStatus('✅ Heard: ' + finalTranscript);
                 
-                // Speak the recognized text
+                // Speak the recognized text with word pauses, but don't stop listening
                 if (!isSpeaking) {
                     isSpeaking = true;
-                    speak(finalTranscript);
+                    speak(finalTranscript, true); // Use word pauses for speech recognition
                     setTimeout(() => { 
                         isSpeaking = false; 
                     }, (finalTranscript.length * 50) + (settings.pauseBetweenWords * finalTranscript.split(' ').length * 1000));
                 }
+                // DON'T change the button state - keep listening
             } else if (interimTranscript.trim()) {
                 currentPhrase = interimTranscript.trim();
                 updateCurrentPhraseDisplay(true);
@@ -1328,28 +1353,35 @@
     async function loadRealContacts() {
         try {
             if ('contacts' in navigator && 'ContactsManager' in window) {
+                // Automatically try to load contacts
                 const props = ['name', 'tel'];
                 const opts = {multiple: true};
-                const contactList = await navigator.contacts.select(props, opts);
                 
-                if (contactList.length === 0) {
-                    // Show message about no contacts
-                    contacts = [];
-                } else {
-                    contacts = contactList.map(contact => ({
-                        name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
-                        phone: contact.tel && contact.tel[0] ? contact.tel[0] : 'No phone'
-                    }));
-                    contacts.sort((a, b) => a.name.localeCompare(b.name));
+                try {
+                    const contactList = await navigator.contacts.select(props, opts);
+                    
+                    if (contactList.length > 0) {
+                        contacts = contactList.map(contact => ({
+                            name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
+                            phone: contact.tel && contact.tel[0] ? contact.tel[0] : 'No phone'
+                        }));
+                        contacts.sort((a, b) => a.name.localeCompare(b.name));
+                        filteredContacts = [...contacts];
+                        displayContacts();
+                        return;
+                    }
+                } catch (contactError) {
+                    // User cancelled or no permission
+                    console.log('Contact access denied or cancelled');
                 }
-            } else {
-                // Contacts API not supported
-                contacts = [];
             }
             
-            filteredContacts = [...contacts];
+            // Show manual load option if automatic loading fails
+            contacts = [];
+            filteredContacts = [];
             displayContacts();
         } catch (error) {
+            console.error('Error loading contacts:', error);
             contacts = [];
             filteredContacts = [];
             displayContacts();
@@ -1534,10 +1566,10 @@
         const textInput = document.getElementById('largeTextInputField');
         const speakBtn = document.getElementById('speakTextBtn');
         if (speakBtn && textInput) {
-            const hasText = textInput.value.trim().length > 0;
-            speakBtn.disabled = !hasText;
-            speakBtn.style.opacity = hasText ? '1' : '0.5';
-            speakBtn.style.background = hasText ? '#9933cc' : '#ccc';
+            // Always show as active/purple when on text input page
+            speakBtn.disabled = false;
+            speakBtn.style.opacity = '1';
+            speakBtn.style.background = '#9933cc';
         }
     }
 
@@ -1562,15 +1594,16 @@
         
         weatherTitle.textContent = 'Current Weather';
         weatherContent.innerHTML = `
-            <div style="text-align: center; margin-bottom: 16px;">
+            <div style="text-align: center; margin-bottom: 16px; max-width: 500px;">
                 <div style="font-size: 14px; color: #666; margin-bottom: 8px;">${dateString}</div>
                 <div style="font-size: 32px; font-weight: bold; color: #0099cc;">${temperature}°F</div>
                 <div style="font-size: 20px; font-weight: bold; margin: 8px 0;">${conditions}</div>
             </div>
-            <div style="line-height: 1.8;">
+            <div style="line-height: 1.8; max-width: 500px;">
                 <strong>Humidity:</strong> ${humidity}%<br>
                 <strong>Wind:</strong> ${windSpeed} mph<br>
                 <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
+                <strong>Location:</strong> Current Location<br>
             </div>
         `;
         weatherDisplay.classList.remove('hidden');
@@ -1582,10 +1615,11 @@
         const weatherContent = document.getElementById('weatherContent');
         
         weatherTitle.textContent = '24-Hour Forecast';
-        let hourlyData = '<div class="hourly-forecast">';
+        let hourlyData = '<div class="hourly-forecast" style="max-width: 500px;">';
         const now = new Date();
         
-        for (let i = 0; i < 24; i += 3) {
+        // Show every hour for 24 hours
+        for (let i = 0; i < 24; i++) {
             const futureTime = new Date(now.getTime() + (i * 60 * 60 * 1000));
             const hour = futureTime.getHours();
             const temp = Math.floor(Math.random() * 20) + 65;
