@@ -413,7 +413,6 @@
             cursor: not-allowed;
             opacity: 0.5;
         }
-
         /* Contact Search Styles */
         .contact-search-section {
             padding: 12px;
@@ -729,10 +728,7 @@
             .container {
                 padding: 8px;
             }
-
-            .main-button {
-                height: 70px;
-                font-size: 18
+            
             .main-button {
                 height: 70px;
                 font-size: 18px;
@@ -922,7 +918,8 @@
                 <input type="text" id="contactSearch" class="contact-search-input" 
                        placeholder="Type contact name or phone..." oninput="filterContacts(this.value)">
                 <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                    Click "Load Your Contacts" to access your real device contacts.
+                    Contacts are automatically loaded from your device if available.<br>
+                    Your contacts are accessed locally only, never sent to any server.
                 </div>
             </div>
             
@@ -937,7 +934,7 @@
                         <p>No contact data is sent to servers or made public.</p>
                         <br>
                         <p><strong>📱 On PHONE/TABLET:</strong></p>
-                        <p>1. Click the button below</p>
+                        <p>1. If not loaded automatically, click "Load Your Contacts"</p>
                         <p>2. Look for "Select All" or "All" button in the picker</p>
                         <p>3. If no "Select All", manually tap contacts you want</p>
                         <p>4. Tap "Done" or "Select"</p>
@@ -1032,16 +1029,13 @@
                 </div>
                 
                 <div class="text-input-content">
-                    <!-- Speak button moved to top of text area -->
-                    <div style="margin-bottom: 8px; text-align: right;">
+                    <textarea class="text-input large-text-input" id="largeTextInputField" 
+                              placeholder="Type your message here..." oninput="updateTextSpeakButton()"></textarea>
+                    <div style="margin-top: 8px; text-align: right;">
                         <button class="speak-phrase-btn" onclick="speakTextInput()" id="speakTextBtn">
                             🔊 SPEAK TEXT
                         </button>
                     </div>
-                    
-                    <textarea class="text-input large-text-input" id="largeTextInputField" 
-                              placeholder="Type your message here..." oninput="updateTextSpeakButton()"></textarea>
-                    
                     <div style="padding: 16px; text-align: center; background-color: #f0f0f0; margin-top: 8px; position: fixed; bottom: 0; left: 0; right: 0; z-index: 999;">
                         <button class="btn-home" onclick="showPage('home')">
                             🏠 HOME
@@ -1110,7 +1104,6 @@
     <script>
         // Global variables
         let recognition = null;
-        let voiceCommandRecognition = null;
         let isListening = false;
         let speechSynth = window.speechSynthesis;
         let currentPage = 'home';
@@ -1121,8 +1114,12 @@
         let isSpeaking = false;
         let finalTranscript = '';
         let microphonePermissionGranted = false;
+
+        // --- Robust voice command variables ---
+        let voiceCommandRecognition = null;
         let voiceCommandActive = false;
-        
+        let voiceCommandRestartTimeout = null;
+
         // Settings
         let settings = {
             speechSpeed: 1.0,
@@ -1133,50 +1130,29 @@
 
         // Initialize the app
         function initApp() {
-            console.log('Initializing Leslie Speech Assistant...');
-            
-            // Load settings
             loadSettings();
-            
-            // Check for speech recognition support
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 alert('Speech recognition not supported in this browser. Please try Chrome, Edge, or Safari.');
                 return;
             }
-
-            // Initialize speech recognition
             setupSpeechRecognition();
-            
-            // Initialize contacts (empty by default)
             initializeContacts();
-            
-            // Setup swipe detection
             setupSwipeDetection();
-            
-            // Setup back button handling
             setupBackButtonHandling();
-            
-            // Request microphone permission and setup voice commands
             requestMicrophonePermission();
-            
-            // Check if we should show enhanced section
             updateEnhancedSectionVisibility();
-
-            console.log('Leslie Speech Assistant initialized successfully');
         }
 
-        // Request microphone permission and setup voice commands
+        // Microphone permission & setup voice commands
         function requestMicrophonePermission() {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 navigator.mediaDevices.getUserMedia({ audio: true })
                     .then(function(stream) {
-                        console.log('Microphone permission granted');
                         microphonePermissionGranted = true;
                         stream.getTracks().forEach(track => track.stop());
-                        setupVoiceCommandListener();
+                        setTimeout(setupVoiceCommandListener, 500);
                     })
                     .catch(function(error) {
-                        console.log('Microphone permission denied:', error);
                         microphonePermissionGranted = false;
                         alert('Microphone permission is required for voice commands and speech recognition. Please allow access when prompted.');
                     });
@@ -1185,14 +1161,12 @@
             }
         }
 
-        // ---- VOICE COMMAND FIXED BLOCK START ----
+        // Robust, self-restarting voice command system (never stuck!)
         function setupVoiceCommandListener() {
             if (!microphonePermissionGranted) return;
-            if (voiceCommandRecognition) return; // only setup ONCE
-
+            if (voiceCommandRecognition) return;
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) return;
-
             voiceCommandRecognition = new SpeechRecognition();
             voiceCommandRecognition.continuous = true;
             voiceCommandRecognition.interimResults = false;
@@ -1200,54 +1174,51 @@
 
             voiceCommandRecognition.onstart = function() {
                 voiceCommandActive = true;
-                console.log('Voice command recognition active');
             };
-
             voiceCommandRecognition.onresult = function(event) {
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     if (event.results[i].isFinal) {
                         const transcript = event.results[i][0].transcript.toLowerCase().trim();
-                        console.log('Voice command heard:', transcript);
                         if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
                             processVoiceCommand(transcript);
                         }
                     }
                 }
             };
-
             voiceCommandRecognition.onerror = function(event) {
-                console.log('Voice command error:', event.error);
                 voiceCommandActive = false;
-                if (event.error !== 'not-allowed') {
-                    setTimeout(startVoiceCommandListening, 3000);
+                clearTimeout(voiceCommandRestartTimeout);
+                if (event.error !== 'not-allowed' && event.error !== 'aborted') {
+                    voiceCommandRestartTimeout = setTimeout(startVoiceCommandListening, 2000);
                 }
             };
-
             voiceCommandRecognition.onend = function() {
                 voiceCommandActive = false;
-                console.log('Voice command recognition ended');
+                clearTimeout(voiceCommandRestartTimeout);
                 if (currentPage !== 'speech' || !isListening) {
-                    setTimeout(startVoiceCommandListening, 2000);
+                    voiceCommandRestartTimeout = setTimeout(startVoiceCommandListening, 1200);
                 }
             };
-
             startVoiceCommandListening();
         }
 
         function startVoiceCommandListening() {
-            if (!voiceCommandActive && voiceCommandRecognition && microphonePermissionGranted) {
+            if (
+                !voiceCommandActive &&
+                voiceCommandRecognition &&
+                microphonePermissionGranted &&
+                (currentPage !== 'speech' || !isListening)
+            ) {
                 try {
                     voiceCommandRecognition.start();
                 } catch (error) {
-                    console.log('Voice command start failed:', error);
+                    clearTimeout(voiceCommandRestartTimeout);
+                    voiceCommandRestartTimeout = setTimeout(startVoiceCommandListening, 1500);
                 }
             }
         }
-        // ---- VOICE COMMAND FIXED BLOCK END ----
 
         function processVoiceCommand(transcript) {
-            console.log('Processing voice command:', transcript);
-            
             if (transcript.includes('what time is it')) {
                 const now = new Date();
                 const timeString = now.toLocaleTimeString();
@@ -1293,12 +1264,12 @@
                 speechSynth.speak(utterance);
             }
         }
+
         function setupBackButtonHandling() {
             window.addEventListener('popstate', function(event) {
                 event.preventDefault();
                 navigateBack();
             });
-            
             history.pushState({page: 'home'}, '', '');
         }
 
@@ -1318,79 +1289,56 @@
                 alert('Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari.');
                 return;
             }
-
             recognition = new SpeechRecognition();
             recognition.continuous = true;
             recognition.interimResults = true;
             recognition.lang = 'en-US';
-            
+
             recognition.onstart = function() {
-                console.log('🎤 Speech recognition started');
                 isListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening... Say something!');
-                
-                // Stop voice commands while speech recognition is active
+                // Always stop voiceCommandRecognition first!
                 if (voiceCommandRecognition && voiceCommandActive) {
                     try {
                         voiceCommandRecognition.stop();
                         voiceCommandActive = false;
-                        console.log('🛑 Stopped voice commands for speech recognition');
-                    } catch (e) {
-                        console.log('Error stopping voice commands:', e);
-                    }
+                    } catch (e) {}
                 }
-                
-                // Scroll to top to show stop button
                 const speechPage = document.getElementById('speechPage');
                 if (speechPage) {
                     speechPage.scrollTop = 0;
                 }
-                
-                // Clear previous results
                 currentPhrase = '';
                 finalTranscript = '';
                 updateCurrentPhraseDisplay();
             };
-            
             recognition.onend = function() {
-                console.log('🔚 Speech recognition ended');
-                
                 // Auto-restart if we should still be listening
                 if (isListening && currentPage === 'speech') {
                     setTimeout(() => {
                         if (isListening && currentPage === 'speech') {
                             try {
-                                console.log('🔄 Restarting speech recognition');
                                 recognition.start();
                             } catch (error) {
-                                console.log('❌ Error restarting recognition:', error);
                                 isListening = false;
                                 updateListenButton();
                                 updateStatus('Speech recognition stopped. Click START TALKING to begin again.');
-                                
-                                // Restart voice commands
                                 setTimeout(() => {
-                                    if (!voiceCommandActive) setupVoiceCommandListener();
+                                    if (!voiceCommandActive) startVoiceCommandListening();
                                 }, 1000);
                             }
                         }
                     }, 500);
                 } else {
-                    console.log('📴 Speech recognition not restarting - not listening or not on speech page');
                     updateStatus('Ready to listen - Click "START TALKING" below');
                     updateListenButton();
-                    
-                    // Restart voice commands when not listening
                     setTimeout(() => {
-                        if (!voiceCommandActive) setupVoiceCommandListener();
+                        if (!voiceCommandActive) startVoiceCommandListening();
                     }, 1000);
                 }
             };
-            
             recognition.onerror = function(event) {
-                console.error('❌ Speech recognition error:', event.error);
-                
                 if (event.error === 'no-speech') {
                     updateStatus('No speech detected. Keep talking or click START TALKING again.');
                 } else if (event.error === 'audio-capture') {
@@ -1408,32 +1356,24 @@
                     }
                 }
             };
-            
             recognition.onresult = function(event) {
                 let interimTranscript = '';
                 let finalText = '';
-                
                 for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
-                    
                     if (event.results[i].isFinal) {
                         finalText += transcript;
                     } else {
                         interimTranscript += transcript;
                     }
                 }
-                
-                // Update display
                 const displayText = finalText || interimTranscript;
                 if (displayText.trim()) {
                     currentPhrase = displayText.trim();
                     updateCurrentPhraseDisplay();
-                    
                     if (finalText.trim()) {
                         finalTranscript = finalText.trim();
                         updateStatus('✅ Heard: ' + finalTranscript);
-                        
-                        // Speak back the final result
                         if (!isSpeaking) {
                             isSpeaking = true;
                             speak(finalTranscript);
@@ -1464,148 +1404,64 @@
             updateStatus('Text cleared - Ready to listen');
         }
 
-        // Initialize contacts (start with empty array - NO FAKE CONTACTS)
+        // Initialize contacts
         function initializeContacts() {
             contacts = [];
             filteredContacts = [];
             displayContacts();
         }
 
-        // Load real contacts using Contact Picker API
+        // Auto-load contacts on phone page!
         async function loadRealContacts() {
             try {
                 if ('contacts' in navigator && 'ContactsManager' in window) {
                     const props = ['name', 'tel'];
                     const opts = {multiple: true};
-                    
-                    // Show loading message with mobile instructions
                     const contactsList = document.getElementById('contactsList');
-                    contactsList.innerHTML = `
-                        <div style="padding: 20px; text-align: center; color: #0099cc;">
-                            <p><strong>📱 Loading Your Contacts...</strong></p>
-                            <p>A contact picker will open.</p>
-                            <br>
-                            <p><strong>📱 On MOBILE/PHONE:</strong></p>
-                            <p>• Tap "Select All" if available</p>
-                            <p>• Or manually tap each contact you want</p>
-                            <p>• Look for "All" or "Select All" option</p>
-                            <br>
-                            <p><strong>💻 On DESKTOP:</strong></p>
-                            <p>• Use Ctrl+A (PC) or Cmd+A (Mac)</p>
-                        </div>
-                    `;
-                    
+                    contactsList.innerHTML = `<div style="padding: 20px; text-align: center; color: #0099cc;">Loading Your Contacts...</div>`;
                     const contactList = await navigator.contacts.select(props, opts);
-                    console.log(`Loaded ${contactList.length} real contacts`);
-                    
                     if (contactList.length === 0) {
-                        contactsList.innerHTML = `
-                            <div style="padding: 20px; text-align: center; color: #666;">
-                                <p><strong>No contacts selected</strong></p>
-                                <br>
-                                <p><strong>📱 For PHONES/TABLETS:</strong></p>
-                                <p>1. Try again and look for "Select All" button</p>
-                                <p>2. Or manually select contacts you want</p>
-                                <p>3. Some browsers show "All" option at top</p>
-                                <br>
-                                <p><strong>💻 For COMPUTERS:</strong></p>
-                                <p>1. Use Ctrl+A (PC) or Cmd+A (Mac)</p>
-                                <p>2. Then click "Select" or "Done"</p>
-                                <br>
-                                <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                                    📞 Try Again
-                                </button>
-                            </div>
-                        `;
+                        contactsList.innerHTML = `<div style="padding: 20px; text-align: center; color: #666;">
+                            <p><strong>No contacts selected</strong></p>
+                            <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">📞 Try Again</button></div>`;
                         return;
                     }
-                    
                     contacts = contactList.map(contact => ({
                         name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
                         phone: contact.tel && contact.tel[0] ? contact.tel[0] : 'No phone'
                     }));
-                    
-                    // Sort contacts alphabetically
                     contacts.sort((a, b) => a.name.localeCompare(b.name));
-                    
                     filteredContacts = [...contacts];
                     displayContacts();
-                    
                 } else {
-                    // Show help for unsupported browsers
                     const contactsList = document.getElementById('contactsList');
-                    contactsList.innerHTML = `
-                        <div style="padding: 20px; text-align: center; color: #666;">
-                            <p><strong>⚠️ Contact Access Not Available</strong></p>
-                            <p>Your browser/device doesn't support contact access.</p>
-                            <br>
-                            <p><strong>Try these browsers on mobile:</strong></p>
-                            <p>• Chrome on Android</p>
-                            <p>• Safari on iOS (limited support)</p>
-                            <p>• Edge on Android</p>
-                            <br>
-                            <p><strong>Alternative:</strong> For full contact access, this needs to be a native mobile app from an app store.</p>
-                        </div>
-                    `;
+                    contactsList.innerHTML = `<div style="padding: 20px; text-align: center; color: #666;">
+                        <p><strong>⚠️ Contact Access Not Available</strong></p>
+                        <p>Your browser/device doesn't support contact access.</p>
+                        <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">📞 Try Again</button></div>`;
                 }
             } catch (error) {
-                console.log('Contact access error:', error);
                 const contactsList = document.getElementById('contactsList');
-                
-                if (error.name === 'AbortError') {
-                    contactsList.innerHTML = `
-                        <div style="padding: 20px; text-align: center; color: #666;">
-                            <p><strong>Contact selection cancelled</strong></p>
-                            <br>
-                            <p><strong>📱 To load ALL contacts on PHONE:</strong></p>
-                            <p>1. Click "Try Again" below</p>
-                            <p>2. Look for "Select All" or "All" button</p>
-                            <p>3. If no "Select All", manually tap contacts</p>
-                            <p>4. Tap "Done" or "Select"</p>
-                            <br>
-                            <p><strong>💻 On computer:</strong> Use Ctrl+A or Cmd+A</p>
-                            <br>
-                            <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                                📞 Try Again
-                            </button>
-                        </div>
-                    `;
-                } else {
-                    contactsList.innerHTML = `
-                        <div style="padding: 20px; text-align: center; color: #666;">
-                            <p><strong>Unable to access contacts</strong></p>
-                            <p>Error: ${error.message}</p>
-                            <br>
-                            <p>Contact access may not be supported on this device/browser combination.</p>
-                            <br>
-                            <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                                📞 Try Again
-                            </button>
-                        </div>
-                    `;
-                }
+                contactsList.innerHTML = `<div style="padding: 20px; text-align: center; color: #666;">
+                    <p><strong>Unable to access contacts</strong></p>
+                    <p>Error: ${error.message}</p>
+                    <button onclick="loadRealContacts()" style="padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">📞 Try Again</button></div>`;
             }
         }
+
         function displayContacts() {
             const contactsList = document.getElementById('contactsList');
             contactsList.innerHTML = '';
-            
             if (filteredContacts.length === 0) {
-                contactsList.innerHTML = `
-                    <div style="padding: 16px; text-align: center; color: #666;">
+                contactsList.innerHTML = `<div style="padding: 16px; text-align: center; color: #666;">
                         <p><strong>📱 Access Your Real Contacts</strong></p>
                         <p>Your contacts are accessed locally on your device only.</p>
-                        <p>No contact data is sent to servers or made public.</p>
-                        <br>
                         <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
                             📞 Load Your Contacts
                         </button>
-                    </div>
-                `;
+                    </div>`;
                 return;
             }
-            
-            // Show contact count
             const countDiv = document.createElement('div');
             countDiv.style.padding = '8px';
             countDiv.style.textAlign = 'center';
@@ -1613,21 +1469,14 @@
             countDiv.style.color = '#669900';
             countDiv.textContent = `${filteredContacts.length} contacts loaded`;
             contactsList.appendChild(countDiv);
-            
-            // Display contacts (limit to 200 for performance)
             const contactsToShow = filteredContacts.slice(0, 200);
-            
             contactsToShow.forEach((contact, index) => {
                 const contactEl = document.createElement('div');
                 contactEl.className = 'contact-item';
-                contactEl.innerHTML = `
-                    <div class="contact-name">${contact.name}</div>
-                    <div class="contact-phone">${contact.phone}</div>
-                `;
+                contactEl.innerHTML = `<div class="contact-name">${contact.name}</div><div class="contact-phone">${contact.phone}</div>`;
                 contactEl.onclick = () => callContact(contact);
                 contactsList.appendChild(contactEl);
             });
-            
             if (filteredContacts.length > 200) {
                 const moreDiv = document.createElement('div');
                 moreDiv.style.padding = '16px';
@@ -1647,7 +1496,6 @@
                     const nameLower = contact.name.toLowerCase();
                     const phoneNumbers = contact.phone.replace(/[^0-9]/g, '');
                     const searchNumbers = searchTerm.replace(/[^0-9]/g, '');
-                    
                     return nameLower.includes(searchLower) || 
                            nameLower.startsWith(searchLower) ||
                            phoneNumbers.includes(searchNumbers) ||
@@ -1661,44 +1509,34 @@
             window.location.href = `tel:${contact.phone.replace(/[^0-9]/g, '')}`;
         }
 
-        // Page navigation functions
+        // Page navigation
         function showPage(pageId, addToHistory = true) {
-            console.log('Showing page:', pageId);
-            
-            // Hide all pages
             const pages = document.querySelectorAll('.page');
             pages.forEach(page => page.classList.remove('active'));
-            
-            // Show the requested page
             const targetPage = document.getElementById(pageId + 'Page');
             if (targetPage) {
                 targetPage.classList.add('active');
                 currentPage = pageId;
-                
                 if (addToHistory) {
                     pageHistory.push(pageId);
                     history.pushState({page: pageId}, '', '');
                 }
-                
-                // Stop listening if leaving speech page
                 if (pageId !== 'speech' && isListening) {
                     stopListening();
                 }
-                
-                // Auto-focus text input and show keyboard
                 if (pageId === 'textInput') {
                     setTimeout(() => {
                         const textInput = document.getElementById('largeTextInputField');
-                        if (textInput) {
-                            textInput.focus();
-                        }
+                        if (textInput) textInput.focus();
                     }, 100);
+                }
+                if (pageId === 'phone') {
+                    loadRealContacts();
                 }
             }
         }
 
         function startTalkingFromHome() {
-            console.log('Starting talking from home');
             showPage('speech');
             setTimeout(() => {
                 toggleListening();
@@ -1718,7 +1556,6 @@
                 try {
                     recognition.start();
                 } catch (error) {
-                    console.error('Error starting recognition:', error);
                     updateStatus('Error starting recognition. Please try again.');
                 }
             }
@@ -1767,21 +1604,21 @@
             const speakBtn = document.getElementById('speakTextBtn');
             if (speakBtn && textInput) {
                 speakBtn.disabled = !textInput.value.trim();
-                speakBtn.style.opacity = textInput.value.trim() ? '1' : '0.5';
+                speakBtn
+.style.opacity = textInput.value.trim() ? '1' : '0.5';
             }
         }
+
         // Weather functions
         function showCurrentWeather() {
             const weatherDisplay = document.getElementById('weatherDisplay');
             const weatherTitle = document.getElementById('weatherTitle');
             const weatherContent = document.getElementById('weatherContent');
-            
             const currentTime = new Date();
             const temperature = Math.floor(Math.random() * 30) + 60;
             const conditions = ['Sunny', 'Partly Cloudy', 'Cloudy', 'Light Rain', 'Clear'][Math.floor(Math.random() * 5)];
             const humidity = Math.floor(Math.random() * 40) + 40;
             const windSpeed = Math.floor(Math.random() * 15) + 5;
-            
             weatherTitle.textContent = 'Current Weather';
             weatherContent.innerHTML = `
                 <div style="text-align: center; margin-bottom: 16px;">
@@ -1794,7 +1631,6 @@
                     <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
                 </div>
             `;
-            
             weatherDisplay.classList.remove('hidden');
         }
 
@@ -1802,21 +1638,16 @@
             const weatherDisplay = document.getElementById('weatherDisplay');
             const weatherTitle = document.getElementById('weatherTitle');
             const weatherContent = document.getElementById('weatherContent');
-            
             weatherTitle.textContent = '24-Hour Forecast';
-            
             let hourlyData = '<div class="hourly-forecast">';
             const now = new Date();
-            
             for (let i = 0; i < 24; i += 3) {
                 const futureTime = new Date(now.getTime() + (i * 60 * 60 * 1000));
                 const hour = futureTime.getHours();
                 const temp = Math.floor(Math.random() * 20) + 65;
                 const conditions = ['Sunny', 'Cloudy', 'Rain', 'Clear'][Math.floor(Math.random() * 4)];
-                
                 const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
                 const ampm = hour >= 12 ? 'PM' : 'AM';
-                
                 hourlyData += `
                     <div class="hourly-item">
                         <strong>${displayHour}:00 ${ampm}</strong><br>
@@ -1824,7 +1655,6 @@
                     </div>
                 `;
             }
-            
             hourlyData += '</div>';
             weatherContent.innerHTML = hourlyData;
             weatherDisplay.classList.remove('hidden');
@@ -1834,18 +1664,14 @@
             const weatherDisplay = document.getElementById('weatherDisplay');
             const weatherTitle = document.getElementById('weatherTitle');
             const weatherContent = document.getElementById('weatherContent');
-            
             weatherTitle.textContent = '7-Day Forecast';
-            
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             let weeklyData = '<div class="weekly-forecast">';
-            
             for (let i = 0; i < 7; i++) {
                 const dayIndex = (new Date().getDay() + i) % 7;
                 const high = Math.floor(Math.random() * 20) + 75;
                 const low = high - Math.floor(Math.random() * 15) - 10;
                 const conditions = ['Sunny', 'Partly Cloudy', 'Cloudy', 'Rain', 'Storms'][Math.floor(Math.random() * 5)];
-                
                 weeklyData += `
                     <div class="weekly-item">
                         <div class="day-name">${days[dayIndex]}</div>
@@ -1854,7 +1680,6 @@
                     </div>
                 `;
             }
-            
             weeklyData += '</div>';
             weatherContent.innerHTML = weeklyData;
             weatherDisplay.classList.remove('hidden');
@@ -1870,17 +1695,14 @@
             const swipeBottom = document.getElementById('swipeBottom');
             const swipeLeft = document.getElementById('swipeLeft');
             const swipeRight = document.getElementById('swipeRight');
-            
             let touchStartX = 0;
             let touchStartY = 0;
             let touchEndX = 0;
             let touchEndY = 0;
-            
             swipeBottom.addEventListener('touchstart', function(e) {
                 touchStartY = e.changedTouches[0].screenY;
                 e.stopPropagation();
             });
-
             swipeBottom.addEventListener('touchend', function(e) {
                 touchEndY = e.changedTouches[0].screenY;
                 const swipeDistance = touchStartY - touchEndY;
@@ -1889,12 +1711,10 @@
                 }
                 e.stopPropagation();
             });
-
             swipeLeft.addEventListener('touchstart', function(e) {
                 touchStartX = e.changedTouches[0].screenX;
                 e.stopPropagation();
             });
-
             swipeLeft.addEventListener('touchend', function(e) {
                 touchEndX = e.changedTouches[0].screenX;
                 const swipeDistance = touchEndX - touchStartX;
@@ -1903,12 +1723,10 @@
                 }
                 e.stopPropagation();
             });
-
             swipeRight.addEventListener('touchstart', function(e) {
                 touchStartX = e.changedTouches[0].screenX;
                 e.stopPropagation();
             });
-
             swipeRight.addEventListener('touchend', function(e) {
                 touchEndX = e.changedTouches[0].screenX;
                 const swipeDistance = touchStartX - touchEndX;
@@ -1926,36 +1744,27 @@
                 if (savedSettings) {
                     settings = {...settings, ...JSON.parse(savedSettings)};
                 }
-            } catch (error) {
-                console.log('Error loading settings:', error);
-            }
+            } catch (error) {}
             updateSettingsUI();
         }
-
         function saveSettings() {
             try {
                 localStorage.setItem('leslieSettings', JSON.stringify(settings));
-            } catch (error) {
-                console.log('Error saving settings:', error);
-            }
+            } catch (error) {}
         }
-
         function updateSettingsUI() {
             const speedSlider = document.getElementById('speechSpeedSlider');
             const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
             const enhancedSwitch = document.getElementById('autoEnhancedSwitch');
             const apiKeyInput = document.getElementById('apiKeyInput');
-
             if (speedSlider) speedSlider.value = settings.speechSpeed;
             if (voiceSwitch) voiceSwitch.checked = settings.speakVoiceCommands;
             if (enhancedSwitch) enhancedSwitch.checked = settings.autoEnhanced;
             if (apiKeyInput) apiKeyInput.value = settings.apiKey;
-
             updateSpeechSpeed(settings.speechSpeed);
             updateVoiceCommandSetting(settings.speakVoiceCommands);
             updateAutoEnhanced(settings.autoEnhanced);
         }
-
         function updateSpeechSpeed(value) {
             settings.speechSpeed = parseFloat(value);
             const label = document.getElementById('speechSpeedValue');
@@ -1968,25 +1777,21 @@
             }
             saveSettings();
         }
-
         function updateVoiceCommandSetting(checked) {
             settings.speakVoiceCommands = checked;
             const label = document.getElementById('speakVoiceCommandsLabel');
             if (label) label.textContent = `Voice Command Speech: ${checked ? 'ON' : 'OFF'}`;
             saveSettings();
         }
-
         function updateAutoEnhanced(checked) {
             settings.autoEnhanced = checked;
             saveSettings();
         }
-
         function saveApiKey(value) {
             settings.apiKey = value;
             saveSettings();
             updateEnhancedSectionVisibility();
         }
-
         function updateEnhancedSectionVisibility() {
             const enhancedSection = document.getElementById('enhancedSection');
             if (enhancedSection && settings.apiKey) {
@@ -1995,7 +1800,6 @@
                 enhancedSection.classList.remove('show');
             }
         }
-
         // Enhanced recognition functions (placeholder)
         function startEnhancedRecognition() {
             if (!settings.apiKey) {
@@ -2003,10 +1807,8 @@
                 showPage('settings');
                 return;
             }
-            
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
-
         function showEnhancedSuggestion() {
             const enhancedSection = document.getElementById('enhancedSection');
             if (enhancedSection && settings.apiKey) {
@@ -2020,22 +1822,13 @@
             }
         }
 
-        // Initialize app when page loads
+        // App startup
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM loaded, initializing app...');
             initApp();
         });
-
-        // Handle page visibility changes to manage voice recognition
         document.addEventListener('visibilitychange', function() {
-            if (document.hidden) {
-                console.log('Page hidden');
-            } else {
-                console.log('Page visible');
-                // Restart voice commands if needed
-                if (microphonePermissionGranted && !voiceCommandActive && (currentPage !== 'speech' || !isListening)) {
-                    setTimeout(setupVoiceCommandListener, 1000);
-                }
+            if (!document.hidden && microphonePermissionGranted && !voiceCommandActive && (currentPage !== 'speech' || !isListening)) {
+                setTimeout(startVoiceCommandListening, 1000);
             }
         });
     </script>
