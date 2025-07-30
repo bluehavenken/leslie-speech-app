@@ -59,6 +59,11 @@
             text-align: center;
             padding: 16px;
         }
+        .welcome-text {
+            font-size: 18px;
+            margin-bottom: 32px;
+            line-height: 1.5;
+        }
         .main-button {
             width: 100%;
             height: 80px;
@@ -141,7 +146,6 @@
             margin-bottom: 8px;
             border-left: 4px solid #0099cc;
         }
-        /* Always keep control-row stuck at bottom! */
         .control-row {
             display: flex;
             justify-content: center;
@@ -537,7 +541,6 @@ let filteredContacts = [];
 let currentPhrase = '';
 let isSpeaking = false;
 let microphonePermissionGranted = false;
-let voiceCommandActive = false;
 let phraseHistory = [];
 let demoContacts = [
     {name: "John Smith", phone: "555-1212"},
@@ -551,7 +554,6 @@ let settings = {
     pauseBetweenWords: 1.0
 };
 
-// --- MAIN APP INIT ---
 document.addEventListener('DOMContentLoaded', function() {
     loadSettings();
     updateSettingsUI();
@@ -643,7 +645,7 @@ function setupSpeechRecognition() {
         }
         if (finalText.trim()) {
             if (!finalText.toLowerCase().startsWith('hey leslie')) {
-                // Only show and speak last phrase (per your new instructions)
+                // Only show and speak last phrase
                 phraseHistory = [finalText.trim()];
                 updateCurrentPhraseDisplay();
                 updateStatus('✅ Heard: ' + finalText.trim());
@@ -720,7 +722,6 @@ function clearSpeechText() {
     updateCurrentPhraseDisplay();
     updateStatus('Text cleared - Ready to listen');
 }
-
 // --- TEXT INPUT PAGE ---
 function speakTextInput() {
     const textInput = document.getElementById('largeTextInputField');
@@ -939,44 +940,37 @@ function updatePauseBetweenWords(value) {
     document.getElementById('pauseValue').textContent = settings.pauseBetweenWords.toFixed(1) + 's';
     saveSettings();
 }
+// --- VOICE COMMANDS LOGIC ---
+function processVoiceCommand(text) {
+    let t = text.replace(/^hey leslie[ ,:]*|[.!?]+$/gi, '').trim();
+    if (!t) return;
 
-// --- VOICE COMMANDS LOGIC (no extra commands!) ---
-function processVoiceCommand(transcript) {
-    let t = transcript.replace(/^hey leslie\s*/i, '').trim();
-    if (t === 'start talking') { startTalkingFromHome(); doVoice('Starting speech recognition.'); return; }
-    if (t === 'start texting') { showPage('textInput'); doVoice('Opening text input.'); return; }
-    if (t.startsWith('call')) {
-        let arg = t.slice(4).trim().replace(/["']/g,'');
+    // Voice command routing
+    if (t === 'start talking') { showPage('speech'); setTimeout(() => toggleListening(), 500); doVoice('Speech recognition started.'); return; }
+    if (t === 'start texting') { showPage('textInput'); doVoice('Text input page opened.'); return; }
+    if (t.startsWith('call ')) {
+        let arg = t.replace(/^call /, '').trim();
         handleCallCommand(arg);
         return;
     }
-    if (
-        t === 'home' || t === 'go home' || t === 'go homes'
-    ) { showPage('home'); doVoice('Returning to home page.'); return; }
-    if (
-        t === 'current weather' || t === 'weather'
-    ) { showCurrentWeather(); doVoice('Showing today\'s weather.'); return; }
-    if (
-        t === '7 day forecast' || t === '7 day'
-    ) { showWeeklyWeather(); doVoice('Showing 7 day forecast.'); return; }
-    if (
-        t === 'hourly' || t === 'hourly forecast'
-    ) { showHourlyWeather(); doVoice('Showing hourly forecast
-.'); return; }
+    if (t === 'home' || t === 'go homes') { showPage('home'); doVoice('Home page.'); return; }
+    if (t === 'current weather' || t === 'weather') { showCurrentWeather(); doVoice('Here is the current weather.'); return; }
+    if (t === '7 day forecast' || t === '7 day') { showWeeklyWeather(); doVoice('Here is the 7 day forecast.'); return; }
+    if (t === 'hourly' || t === 'hourly forecast') { showHourlyWeather(); doVoice('Here is the hourly forecast.'); return; }
     if (t === 'clear text') { clearSpeechText(); doVoice('Speech text cleared.'); return; }
-    if (t === 'enhanced mode') { doVoice('Enhanced recognition not yet implemented.'); return; }
-    if (t === 'close') { hideWeather(); doVoice('Closed weather display.'); return; }
-    if (t === 'help') { showPage('commands'); doVoice('Here are available commands.'); return; }
+    if (t === 'enhanced mode') { doVoice('Enhanced recognition is not implemented in this version.'); return; }
+    if (t === 'close') { hideWeather(); doVoice('Weather display closed.'); return; }
+    if (t === 'help') { showPage('commands'); doVoice('Here are the available commands.'); return; }
     if (t === 'pause more') {
         settings.pauseBetweenWords = Math.min(3.0, (settings.pauseBetweenWords || 1.0) + 0.5);
         updateSettingsUI();
-        doVoice('Pause increased.');
+        doVoice('Pause between words increased.');
         return;
     }
     if (t === 'pause less') {
         settings.pauseBetweenWords = Math.max(0, (settings.pauseBetweenWords || 1.0) - 0.5);
         updateSettingsUI();
-        doVoice('Pause decreased.');
+        doVoice('Pause between words decreased.');
         return;
     }
     if (t === 'speak faster') {
@@ -994,19 +988,19 @@ function processVoiceCommand(transcript) {
     if (t === 'turn off voice command speech') {
         settings.speakVoiceCommands = false;
         updateSettingsUI();
-        doVoice('Voice command speech is now off.');
+        doVoice('Voice command speech turned off.');
         return;
     }
     if (t === 'turn on voice command speech') {
         settings.speakVoiceCommands = true;
         updateSettingsUI();
-        doVoice('Voice command speech is now on.');
+        doVoice('Voice command speech turned on.');
         return;
     }
-    // fallback: no match, ignore
+    // If not recognized, ignore (no fallback "I didn't understand")
 }
 function doVoice(text) {
-    if (settings.speakVoiceCommands && text) leslieSpeak(text);
+    if (settings.speakVoiceCommands && text.trim()) leslieSpeak(text);
 }
 function leslieSpeak(text, onend) {
     if (!text) return;
@@ -1025,12 +1019,8 @@ function leslieSpeak(text, onend) {
     }
     speakNext();
 }
-
-// --- PHONE "CALL" COMMAND ---
 function handleCallCommand(arg) {
-    // Try to find contact by name (case insensitive, allow partial matches)
     if (/^\d{3,}/.test(arg.replace(/\D/g,''))) {
-        // Looks like a phone number, call directly
         doVoice('Calling ' + arg.replace(/[^\d]/g, ''));
         window.location.href = 'tel:' + arg.replace(/[^\d]/g, '');
         return;
@@ -1047,7 +1037,7 @@ function handleCallCommand(arg) {
     }
 }
 
-// --- WEATHER ---
+// --- WEATHER MODALS ---
 function showCurrentWeather() {
     const weatherDisplay = document.getElementById('weatherDisplay');
     const weatherTitle = document.getElementById('weatherTitle');
@@ -1121,16 +1111,14 @@ function showWeeklyWeather() {
     weatherDisplay.classList.remove('hidden');
 }
 function hideWeather() {
-    const weatherDisplay = document.getElementById('weatherDisplay');
-    weatherDisplay.classList.add('hidden');
+    document.getElementById('weatherDisplay').classList.add('hidden');
 }
 
-// --- HISTORY/BACK ---
+// --- BROWSER HISTORY ---
 window.addEventListener('popstate', function(event) {
     event.preventDefault();
     navigateBack();
 });
-
 </script>
 </body>
 </html>
