@@ -388,3 +388,542 @@
     <!-- ... -->
     <!-- Do NOT cut anything from your original structure! -->
     <!-- At the bottom, before </body>, paste the full JS below -->
+<script>
+let recognition = null;
+let isListening = false;
+let speechSynth = window.speechSynthesis;
+let currentPage = 'home';
+let pageHistory = ['home'];
+let contacts = [];
+let filteredContacts = [];
+let currentPhrase = '';
+let isSpeaking = false;
+let phraseHistory = [];
+let silenceTimeout = null;
+let voiceCommandRecognition = null;
+let microphonePermissionGranted = false;
+
+// Settings object
+let settings = {
+    speechSpeed: 1.0,
+    pauseBetweenWords: 1.0,
+    speakVoiceCommands: true,
+};
+
+// ------- PAGE NAVIGATION / BUTTONS -------
+function showPage(pageId, addToHistory = true) {
+    document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+    const pageEl = document.getElementById(pageId + 'Page');
+    if (pageEl) {
+        pageEl.classList.add('active');
+        currentPage = pageId;
+        if (addToHistory) {
+            pageHistory.push(pageId);
+            if (window.history && window.history.pushState) {
+                window.history.pushState({page: pageId}, '', '');
+            }
+        }
+        // Home resets all
+        if (pageId === 'home') stopListening();
+        if (pageId === 'speech') {
+            updateCurrentPhraseDisplay();
+            updateStatus('Ready to listen - Click "START TALKING" below');
+        }
+        if (pageId === 'textInput') {
+            setTimeout(() => {
+                const txt = document.getElementById('largeTextInputField');
+                if (txt) { txt.value = ''; txt.focus(); updateTextSpeakButton(); }
+            }, 200);
+            enableTextSpeakButton();
+        }
+        if (pageId === 'commands') fillCommandsList();
+        if (pageId === 'settings') updateSettingsUI();
+    }
+}
+function navigateBack() {
+    if (pageHistory.length > 1) {
+        pageHistory.pop();
+        showPage(pageHistory[pageHistory.length - 1], false);
+    } else {
+        showPage('home', false);
+    }
+}
+window.addEventListener('popstate', (e) => { navigateBack(); });
+
+function wireMainButtons() {
+    document.getElementById('btnStartTalking').onclick = () => { showPage('speech'); };
+    document.getElementById('btnStartTexting').onclick = () => { showPage('textInput'); };
+    document.getElementById('btnPhoneCall').onclick = () => { showPage('phone'); };
+    document.getElementById('btnCommands').onclick = () => { showPage('commands'); };
+    document.getElementById('btnCloseSpeech').onclick = () => { showPage('home'); };
+    document.getElementById('btnCloseText').onclick = () => { showPage('home'); };
+    document.getElementById('btnClosePhone').onclick = () => { showPage('home'); };
+    document.getElementById('btnCloseCommands').onclick = () => { showPage('home'); };
+    document.getElementById('btnCloseSettings').onclick = () => { showPage('home'); };
+    document.getElementById('btnTextHome').onclick = () => { showPage('home'); };
+    document.getElementById('btnPhoneHome').onclick = () => { showPage('home'); };
+    document.getElementById('btnSettingsHome').onclick = () => { showPage('home'); };
+    document.getElementById('listenButton').onclick = toggleListening;
+    document.getElementById('speakTextBtn').onclick = speakTextInput;
+    document.getElementById('largeTextInputField').oninput = updateTextSpeakButton;
+}
+
+// LESLIE COMMANDS: RENDER LIST
+function fillCommandsList() {
+    const cmdList = [
+        {k:'Hey Leslie Start Talking', d:'Go to speech recognition'},
+        {k:'Hey Leslie Start Texting', d:'Go to text input'},
+        {k:'Hey Leslie Call "John Doe"', d:'Call contact by name'},
+        {k:'Hey Leslie Call "555-123-4567"', d:'Call a phone number'},
+        {k:'Hey Leslie Home', d:'Go to main page'},
+        {k:'Hey Leslie Current Weather', d:'Show current weather'},
+        {k:'Hey Leslie Weather', d:'Show today\'s weather with date'},
+        {k:'Hey Leslie 7 Day Forecast', d:'Show 7-day forecast'},
+        {k:'Hey Leslie 7 Day', d:'Show 7-day forecast'},
+        {k:'Hey Leslie Hourly', d:'Show hourly forecast'},
+        {k:'Hey Leslie Hourly Forecast', d:'Show hourly forecast'},
+        {k:'Hey Leslie Clear Text', d:'Clear speech recognition text'},
+        {k:'Hey Leslie Enhanced Mode', d:'Switch to enhanced mode (not available)'},
+        {k:'Hey Leslie Close', d:'Close weather display'},
+        {k:'Hey Leslie Go Homes', d:'Go to home page'},
+        {k:'Hey Leslie Help', d:'Show this command list'},
+        {k:'Hey Leslie Pause More', d:'Increase pause between words'},
+        {k:'Hey Leslie Pause Less', d:'Decrease pause between words'},
+        {k:'Hey Leslie Speak Faster', d:'Speak faster'},
+        {k:'Hey Leslie Talk Slower', d:'Speak slower'},
+        {k:'Hey Leslie Turn off Voice Command Speech', d:'Disable voice feedback'},
+        {k:'Hey Leslie Turn On Voice Command Speech', d:'Enable voice feedback'},
+    ];
+    let html = '';
+    for (let cmd of cmdList) {
+        html += `<div class="command-list-item"><span class="command-key">${cmd.k}</span><span class="command-desc"> – ${cmd.d}</span></div>`;
+    }
+    document.getElementById('leslieCommandsText').innerHTML = html;
+}
+
+// SETTINGS UI & CONTROLS
+function updateSettingsUI() {
+    // Speech speed
+    const speedSlider = document.getElementById('speechSpeedSlider');
+    const speedLabel = document.getElementById('speechSpeedValue');
+    speedSlider.value = settings.speechSpeed;
+    speedLabel.textContent = settings.speechSpeed == 1.0 ? 'Normal (1.0x)' : settings.speechSpeed + 'x';
+    speedSlider.oninput = (e) => {
+        settings.speechSpeed = parseFloat(e.target.value);
+        speedLabel.textContent = settings.speechSpeed == 1.0 ? 'Normal (1.0x)' : settings.speechSpeed + 'x';
+    };
+    // Pause between words
+    const pauseSlider = document.getElementById('pauseSlider');
+    const pauseLabel = document.getElementById('pauseValue');
+    pauseSlider.value = settings.pauseBetweenWords;
+    pauseLabel.textContent = settings.pauseBetweenWords.toFixed(1) + 's';
+    pauseSlider.oninput = (e) => {
+        settings.pauseBetweenWords = parseFloat(e.target.value);
+        pauseLabel.textContent = settings.pauseBetweenWords.toFixed(1) + 's';
+    };
+    // Voice command speech toggle
+    const vcSwitch = document.getElementById('speakVoiceCommandsSwitch');
+    const vcLabel = document.getElementById('speakVoiceCommandsLabel');
+    vcSwitch.checked = !!settings.speakVoiceCommands;
+    vcLabel.textContent = 'Voice Command Speech: ' + (settings.speakVoiceCommands ? 'ON' : 'OFF');
+    vcSwitch.onchange = (e) => {
+        settings.speakVoiceCommands = !!e.target.checked;
+        vcLabel.textContent = 'Voice Command Speech: ' + (settings.speakVoiceCommands ? 'ON' : 'OFF');
+    };
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    wireMainButtons();
+    setupSpeechRecognition();
+    setupVoiceCommandListener();
+    setupSwipeDetection();
+    fillCommandsList();
+    updateSettingsUI();
+    enableTextSpeakButton();
+});
+
+// --- SPEECH RECOGNITION ---
+function setupSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        updateStatus('Speech recognition not supported. Use Chrome, Edge, or Safari.');
+        return;
+    }
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    recognition.onstart = function() {
+        isListening = true;
+        updateListenButton();
+        updateStatus('🎤 Listening... Say something!');
+        silenceTimeout && clearTimeout(silenceTimeout);
+        silenceTimeout = setTimeout(stopListening, 180000); // 3 minutes
+    };
+    recognition.onend = function() {
+        isListening = false;
+        updateListenButton();
+        updateStatus('Stopped listening');
+    };
+    recognition.onerror = function(event) {
+        updateStatus('Speech recognition error: ' + event.error);
+        isListening = false;
+        updateListenButton();
+    };
+    recognition.onresult = function(event) {
+        let interim = '';
+        let final = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                final += transcript;
+            } else {
+                interim += transcript;
+            }
+        }
+        if (final && /^hey leslie[ .,:]/i.test(final)) {
+            processVoiceCommand(final.toLowerCase().trim());
+            updateStatus('Command performed.');
+            currentPhrase = '';
+            updateCurrentPhraseDisplay();
+            return;
+        }
+        if (final.trim()) {
+            currentPhrase = final.trim();
+            updateCurrentPhraseDisplay();
+            updateStatus('✅ Heard: ' + final.trim());
+            leslieSpeak(currentPhrase);
+            currentPhrase = '';
+        } else if (interim.trim()) {
+            currentPhrase = interim.trim();
+            updateCurrentPhraseDisplay(true);
+            updateStatus('🔄 Listening: ' + interim.trim());
+        }
+        silenceTimeout && clearTimeout(silenceTimeout);
+        silenceTimeout = setTimeout(stopListening, 180000);
+    };
+}
+function toggleListening() {
+    if (isListening) stopListening();
+    else startListening();
+}
+function startListening() {
+    if (recognition && !isListening) {
+        try { recognition.start(); } catch (e) {}
+    }
+}
+function stopListening() {
+    if (recognition && isListening) {
+        isListening = false;
+        recognition.stop();
+        updateStatus('Stopped listening');
+        updateListenButton();
+    }
+}
+function updateListenButton() {
+    const listenButton = document.getElementById('listenButton');
+    if (isListening) {
+        listenButton.textContent = 'STOP LISTENING';
+        listenButton.className = 'control-btn btn-stop';
+    } else {
+        listenButton.textContent = 'START TALKING';
+        listenButton.className = 'control-btn btn-listen';
+    }
+}
+function updateStatus(msg) {
+    const el = document.getElementById('statusText');
+    if (el) el.textContent = msg;
+}
+function updateCurrentPhraseDisplay() {
+    const phraseEl = document.getElementById('currentPhrase');
+    if (phraseEl) {
+        if (currentPhrase) {
+            phraseEl.innerHTML = `<div class="current-phrase">${currentPhrase}</div>`;
+        } else {
+            phraseEl.innerHTML = '<div class="current-phrase">Your speech will appear here...</div>';
+        }
+    }
+}
+
+// --- SPEAKING ---
+function leslieSpeak(text) {
+    if (!text) return;
+    speechSynth.cancel();
+    let utter = new SpeechSynthesisUtterance(text);
+    utter.rate = settings.speechSpeed || 1.0;
+    utter.onend = function() {};
+    speechSynth.speak(utter);
+}
+
+// --- TEXT INPUT PAGE SPEAK BUTTON ---
+// Always enabled & purple on page startup (as per your fix)
+function speakTextInput() {
+    const txt = document.getElementById('largeTextInputField').value.trim();
+    if (txt) leslieSpeak(txt);
+}
+function enableTextSpeakButton() {
+    const btn = document.getElementById('speakTextBtn');
+    btn.disabled = false; // always enabled
+    btn.style.background = '#9933cc';
+    btn.style.color = '#fff';
+}
+
+// (optional) update button style if you want to ever disable
+function updateTextSpeakButton() {
+    enableTextSpeakButton(); // never disables!
+}
+
+// --- CONTACTS LOGIC ---
+function loadRealContacts() {
+    const contactsList = document.getElementById('contactsList');
+    if (!('contacts' in navigator && 'ContactsManager' in window)) {
+        contactsList.innerHTML = `
+            <div style="padding: 20px; text-align: center; color: #cc0000;">
+                <strong>No contacts available.</strong><br>Your device or browser may not support contacts, or you denied permission.
+            </div>`;
+        return;
+    }
+    // Must be in a user gesture handler!
+    navigator.contacts.select(['name', 'tel'], {multiple:true})
+        .then(list => {
+            if (!list.length) {
+                contactsList.innerHTML = '<div style="padding:18px; text-align:center; color:#0099cc;">No contacts found.</div>';
+                return;
+            }
+            contacts = list.map(c => ({
+                name: c.name && c.name[0] ? c.name[0] : 'Unknown',
+                phone: c.tel && c.tel[0] ? c.tel[0] : 'No phone'
+            }));
+            filteredContacts = [...contacts];
+            displayContacts();
+        })
+        .catch(error => {
+            contactsList.innerHTML = `<div style="padding:18px; text-align:center; color:#cc0000;">
+                <strong>No contacts available</strong><br>Your device or browser may not support contacts, or you denied permission.<br>
+                <span style="font-size:13px;">Error: ${error.message || error}</span></div>`;
+        });
+}
+function displayContacts() {
+    const contactsList = document.getElementById('contactsList');
+    contactsList.innerHTML = '';
+    if (!filteredContacts.length) {
+        contactsList.innerHTML = '<div style="padding:18px; text-align:center; color:#0099cc;">No contacts loaded.</div>';
+        return;
+    }
+    filteredContacts.slice(0,300).forEach(contact => {
+        const div = document.createElement('div');
+        div.className = 'contact-item';
+        div.innerHTML = `<div class="contact-name">${contact.name}</div><div class="contact-phone">${contact.phone}</div>`;
+        div.onclick = () => { window.location.href = 'tel:' + contact.phone.replace(/[^\d]/g, ''); };
+        contactsList.appendChild(div);
+    });
+}
+function filterContacts(term) {
+    if (!term.trim()) { filteredContacts = [...contacts]; }
+    else {
+        const t = term.toLowerCase().trim();
+        filteredContacts = contacts.filter(c =>
+            c.name.toLowerCase().includes(t) ||
+            c.phone.replace(/[^\d]/g,'').includes(t.replace(/[^\d]/g,''))
+        );
+    }
+    displayContacts();
+}
+
+// --- SWIPE DETECTION ---
+function setupSwipeDetection() {
+    let startX=0, startY=0, endX=0, endY=0;
+    function addSwipeEvents(edgeId, callback) {
+        const el = document.getElementById(edgeId);
+        el.addEventListener('touchstart', e => {
+            if (e.touches.length) {
+                startX = e.touches[0].screenX;
+                startY = e.touches[0].screenY;
+            }
+        });
+        el.addEventListener('touchend', e => {
+            if (e.changedTouches.length) {
+                endX = e.changedTouches[0].screenX;
+                endY = e.changedTouches[0].screenY;
+                callback();
+            }
+        });
+    }
+    addSwipeEvents('swipeBottom', () => showCurrentWeather());
+    addSwipeEvents('swipeLeft', () => showHourlyWeather());
+    addSwipeEvents('swipeRight', () => showWeeklyWeather());
+}
+
+// --- WEATHER MODALS ---
+function showCurrentWeather() {
+    const weatherDisplay = document.getElementById('weatherDisplay');
+    const weatherTitle = document.getElementById('weatherTitle');
+    const weatherContent = document.getElementById('weatherContent');
+    const currentTime = new Date();
+    const temperature = Math.floor(Math.random() * 30) + 60;
+    const conditions = ['Sunny', 'Partly Cloudy', 'Cloudy', 'Light Rain', 'Clear'][Math.floor(Math.random() * 5)];
+    const humidity = Math.floor(Math.random() * 40) + 40;
+    const windSpeed = Math.floor(Math.random() * 15) + 5;
+    weatherTitle.textContent = `Current Weather (${currentTime.toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'})})`;
+    weatherContent.innerHTML = `
+        <div style="text-align: center; margin-bottom: 16px;">
+            <div style="font-size: 32px; font-weight: bold; color: #0099cc;">${temperature}°F</div>
+            <div style="font-size: 20px; font-weight: bold; margin: 8px 0;">${conditions}</div>
+        </div>
+        <div style="line-height: 1.8;">
+            <strong>Humidity:</strong> ${humidity}%<br>
+            <strong>Wind:</strong> ${windSpeed} mph<br>
+            <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
+        </div>
+    `;
+    weatherDisplay.classList.remove('hidden');
+}
+function showHourlyWeather() {
+    const weatherDisplay = document.getElementById('weatherDisplay');
+    const weatherTitle = document.getElementById('weatherTitle');
+    const weatherContent = document.getElementById('weatherContent');
+    weatherTitle.textContent = '24-Hour Forecast';
+    let hourlyData = '<div class="hourly-forecast">';
+    const now = new Date();
+    for (let i = 0; i < 24; i += 3) {
+        const futureTime = new Date(now.getTime() + (i * 60 * 60 * 1000));
+        const hour = futureTime.getHours();
+        const temp = Math.floor(Math.random() * 20) + 65;
+        const conditions = ['Sunny', 'Cloudy', 'Rain', 'Clear'][Math.floor(Math.random() * 4)];
+        const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+        const ampm = hour >= 12 ? 'PM' : 'AM';
+        hourlyData += `
+            <div class="hourly-item">
+                <strong>${displayHour}:00 ${ampm}</strong><br>
+                ${temp}°F ${conditions}
+            </div>
+        `;
+    }
+    hourlyData += '</div>';
+    weatherContent.innerHTML = hourlyData;
+    weatherDisplay.classList.remove('hidden');
+}
+function show
+function showWeeklyWeather() {
+    const weatherDisplay = document.getElementById('weatherDisplay');
+    const weatherTitle = document.getElementById('weatherTitle');
+    const weatherContent = document.getElementById('weatherContent');
+    weatherTitle.textContent = '7-Day Forecast';
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    let weeklyData = '<div class="weekly-forecast">';
+    for (let i = 0; i < 7; i++) {
+        const dayIndex = (new Date().getDay() + i) % 7;
+        const high = Math.floor(Math.random() * 20) + 75;
+        const low = high - Math.floor(Math.random() * 15) - 10;
+        const conditions = ['Sunny', 'Partly Cloudy', 'Cloudy', 'Rain', 'Storms'][Math.floor(Math.random() * 5)];
+        weeklyData += `
+            <div class="weekly-item">
+                <div class="day-name">${days[dayIndex]}</div>
+                <div class="day-temps">${high}°/${low}°</div>
+                <div class="day-condition">${conditions}</div>
+            </div>
+        `;
+    }
+    weeklyData += '</div>';
+    weatherContent.innerHTML = weeklyData;
+    weatherDisplay.classList.remove('hidden');
+}
+function hideWeather() {
+    document.getElementById('weatherDisplay').classList.add('hidden');
+}
+
+// --- VOICE COMMAND LISTENER ---
+function setupVoiceCommandListener() {
+    // Browser privacy: this needs to be started after a user gesture
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    if (voiceCommandRecognition) {
+        try { voiceCommandRecognition.abort(); } catch (e) {}
+        voiceCommandRecognition = null;
+    }
+    voiceCommandRecognition = new SpeechRecognition();
+    voiceCommandRecognition.continuous = true;
+    voiceCommandRecognition.interimResults = false;
+    voiceCommandRecognition.lang = 'en-US';
+    voiceCommandRecognition.onresult = function(event) {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+                let transcript = event.results[i][0].transcript.toLowerCase().trim();
+                if (/^hey leslie /.test(transcript)) {
+                    processVoiceCommand(transcript);
+                }
+            }
+        }
+    };
+    voiceCommandRecognition.onerror = function(event) {
+        setTimeout(() => { try { voiceCommandRecognition.start(); } catch(e){} }, 2500);
+    };
+    voiceCommandRecognition.onend = function() {
+        setTimeout(() => { try { voiceCommandRecognition.start(); } catch(e){} }, 1500);
+    };
+    // Try to start after a brief delay
+    setTimeout(() => { try { voiceCommandRecognition.start(); } catch(e){} }, 1500);
+}
+
+// --- VOICE COMMAND LOGIC ---
+function processVoiceCommand(text) {
+    let t = text.replace(/^hey leslie[ ,:]*|[.!?]+$/gi, '').trim();
+    if (!t) return;
+    if (t === 'start talking') { showPage('speech'); setTimeout(() => toggleListening(), 300); return; }
+    if (t === 'start texting') { showPage('textInput'); return; }
+    if (t.startsWith('call ')) {
+        let arg = t.replace(/^call /, '').trim();
+        handleCallCommand(arg);
+        return;
+    }
+    if (t === 'home' || t === 'go homes') { showPage('home'); return; }
+    if (t === 'current weather' || t === 'weather') { showCurrentWeather(); return; }
+    if (t === '7 day forecast' || t === '7 day') { showWeeklyWeather(); return; }
+    if (t === 'hourly' || t === 'hourly forecast') { showHourlyWeather(); return; }
+    if (t === 'clear text') { clearSpeechText(); return; }
+    if (t === 'enhanced mode') { /* Not implemented */ return; }
+    if (t === 'close') { hideWeather(); return; }
+    if (t === 'help') { showPage('commands'); return; }
+    if (t === 'pause more') {
+        settings.pauseBetweenWords = Math.min(3.0, (settings.pauseBetweenWords || 1.0) + 0.5);
+        updateSettingsUI(); return;
+    }
+    if (t === 'pause less') {
+        settings.pauseBetweenWords = Math.max(0, (settings.pauseBetweenWords || 1.0) - 0.5);
+        updateSettingsUI(); return;
+    }
+    if (t === 'speak faster') {
+        settings.speechSpeed = Math.min(2.0, (settings.speechSpeed || 1.0) + 0.5);
+        updateSettingsUI(); return;
+    }
+    if (t === 'talk slower') {
+        settings.speechSpeed = Math.max(0.5, (settings.speechSpeed || 1.0) - 0.5);
+        updateSettingsUI(); return;
+    }
+    if (t === 'turn off voice command speech') {
+        settings.speakVoiceCommands = false; updateSettingsUI(); return;
+    }
+    if (t === 'turn on voice command speech') {
+        settings.speakVoiceCommands = true; updateSettingsUI(); return;
+    }
+    // not recognized: ignore
+}
+function handleCallCommand(arg) {
+    if (/^\d{3,}/.test(arg.replace(/\D/g,''))) {
+        window.location.href = 'tel:' + arg.replace(/[^\d]/g, '');
+        return;
+    }
+    let lower = arg.toLowerCase();
+    let found = contacts.find(c => c.name.toLowerCase().includes(lower));
+    if (found) {
+        window.location.href = 'tel:' + found.phone.replace(/[^\d]/g, '');
+    }
+}
+
+// --- CLEAR SPEECH TEXT ---
+function clearSpeechText() {
+    currentPhrase = '';
+    updateCurrentPhraseDisplay();
+    updateStatus('Text cleared - Ready to listen');
+}
+</script>
