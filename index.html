@@ -671,12 +671,12 @@
                     <button class="close-btn" id="btnCloseText">&times;</button>
                 </div>
                 <div class="text-input-content">
-                    <div class="speak-text-container" style="margin-top: 36px;">
+                    <div class="speak-text-container" style="margin-top: 24px;">
                         <button class="speak-phrase-btn" id="speakTextBtn">
                             🔊 SPEAK TEXT
                         </button>
                         <textarea class="text-input large-text-input" id="largeTextInputField"
-                                  placeholder="Type your message here..." style="margin-top: 36px;"></textarea>
+                                  placeholder="Type your message here..." style="margin-top: 24px;"></textarea>
                     </div>
                     <div style="padding: 16px; text-align: center; background-color: #f0f0f0; margin-top: 8px; position: fixed; bottom: 0; left: 0; right: 0; z-index: 999;">
                         <button class="btn-home" id="btnTextHome">
@@ -938,7 +938,7 @@
         voiceCommandRecognition.continuous = true;
         voiceCommandRecognition.interimResults = false;
         voiceCommandRecognition.lang = 'en-US';
-        voiceCommandRecognition.maxAlternatives = 1;
+        voiceCommandRecognition.maxAlternatives = 3; // Increase alternatives for better recognition
 
         voiceCommandRecognition.onstart = function() {
             voiceCommandActive = true;
@@ -947,27 +947,31 @@
         voiceCommandRecognition.onresult = function(event) {
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 if (event.results[i].isFinal) {
-                    const transcript = event.results[i][0].transcript.toLowerCase().trim();
-                    console.log('Voice command heard:', transcript); // Debug log
-                    if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
-                        processVoiceCommand(transcript);
+                    // Try all alternatives for better command recognition
+                    for (let j = 0; j < event.results[i].length; j++) {
+                        const transcript = event.results[i][j].transcript.toLowerCase().trim();
+                        console.log(`Voice command heard (alt ${j}):`, transcript);
+                        if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
+                            processVoiceCommand(transcript);
+                            return; // Stop after first successful match
+                        }
                     }
                 }
             }
         };
 
         voiceCommandRecognition.onerror = function(event) {
-            console.log('Voice command error:', event.error); // Debug log  
+            console.log('Voice command error:', event.error);
             voiceCommandActive = false;
             if (event.error !== 'not-allowed' && event.error !== 'aborted') {
-                setTimeout(startVoiceCommandListening, 2000);
+                setTimeout(startVoiceCommandListening, 1000); // Faster restart
             }
         };
 
         voiceCommandRecognition.onend = function() {
             voiceCommandActive = false;
             if (currentPage !== 'speech' || !isListening) {
-                setTimeout(startVoiceCommandListening, 1000);
+                setTimeout(startVoiceCommandListening, 500); // Even faster restart
             }
         };
 
@@ -975,9 +979,10 @@
             if ((currentPage !== 'speech' || !isListening) && microphonePermissionGranted && !voiceCommandActive) {
                 try { 
                     voiceCommandRecognition.start(); 
-                    console.log('Voice command listener started'); // Debug log
+                    console.log('Voice command listener started');
                 } catch (error) {
-                    console.log('Voice command start error:', error); // Debug log
+                    console.log('Voice command start error:', error);
+                    setTimeout(startVoiceCommandListening, 2000);
                 }
             }
         }
@@ -989,7 +994,7 @@
             if (!voiceCommandActive && (currentPage !== 'speech' || !isListening)) {
                 startVoiceCommandListening();
             }
-        }, 15000); // Every 15 seconds instead of 30
+        }, 10000); // Every 10 seconds for better reliability
     }
 
     function processVoiceCommand(transcript) {
@@ -1043,14 +1048,22 @@
             showPage('home');
             speak('Closing commands, going home');
         }
-        // Weather commands
-        else if (transcript.includes('current weather') || (transcript.includes('weather') && !transcript.includes('forecast'))) {
+        // Weather commands - improved pattern matching
+        else if (transcript.includes('current weather') || (transcript.includes('weather') && !transcript.includes('forecast') && !transcript.includes('7') && !transcript.includes('hourly'))) {
             showCurrentWeather();
             speak('Showing current weather');
         }
-        else if (transcript.includes('7 day') || transcript.includes('seven day') || transcript.includes('7day')) {
+        else if (transcript.includes('7 day forecast') || transcript.includes('seven day forecast') || transcript.includes('7day forecast') || transcript.includes('sevenday forecast')) {
             showWeeklyWeather();
             speak('Showing 7 day forecast');
+        }
+        else if (transcript.includes('7 day') || transcript.includes('seven day') || transcript.includes('7day') || transcript.includes('sevenday')) {
+            showWeeklyWeather();
+            speak('Showing 7 day forecast');
+        }
+        else if (transcript.includes('hourly forecast') || transcript.includes('hourly weather')) {
+            showHourlyWeather();
+            speak('Showing hourly forecast');
         }
         else if (transcript.includes('hourly')) {
             showHourlyWeather();
@@ -1073,21 +1086,25 @@
             enhancedMode = false;
             speak('Enhanced mode disabled');
         }
-        // Speech settings commands
+        // Speech settings commands - with slider updates
         else if (transcript.includes('speak faster')) {
             adjustSpeechSpeed(0.5);
+            updateSettingsUI(); // Update the slider position
             speak('Speech speed increased');
         }
         else if (transcript.includes('talk slower') || transcript.includes('speak slower')) {
             adjustSpeechSpeed(-0.5);
+            updateSettingsUI(); // Update the slider position  
             speak('Speech speed decreased');
         }
         else if (transcript.includes('pause more')) {
             adjustPauseBetweenWords(0.5);
+            updateSettingsUI(); // Update the slider position
             speak('Pause between words increased');
         }
         else if (transcript.includes('pause less')) {
             adjustPauseBetweenWords(-0.5);
+            updateSettingsUI(); // Update the slider position
             speak('Pause between words decreased');
         }
         else if (transcript.includes('turn off voice command speech')) {
@@ -1396,41 +1413,53 @@
     }
 
     async function loadRealContacts() {
+        const contactsList = document.getElementById('contactsList');
+        
         try {
             if ('contacts' in navigator && 'ContactsManager' in window) {
-                // Automatically try to load contacts
+                // Show loading message
+                contactsList.innerHTML = `
+                    <div style="padding: 16px; text-align: center; color: #666;">
+                        <p>Loading your contacts...</p>
+                    </div>
+                `;
+                
                 const props = ['name', 'tel'];
                 const opts = {multiple: true};
                 
-                try {
-                    const contactList = await navigator.contacts.select(props, opts);
-                    
-                    if (contactList.length > 0) {
-                        contacts = contactList.map(contact => ({
-                            name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
-                            phone: contact.tel && contact.tel[0] ? contact.tel[0] : 'No phone'
-                        }));
-                        contacts.sort((a, b) => a.name.localeCompare(b.name));
-                        filteredContacts = [...contacts];
-                        displayContacts();
-                        return;
-                    }
-                } catch (contactError) {
-                    // User cancelled or no permission
-                    console.log('Contact access denied or cancelled');
+                const contactList = await navigator.contacts.select(props, opts);
+                
+                if (contactList.length > 0) {
+                    contacts = contactList.map(contact => ({
+                        name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
+                        phone: contact.tel && contact.tel[0] ? contact.tel[0] : 'No phone'
+                    }));
+                    contacts.sort((a, b) => a.name.localeCompare(b.name));
+                    filteredContacts = [...contacts];
+                    displayContactsInApp();
+                    return;
+                } else {
+                    // No contacts selected
+                    contacts = [];
+                    filteredContacts = [];
+                    displayContactsInApp();
                 }
+            } else {
+                // Contacts API not supported
+                contacts = [];
+                filteredContacts = [];
+                displayContactsInApp();
             }
-            
-            // Show manual load option if automatic loading fails
-            contacts = [];
-            filteredContacts = [];
-            displayContacts();
         } catch (error) {
             console.error('Error loading contacts:', error);
             contacts = [];
             filteredContacts = [];
-            displayContacts();
+            displayContactsInApp();
         }
+    }
+
+    function displayContactsInApp() {
+        displayContacts(); // Call the existing display function
     }
 
     function displayContacts() {
@@ -1663,12 +1692,12 @@
             const conditions = getWeatherDescription(data.current.weather_code);
             
             weatherContent.innerHTML = `
-                <div style="text-align: center; margin-bottom: 16px; max-width: 600px; min-width: 400px;">
+                <div style="text-align: center; margin: 0 auto 16px auto; max-width: 600px; min-width: 400px;">
                     <div style="font-size: 14px; color: #666; margin-bottom: 8px;">${dateString}</div>
                     <div style="font-size: 32px; font-weight: bold; color: #0099cc;">${temperature}°F</div>
                     <div style="font-size: 20px; font-weight: bold; margin: 8px 0;">${conditions}</div>
                 </div>
-                <div style="line-height: 1.8; max-width: 600px; min-width: 400px;">
+                <div style="line-height: 1.8; max-width: 600px; min-width: 400px; margin: 0 auto;">
                     <strong>Humidity:</strong> ${humidity}%<br>
                     <strong>Wind:</strong> ${windSpeed} mph<br>
                     <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
@@ -1755,7 +1784,7 @@
             const data = await response.json();
             
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            let weeklyData = '<div class="weekly-forecast">';
+            let weeklyData = '<div class="weekly-forecast" style="display: grid; gap: 8px;">';
             
             for (let i = 0; i < 7; i++) {
                 if (i < data.daily.time.length) {
@@ -1766,10 +1795,10 @@
                     const conditions = getWeatherDescription(data.daily.weather_code[i]);
                     
                     weeklyData += `
-                        <div class="weekly-item">
-                            <div class="day-name">${dayName}</div>
-                            <div class="day-temps">${high}°/${low}°</div>
-                            <div class="day-condition">${conditions}</div>
+                        <div class="weekly-item" style="display: grid; grid-template-columns: 100px 80px 1fr; gap: 12px; align-items: center; padding: 8px;">
+                            <div class="day-name" style="font-weight: bold; text-align: left;">${dayName}</div>
+                            <div class="day-temps" style="color: #0099cc; font-weight: bold; text-align: center;">${high}°/${low}°</div>
+                            <div class="day-condition" style="color: #666; text-align: left;">${conditions}</div>
                         </div>
                     `;
                 }
