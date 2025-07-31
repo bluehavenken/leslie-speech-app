@@ -998,6 +998,8 @@
     }
 
     function processVoiceCommand(transcript) {
+        console.log('Processing voice command:', transcript);
+        
         // Time and date commands
         if (transcript.includes('what time is it')) {
             const now = new Date();
@@ -1098,11 +1100,13 @@
             speak('Speech speed decreased');
         }
         else if (transcript.includes('pause more')) {
+            console.log('Pause more command detected');
             adjustPauseBetweenWords(0.5);
             updateSettingsUI(); // Update the slider position
             speak('Pause between words increased');
         }
         else if (transcript.includes('pause less')) {
+            console.log('Pause less command detected');
             adjustPauseBetweenWords(-0.5);
             updateSettingsUI(); // Update the slider position
             speak('Pause between words decreased');
@@ -1150,8 +1154,23 @@
     }
 
     function adjustPauseBetweenWords(change) {
+        console.log('Adjusting pause between words by:', change);
+        console.log('Current value:', settings.pauseBetweenWords);
+        
+        const oldValue = settings.pauseBetweenWords;
         settings.pauseBetweenWords = Math.max(0, Math.min(2.0, settings.pauseBetweenWords + change));
+        
+        console.log('New value:', settings.pauseBetweenWords);
+        
+        // Force update the UI
+        const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
+        if (pauseSlider) {
+            pauseSlider.value = settings.pauseBetweenWords;
+        }
+        
         updatePauseBetweenWords(settings.pauseBetweenWords);
+        
+        console.log('Pause between words changed from', oldValue, 'to', settings.pauseBetweenWords);
     }
 
     function speak(text, useWordPauses = false) {
@@ -1570,8 +1589,36 @@
             // Auto-load contacts when visiting phone page
             if (pageId === 'phone') {
                 setTimeout(() => {
-                    loadRealContacts();
-                }, 100);
+                    console.log('Phone page loaded, attempting to load contacts...');
+                    
+                    // Check if Contact Picker API is supported
+                    if ('contacts' in navigator && 'ContactsManager' in window) {
+                        console.log('Contact Picker API supported, loading contacts...');
+                        loadRealContacts();
+                    } else {
+                        console.log('Contact Picker API not supported');
+                        const contactsList = document.getElementById('contactsList');
+                        if (contactsList) {
+                            contactsList.innerHTML = `
+                                <div style="padding: 16px; text-align: center; color: #cc6600;">
+                                    <p><strong>📱 Contact Picker API Not Supported</strong></p>
+                                    <p>Your browser or device doesn't support automatic contact loading.</p>
+                                    <br>
+                                    <p><strong>Supported browsers:</strong></p>
+                                    <p>• Chrome on Android</p>
+                                    <p>• Edge on Android</p>
+                                    <p>• Safari on iOS (limited support)</p>
+                                    <br>
+                                    <p>Desktop browsers generally don't support this feature.</p>
+                                    <br>
+                                    <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                                        📞 Try Anyway
+                                    </button>
+                                </div>
+                            `;
+                        }
+                    }
+                }, 300);
             }
         }
     }
@@ -1579,7 +1626,10 @@
     function startTalkingFromHome() {
         showPage('speech');
         setTimeout(() => { 
-            toggleListening(); 
+            // Auto-start listening when entering speech page
+            if (!isListening) {
+                startListening();
+            }
         }, 500);
     }
 
@@ -1660,8 +1710,13 @@
         const weatherTitle = document.getElementById('weatherTitle');
         const weatherContent = document.getElementById('weatherContent');
         
+        // Set up display immediately with proper size
         weatherTitle.textContent = 'Current Weather';
-        weatherContent.innerHTML = 'Loading weather data...';
+        weatherContent.innerHTML = `
+            <div style="text-align: center; margin: 0 auto 16px auto; max-width: 600px; min-width: 400px; padding: 20px;">
+                <div style="font-size: 18px; color: #0099cc; margin-bottom: 16px;">Loading weather data...</div>
+            </div>
+        `;
         weatherDisplay.classList.remove('hidden');
         
         try {
@@ -1693,9 +1748,9 @@
             
             weatherContent.innerHTML = `
                 <div style="text-align: center; margin: 0 auto 16px auto; max-width: 600px; min-width: 400px;">
-                    <div style="font-size: 14px; color: #666; margin-bottom: 8px;">${dateString}</div>
-                    <div style="font-size: 32px; font-weight: bold; color: #0099cc;">${temperature}°F</div>
-                    <div style="font-size: 20px; font-weight: bold; margin: 8px 0;">${conditions}</div>
+                    <div style="font-size: 16px; color: #666; margin-bottom: 12px; text-align: center;">${dateString}</div>
+                    <div style="font-size: 32px; font-weight: bold; color: #0099cc; text-align: center;">${temperature}°F</div>
+                    <div style="font-size: 20px; font-weight: bold; margin: 8px 0; text-align: center;">${conditions}</div>
                 </div>
                 <div style="line-height: 1.8; max-width: 600px; min-width: 400px; margin: 0 auto;">
                     <strong>Humidity:</strong> ${humidity}%<br>
@@ -1706,7 +1761,11 @@
             `;
         } catch (error) {
             console.error('Weather fetch error:', error);
-            weatherContent.innerHTML = 'Unable to load weather data. Please check your internet connection.';
+            weatherContent.innerHTML = `
+                <div style="text-align: center; margin: 0 auto; max-width: 600px; min-width: 400px; padding: 20px;">
+                    <div style="color: #cc0000;">Unable to load weather data. Please check your internet connection.</div>
+                </div>
+            `;
         }
     }
 
