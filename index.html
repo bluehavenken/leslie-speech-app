@@ -594,6 +594,13 @@
                     <h2>🎤 Speech Recognition</h2>
                     <button class="close-btn" id="btnCloseSpeech">&times;</button>
                 </div>
+                
+                <!-- Debug Messages -->
+                <div id="debugMessages" style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 8px; margin-bottom: 16px; font-size: 12px; max-height: 100px; overflow-y: auto;">
+                    <strong>🔍 Debug Info:</strong><br>
+                    <div id="debugContent">Ready to start debugging...</div>
+                </div>
+                
                 <div class="status-text" id="statusText">
                     Ready to listen - Click "START TALKING" below
                 </div>
@@ -647,15 +654,17 @@
                 </div>
                 <div class="contacts-list" id="contactsList">
                     <div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;">
-                        <p><strong>📱 Ready to Load Contacts</strong></p>
-                        <p><strong>Contacts will appear RIGHT HERE on this page</strong></p>
-                        <p><strong>NO redirects - they stay on THIS screen</strong></p>
-                        <br>
+                        <p><strong>📱 Load Your Real Contacts</strong></p>
+                        <p style="color: #333; margin: 10px 0;">Currently showing demo contacts</p>
+                        <p style="color: #666; font-size: 14px; margin-bottom: 15px;">
+                            To get YOUR real contacts from your phone:
+                        </p>
                         <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 14px 24px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                            📞 Load Contacts HERE
+                            📞 GET MY REAL CONTACTS
                         </button>
-                        <p style="margin-top: 8px; font-size: 12px; color: #666;">
-                            Click above and your contacts will display on this exact page
+                        <p style="margin-top: 12px; font-size: 12px; color: #666;">
+                            ⚠️ Works on Chrome Android & Safari iOS<br>
+                            Click button above → Allow contacts permission → Select your contacts
                         </p>
                     </div>
                 </div>
@@ -820,6 +829,9 @@
         let userLocation = null;
         let allTranscripts = [];
         let spokenPhrases = new Set();
+        let lastFinalTranscript = '';
+        let interimTranscript = '';
+        let debugLog = [];
         let settings = {
             speechSpeed: 1.0,
             speakVoiceCommands: true,
@@ -828,6 +840,20 @@
             pauseBetweenWords: 0.5,
             enhancedMode: false
         };
+
+        // Debug logging function
+        function addDebugMessage(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            debugLog.push(`${timestamp}: ${message}`);
+            if (debugLog.length > 10) debugLog.shift();
+            
+            const debugContent = document.getElementById('debugContent');
+            if (debugContent) {
+                debugContent.innerHTML = debugLog.join('<br>');
+                debugContent.scrollTop = debugContent.scrollHeight;
+            }
+            console.log('DEBUG:', message);
+        }
 
         // Initialize the app
         function initApp() {
@@ -902,10 +928,21 @@
                 isListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening... Say something!');
-                console.log('Main speech recognition started');
+                addDebugMessage('Main speech recognition STARTED');
                 
                 // Stop any playing audio
                 if (speechSynth.speaking) speechSynth.cancel();
+                
+                // STOP voice commands to prevent pinging
+                if (isVoiceCommandListening && voiceCommandRecognition) {
+                    try {
+                        voiceCommandRecognition.stop();
+                        isVoiceCommandListening = false;
+                        addDebugMessage('Voice commands STOPPED to prevent conflicts');
+                    } catch (e) {
+                        addDebugMessage('Error stopping voice commands: ' + e.message);
+                    }
+                }
                 
                 // Set 3 minute silence timer
                 if (silenceTimer) clearTimeout(silenceTimer);
@@ -913,42 +950,36 @@
                     if (isListening) {
                         stopListening();
                         updateStatus('Stopped listening due to silence');
+                        addDebugMessage('Auto-stopped due to 3min silence');
                     }
                 }, 180000);
-                
-                // Start voice commands after main recognition works
-                if (!isVoiceCommandListening) {
-                    setupVoiceCommands();
-                }
             };
 
             recognition.onend = function() {
-                console.log('Recognition ended. isListening:', isListening);
+                addDebugMessage('Recognition ended. isListening: ' + isListening + ', currentPage: ' + currentPage);
                 
-                if (isListening) {
+                if (isListening && currentPage === 'speech') {
                     // Only auto-restart if we're on the speech page and supposed to be listening
-                    if (currentPage === 'speech') {
-                        setTimeout(() => {
-                            if (isListening && currentPage === 'speech') {
-                                try {
-                                    console.log('Attempting to restart recognition...');
-                                    recognition.start();
-                                } catch (error) {
-                                    console.log('Could not restart recognition:', error);
-                                    isListening = false;
-                                    updateListenButton();
-                                    updateStatus('Recognition stopped - ' + error.message);
-                                }
+                    setTimeout(() => {
+                        if (isListening && currentPage === 'speech') {
+                            try {
+                                addDebugMessage('Attempting to restart recognition...');
+                                recognition.start();
+                            } catch (error) {
+                                addDebugMessage('RESTART FAILED: ' + error.message);
+                                isListening = false;
+                                updateListenButton();
+                                updateStatus('Recognition stopped - ' + error.message);
                             }
-                        }, 500); // Longer delay to prevent rapid cycling
-                    } else {
-                        // We're not on speech page, stop listening
-                        isListening = false;
-                        updateListenButton();
-                    }
+                        } else {
+                            addDebugMessage('Not restarting - conditions not met');
+                        }
+                    }, 1000); // Longer delay
                 } else {
+                    isListening = false;
                     updateStatus('Ready to listen - Click "START TALKING" below');
                     updateListenButton();
+                    addDebugMessage('Recognition properly stopped');
                 }
                 
                 if (silenceTimer) {
@@ -977,6 +1008,8 @@
             };
 
             recognition.onresult = function(event) {
+                addDebugMessage('Recognition result received. Results length: ' + event.results.length);
+                
                 // Reset silence timer on any speech detected
                 if (silenceTimer) {
                     clearTimeout(silenceTimer);
@@ -984,36 +1017,40 @@
                         if (isListening) {
                             stopListening();
                             updateStatus('Stopped listening due to silence');
+                            addDebugMessage('Auto-stopped due to silence');
                         }
                     }, 180000);
                 }
 
-                let finalTranscript = '';
-                let interimTranscript = '';
+                let newFinalTranscript = '';
+                let newInterimTranscript = '';
 
                 // Process all results
                 for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
-                        finalTranscript += transcript;
+                        newFinalTranscript += transcript;
                     } else {
-                        interimTranscript += transcript;
+                        newInterimTranscript += transcript;
                     }
                 }
 
+                addDebugMessage('Final: "' + newFinalTranscript + '" | Interim: "' + newInterimTranscript + '"');
+
                 // Handle final results - complete sentences
-                if (finalTranscript.trim() && finalTranscript.trim().length > 3) {
-                    const cleanFinal = finalTranscript.trim();
+                if (newFinalTranscript.trim() && newFinalTranscript.trim() !== lastFinalTranscript) {
+                    const cleanFinal = newFinalTranscript.trim();
+                    lastFinalTranscript = cleanFinal;
                     
                     // Skip Leslie commands
                     if (cleanFinal.toLowerCase().includes('leslie')) {
-                        console.log('Skipping Leslie command:', cleanFinal);
+                        addDebugMessage('Skipping Leslie command: ' + cleanFinal);
                         return;
                     }
                     
-                    // Check if we've already spoken this exact phrase
+                    // Check if we've already processed this exact phrase
                     if (!spokenPhrases.has(cleanFinal)) {
-                        console.log('New final phrase:', cleanFinal);
+                        addDebugMessage('NEW PHRASE: ' + cleanFinal);
                         spokenPhrases.add(cleanFinal);
                         allTranscripts.push({
                             text: cleanFinal,
@@ -1029,15 +1066,19 @@
                         updateSpeechDisplay();
                         updateStatus('✅ Complete: ' + cleanFinal);
                         speakPhrase(cleanFinal);
+                    } else {
+                        addDebugMessage('DUPLICATE PHRASE IGNORED: ' + cleanFinal);
                     }
                 }
                 // Handle interim results - partial speech
-                else if (interimTranscript.trim() && !isSpeaking) {
-                    const cleanInterim = interimTranscript.trim();
+                else if (newInterimTranscript.trim() && !isSpeaking && newInterimTranscript.trim() !== interimTranscript) {
+                    const cleanInterim = newInterimTranscript.trim();
+                    interimTranscript = cleanInterim;
+                    
                     if (!cleanInterim.toLowerCase().includes('leslie')) {
                         updateStatus('🔄 Listening: ' + cleanInterim);
-                        // Show interim in display without adding to history
                         updateSpeechDisplay(cleanInterim);
+                        addDebugMessage('Interim updated: ' + cleanInterim);
                     }
                 }
             };
@@ -1045,76 +1086,48 @@
 
         // Set up voice commands (separate recognition for "Hey Leslie")
         function setupVoiceCommands() {
+            // DON'T start voice commands automatically to prevent pinging
+            addDebugMessage('Voice commands setup skipped - will start manually if needed');
+            return;
+            
             if (isVoiceCommandListening || voiceCommandRecognition) {
-                console.log('Voice commands already setup, skipping...');
-                return; // Don't setup twice
+                addDebugMessage('Voice commands already setup, skipping...');
+                return;
             }
             
-            console.log('Setting up voice commands...');
+            addDebugMessage('Setting up voice commands...');
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             voiceCommandRecognition = new SpeechRecognition();
-            voiceCommandRecognition.continuous = false; // Changed to false to reduce pinging
+            voiceCommandRecognition.continuous = false;
             voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
 
             voiceCommandRecognition.onstart = function() {
                 isVoiceCommandListening = true;
-                console.log('Voice command recognition started');
+                addDebugMessage('Voice command recognition started');
             };
 
             voiceCommandRecognition.onend = function() {
-                console.log('Voice command recognition ended');
+                addDebugMessage('Voice command recognition ended');
                 isVoiceCommandListening = false;
-                
-                // Only restart if we're not actively using main speech recognition
-                if (!isListening && currentPage !== 'speech') {
-                    setTimeout(() => {
-                        if (!isListening && !isVoiceCommandListening && voiceCommandRecognition) {
-                            try {
-                                voiceCommandRecognition.start();
-                            } catch (error) {
-                                console.log('Could not restart voice commands:', error);
-                            }
-                        }
-                    }, 2000); // Longer delay to reduce pinging
-                }
             };
 
             voiceCommandRecognition.onerror = function(event) {
-                console.log('Voice command error:', event.error);
+                addDebugMessage('Voice command error: ' + event.error);
                 isVoiceCommandListening = false;
-                
-                if (event.error === 'not-allowed') {
-                    console.log('Voice commands disabled - microphone permission denied');
-                    // Don't try to restart if permission denied
-                    return;
-                }
-                
-                // Don't restart on other errors to reduce pinging
             };
 
             voiceCommandRecognition.onresult = function(event) {
                 const lastResult = event.results[event.results.length - 1];
                 if (lastResult.isFinal) {
                     const transcript = lastResult[0].transcript.toLowerCase().trim();
-                    console.log('Voice command heard:', transcript);
+                    addDebugMessage('Voice command heard: ' + transcript);
                     
                     if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
                         processVoiceCommand(transcript);
                     }
                 }
             };
-
-            // Start voice commands with longer delay
-            setTimeout(() => {
-                if (!isListening) { // Only start if main recognition isn't running
-                    try {
-                        voiceCommandRecognition.start();
-                    } catch (error) {
-                        console.log('Could not start voice commands:', error);
-                    }
-                }
-            }, 3000);
         }
 
         // Process voice commands
@@ -1178,12 +1191,18 @@
 
         // Speak a phrase back to the user
         function speakPhrase(text) {
-            if (isSpeaking) return;
+            if (isSpeaking) {
+                addDebugMessage('Already speaking, skipping: ' + text);
+                return;
+            }
             
             isSpeaking = true;
-            console.log('Speaking phrase:', text);
+            addDebugMessage('Starting to speak: ' + text);
             
-            if (speechSynth.speaking) speechSynth.cancel();
+            if (speechSynth.speaking) {
+                speechSynth.cancel();
+                addDebugMessage('Cancelled previous speech');
+            }
             
             setTimeout(() => {
                 const utterance = new SpeechSynthesisUtterance(text);
@@ -1191,13 +1210,17 @@
                 utterance.pitch = 1.0;
                 utterance.volume = 1.0;
                 
+                utterance.onstart = function() {
+                    addDebugMessage('Speech started: ' + text);
+                };
+                
                 utterance.onend = function() {
-                    console.log('Finished speaking:', text);
+                    addDebugMessage('Speech finished: ' + text);
                     isSpeaking = false;
                 };
                 
                 utterance.onerror = function(event) {
-                    console.error('Speech error:', event.error);
+                    addDebugMessage('Speech error: ' + event.error);
                     isSpeaking = false;
                 };
                 
