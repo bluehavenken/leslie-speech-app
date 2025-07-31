@@ -841,7 +841,7 @@
             }
             
             setupSpeechRecognition();
-            setupVoiceCommands();
+            // Don't start voice commands automatically - wait for user interaction
             initializeContacts();
             setupSwipeGestures();
             setupBackButtonHandling();
@@ -915,6 +915,11 @@
                         updateStatus('Stopped listening due to silence');
                     }
                 }, 180000);
+                
+                // Start voice commands after main recognition works
+                if (!isVoiceCommandListening) {
+                    setupVoiceCommands();
+                }
             };
 
             recognition.onend = function() {
@@ -928,10 +933,12 @@
                                 console.log('Could not restart recognition:', error);
                                 isListening = false;
                                 updateListenButton();
-                                updateStatus('Recognition stopped');
+                                updateStatus('Recognition stopped - ' + error.message);
                             }
                         }
                     }, 100);
+                } else {
+                    updateStatus('Ready to listen - Click "START TALKING" below');
                 }
                 
                 if (silenceTimer) {
@@ -944,7 +951,14 @@
                 console.log('Recognition error:', event.error);
                 isListening = false;
                 updateListenButton();
-                updateStatus('Recognition error: ' + event.error);
+                
+                if (event.error === 'not-allowed') {
+                    updateStatus('⚠️ Microphone permission denied! Please allow microphone access and try again.');
+                } else if (event.error === 'no-speech') {
+                    updateStatus('No speech detected. Click START TALKING to try again.');
+                } else {
+                    updateStatus('Recognition error: ' + event.error + '. Please try again.');
+                }
                 
                 if (silenceTimer) {
                     clearTimeout(silenceTimer);
@@ -1021,6 +1035,8 @@
 
         // Set up voice commands (separate recognition for "Hey Leslie")
         function setupVoiceCommands() {
+            if (isVoiceCommandListening) return; // Don't setup twice
+            
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             voiceCommandRecognition = new SpeechRecognition();
             voiceCommandRecognition.continuous = true;
@@ -1043,13 +1059,14 @@
                                 isVoiceCommandListening = false;
                             }
                         }
-                    }, 100);
+                    }, 1000);
                 }
             };
 
             voiceCommandRecognition.onerror = function(event) {
                 console.log('Voice command error:', event.error);
                 if (event.error === 'not-allowed') {
+                    console.log('Voice commands disabled - microphone permission denied');
                     isVoiceCommandListening = false;
                 }
             };
@@ -1066,12 +1083,14 @@
                 }
             };
 
-            // Start voice commands
-            try {
-                voiceCommandRecognition.start();
-            } catch (error) {
-                console.log('Could not start voice commands:', error);
-            }
+            // Start voice commands with delay to avoid permission conflicts
+            setTimeout(() => {
+                try {
+                    voiceCommandRecognition.start();
+                } catch (error) {
+                    console.log('Could not start voice commands:', error);
+                }
+            }, 2000);
         }
 
         // Process voice commands
@@ -1293,9 +1312,19 @@
                 { name: 'Jane Doe', phone: '(555) 987-6543' },
                 { name: 'Mike Johnson', phone: '(555) 246-8135' },
                 { name: 'Sarah Wilson', phone: '(555) 369-2580' },
+                { name: 'Dr. Brown', phone: '(555) 111-2222' },
+                { name: 'Mom', phone: '(555) 333-4444' },
+                { name: 'Dad', phone: '(555) 555-6666' },
                 { name: 'Emergency Services', phone: '911' }
             ];
             filteredContacts = contacts.slice();
+            
+            // Load contacts immediately on phone page
+            setTimeout(() => {
+                if (currentPage === 'phone') {
+                    displayContactsOnPhonePage();
+                }
+            }, 100);
         }
 
         // Load real contacts
@@ -1309,10 +1338,14 @@
                 return;
             }
             
-            contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>📱 Loading contacts...</strong></p></div>';
+            // Show demo contacts immediately
+            displayContactsOnPhonePage();
             
+            // Try to load real contacts
             try {
                 if ('contacts' in navigator && 'ContactsManager' in window) {
+                    contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>📱 Loading device contacts...</strong></p></div>';
+                    
                     const props = ['name', 'tel'];
                     const opts = {multiple: true};
                     
@@ -1325,24 +1358,29 @@
                         }));
                         contacts.sort((a, b) => a.name.localeCompare(b.name));
                         filteredContacts = contacts.slice();
+                        displayContactsOnPhonePage();
+                    } else {
+                        // Keep demo contacts if no real contacts found
+                        displayContactsOnPhonePage();
                     }
                 } else {
-                    // Use demo contacts if API not available
-                    console.log('Using demo contacts - Contacts API not available');
+                    console.log('Contacts API not available - using demo contacts');
+                    // Demo contacts are already loaded and displayed
                 }
-                
-                displayContactsOnPhonePage();
                 
             } catch (error) {
                 console.error('Error loading contacts:', error);
+                // Keep demo contacts on error
                 displayContactsOnPhonePage();
                 
                 // Show error note
                 setTimeout(() => {
-                    const noteDiv = document.createElement('div');
-                    noteDiv.style.cssText = 'padding: 12px; margin-top: 8px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; font-size: 12px; color: #856404;';
-                    noteDiv.innerHTML = '<strong>Note:</strong> Could not access device contacts. Showing demo contacts instead.';
-                    contactsList.appendChild(noteDiv);
+                    if (contactsList) {
+                        const noteDiv = document.createElement('div');
+                        noteDiv.style.cssText = 'padding: 12px; margin-top: 8px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; font-size: 12px; color: #856404;';
+                        noteDiv.innerHTML = '<strong>Note:</strong> Could not access device contacts. Using demo contacts.';
+                        contactsList.appendChild(noteDiv);
+                    }
                 }, 1000);
             }
         }
@@ -1413,6 +1451,13 @@
                 // Stop listening when leaving speech page
                 if (pageId !== 'speech' && isListening) {
                     stopListening();
+                }
+                
+                // Auto-load contacts when entering phone page
+                if (pageId === 'phone') {
+                    setTimeout(() => {
+                        displayContactsOnPhonePage();
+                    }, 100);
                 }
                 
                 // Focus text input when entering text page
@@ -1779,27 +1824,8 @@
 
         // Handle visibility change to manage voice commands
         document.addEventListener('visibilitychange', function() {
-            if (document.hidden) {
-                console.log('Tab hidden - pausing voice commands');
-                if (isVoiceCommandListening && voiceCommandRecognition) {
-                    try {
-                        voiceCommandRecognition.stop();
-                        isVoiceCommandListening = false;
-                    } catch (e) {
-                        console.log('Error stopping voice commands:', e);
-                    }
-                }
-            } else {
-                console.log('Tab visible - resuming voice commands');
-                if (!isVoiceCommandListening && voiceCommandRecognition) {
-                    try {
-                        voiceCommandRecognition.start();
-                        isVoiceCommandListening = true;
-                    } catch (e) {
-                        console.log('Error starting voice commands:', e);
-                    }
-                }
-            }
+            // Don't manage voice commands automatically to avoid constant pinging
+            console.log('Tab visibility changed:', document.hidden ? 'hidden' : 'visible');
         });
     </script>
 </body>
