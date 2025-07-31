@@ -898,11 +898,11 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // Set up main speech recognition - BACK TO WORKING VERSION
+        // Set up main speech recognition - STOP THE PINGING
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
-            recognition.continuous = true;
+            recognition.continuous = false; // CHANGE TO FALSE to stop pinging
             recognition.interimResults = true;
             recognition.lang = 'en-US';
 
@@ -914,142 +914,86 @@
                 
                 // Stop any playing audio
                 if (speechSynth.speaking) speechSynth.cancel();
-                
-                // Set 3 minute silence timer
-                if (silenceTimer) clearTimeout(silenceTimer);
-                silenceTimer = setTimeout(() => {
-                    if (isListening) {
-                        stopListening();
-                        updateStatus('Stopped listening due to 3 minutes of silence');
-                    }
-                }, 180000);
             };
 
             recognition.onend = function() {
-                if (isListening) {
-                    setTimeout(() => {
-                        if (isListening) {
-                            try {
-                                recognition.start();
-                            } catch (error) {
-                                console.log('Could not restart recognition');
-                                isListening = false;
-                                updateListenButton();
-                                updateStatus('Recognition stopped');
-                            }
-                        }
-                    }, 100);
-                } else {
-                    updateListenButton();
-                    updateStatus('Ready to listen - Click "START TALKING" below');
-                }
-                
-                if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = null;
-                }
+                console.log('Recognition ended');
+                isListening = false;
+                updateListenButton();
+                updateStatus('Click "START TALKING" to listen again');
+                // DON'T auto-restart to stop pinging
             };
 
             recognition.onerror = function(event) {
                 console.log('Recognition error:', event.error);
                 isListening = false;
                 updateListenButton();
-                
-                if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = null;
-                }
-                
                 updateStatus('Recognition error (' + event.error + '). Please try again.');
             };
 
             recognition.onresult = function(event) {
-                if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = setTimeout(function() {
-                        if (isListening) {
-                            stopListening();
-                            updateStatus('Stopped listening due to 3 minutes of silence');
-                        }
-                    }, 180000);
-                }
+                let finalTranscript = '';
                 
-                let latestInterim = '';
-                let latestFinal = '';
-                
-                for (let i = event.results.length - 1; i >= 0; i--) {
-                    if (event.results[i].isFinal && !latestFinal) {
-                        latestFinal = event.results[i][0].transcript.trim();
-                    } else if (!event.results[i].isFinal && !latestInterim) {
-                        latestInterim = event.results[i][0].transcript.trim();
+                // Get final result only
+                for (let i = 0; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
                     }
-                    if (latestFinal || latestInterim) break;
                 }
 
-                if (latestFinal && latestFinal.length > 3) {
-                    if (latestFinal.toLowerCase().includes('leslie')) {
-                        console.log('Filtered Leslie command:', latestFinal);
+                if (finalTranscript.trim() && finalTranscript.trim().length > 2) {
+                    const cleanText = finalTranscript.trim();
+                    
+                    // Skip Leslie commands
+                    if (cleanText.toLowerCase().includes('leslie')) {
+                        console.log('Filtered Leslie command:', cleanText);
                         return;
                     }
                     
-                    const isDuplicate = phraseHistory.includes(latestFinal) || 
-                                      finalPhraseSpoken === latestFinal ||
-                                      (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === latestFinal);
+                    console.log('Final phrase:', cleanText);
+                    phraseHistory.push(cleanText);
+                    if (phraseHistory.length > 5) phraseHistory.shift();
+                    updateSpeechDisplay();
+                    updateStatus('✅ Complete: ' + cleanText);
                     
-                    if (!isDuplicate) {
-                        console.log('New complete phrase detected:', latestFinal);
-                        currentInterimTranscript = '';
-                        phraseHistory.push(latestFinal);
-                        if (phraseHistory.length > 5) phraseHistory.shift();
-                        updateSpeechDisplay();
-                        finalPhraseSpoken = latestFinal;
-                        updateStatus('✅ Complete: ' + latestFinal);
-                        
-                        if (!isSpeaking) {
-                            isSpeaking = true;
-                            console.log('About to speak complete phrase:', latestFinal);
-                            
-                            if (speechSynth.speaking) {
-                                speechSynth.cancel();
-                            }
-                            
-                            setTimeout(() => {
-                                const utterance = new SpeechSynthesisUtterance();
-                                utterance.text = latestFinal;
-                                utterance.lang = 'en-US';
-                                utterance.rate = settings.speechSpeed;
-                                utterance.pitch = 1.0;
-                                utterance.volume = 1.0;
-                                
-                                utterance.onstart = function() {
-                                    console.log('Started speaking:', this.text);
-                                };
-                                
-                                utterance.onend = function() {
-                                    console.log('Completed speaking:', this.text);
-                                    isSpeaking = false;
-                                };
-                                
-                                utterance.onerror = function(event) {
-                                    console.error('Speech error:', event.error);
-                                    isSpeaking = false;
-                                };
-                                
-                                console.log('Calling speechSynth.speak()');
-                                speechSynth.speak(utterance);
-                            }, 200);
-                        }
-                    }
-                } else if (latestInterim && !isSpeaking && !latestFinal) {
-                    if (!latestInterim.toLowerCase().includes('leslie')) {
-                        if (currentInterimTranscript !== latestInterim) {
-                            currentInterimTranscript = latestInterim;
-                            updateSpeechDisplay();
-                            updateStatus('🔄 Listening: ' + latestInterim);
-                        }
-                    }
+                    // FIXED speech synthesis
+                    speakCompletePhrase(cleanText);
                 }
             };
+        }
+
+        // NEW function to speak complete phrase
+        function speakCompletePhrase(text) {
+            console.log('Speaking complete phrase:', text);
+            
+            // Cancel any existing speech
+            speechSynth.cancel();
+            
+            // Wait a moment then speak
+            setTimeout(() => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = settings.speechSpeed;
+                utterance.pitch = 1.0;
+                utterance.volume = 1.0;
+                utterance.lang = 'en-US';
+                
+                utterance.onstart = function() {
+                    console.log('Started speaking:', text);
+                    isSpeaking = true;
+                };
+                
+                utterance.onend = function() {
+                    console.log('Finished speaking:', text);
+                    isSpeaking = false;
+                };
+                
+                utterance.onerror = function(event) {
+                    console.error('Speech synthesis error:', event.error);
+                    isSpeaking = false;
+                };
+                
+                speechSynth.speak(utterance);
+            }, 500);
         }
 
         // Set up voice commands (separate recognition for "Hey Leslie")
@@ -1328,14 +1272,22 @@
             }
         }
 
-        // Initialize contacts with fewer demo contacts initially
+        // Initialize contacts with demo contacts that ACTUALLY SHOW
         function initializeContacts() {
             contacts = [
                 { name: 'Emergency Services', phone: '911' },
                 { name: 'Demo Contact 1', phone: '(555) 123-4567' },
-                { name: 'Demo Contact 2', phone: '(555) 987-6543' }
+                { name: 'Demo Contact 2', phone: '(555) 987-6543' },
+                { name: 'Demo Contact 3', phone: '(555) 246-8135' }
             ];
             filteredContacts = contacts.slice();
+            
+            // Force display immediately when app loads
+            setTimeout(() => {
+                if (currentPage === 'phone') {
+                    displayContactsOnPhonePage();
+                }
+            }, 100);
         }
 
         // Load ALL contacts automatically - FORCE THEM TO STAY ON SAME PAGE
