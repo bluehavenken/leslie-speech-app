@@ -1,4 +1,41 @@
-<!DOCTYPE html>
+recognition.onstart = function() {
+            isListening = true;
+            updateListenButton();
+            updateStatus('🎤 Listening... Say something!');
+            console.log('=== SPEECH RECOGNITION STARTED - STOPPING ALL PINGING ===');
+            
+            // COMPLETELY STOP all voice command recognition to eliminate pinging
+            if (voiceCommandRecognition) {
+                try {
+                    voiceCommandRecognition.stop();
+                    voiceCommandRecognition.abort();
+                } catch (e) {
+                    console.log('Error stopping voice commands:', e);
+                }
+            }
+            voiceCommandRecognition = null;
+            voiceCommandActive = false;
+            
+            // Clear timers
+            if (silenceTimer) {
+                clearTimeout(silenceTimer);
+                silenceTimer = null;
+            }
+            if (voiceCommandReconnectTimer) {
+                clearTimeout(voiceCommandReconnectTimer);
+                voiceCommandReconnectTimer = null;
+            }
+            
+            console.log('=== ALL BACKGROUND AUDIO PROCESSING STOPPED ===');
+            
+            // Start silence timer
+            silenceTimer = setTimeout(function() {
+                if (isListening) {
+                    stopListening();
+                    updateStatus('Stopped listening due to 3 minutes of silence');
+                }
+            }, 3 * 60 * 1000);
+        };<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -913,23 +950,51 @@
 
     // --- GEOLOCATION ---
     function getUserLocation() {
+        console.log('Getting user location for weather...');
         if (navigator.geolocation) {
+            // Use high accuracy to get precise location
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 300000 // 5 minutes
+            };
+            
             navigator.geolocation.getCurrentPosition(
                 function(position) {
                     userLocation = {
                         lat: position.coords.latitude,
                         lon: position.coords.longitude
                     };
-                    console.log('Location obtained:', userLocation);
+                    console.log('Actual location obtained:', userLocation);
+                    console.log(`Coordinates: ${userLocation.lat}, ${userLocation.lon}`);
                 },
                 function(error) {
-                    userLocation = { lat: 40.7128, lon: -74.0060 }; // New York
-                    console.log('Using default location:', userLocation);
-                }
+                    console.error('Geolocation error:', error);
+                    // Try to get approximate location based on IP
+                    fetch('https://ipapi.co/json/')
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.latitude && data.longitude) {
+                                userLocation = { 
+                                    lat: data.latitude, 
+                                    lon: data.longitude 
+                                };
+                                console.log('IP-based location obtained:', userLocation);
+                                console.log(`Location: ${data.city}, ${data.region}, ${data.country}`);
+                            } else {
+                                throw new Error('IP location failed');
+                            }
+                        })
+                        .catch(() => {
+                            userLocation = { lat: 40.7128, lon: -74.0060 }; // New York fallback
+                            console.log('Using fallback location (New York):', userLocation);
+                        });
+                },
+                options
             );
         } else {
-            userLocation = { lat: 40.7128, lon: -74.0060 }; // New York
-            console.log('Geolocation not supported, using default location');
+            userLocation = { lat: 40.7128, lon: -74.0060 }; // New York fallback
+            console.log('Geolocation not supported, using fallback location');
         }
     }
 
@@ -1166,29 +1231,41 @@
                     finalPhraseSpoken = latestFinal;
                     updateStatus('✅ Complete: ' + latestFinal);
                     
-                    // FIXED: Speak complete phrase directly with speechSynth
+                    // FIXED: Speak complete phrase with proper timing
                     if (!isSpeaking) {
                         isSpeaking = true;
-                        console.log('Speaking complete phrase:', latestFinal);
+                        console.log('=== SPEAKING COMPLETE PHRASE ===');
+                        console.log('Full phrase to speak:', latestFinal);
                         
-                        // Use speechSynth directly to ensure complete phrase is spoken
-                        speechSynth.cancel(); // Stop any current speech
-                        const utterance = new SpeechSynthesisUtterance(latestFinal);
-                        utterance.rate = settings.speechSpeed;
-                        utterance.pitch = 1;
-                        utterance.volume = 0.8;
+                        // Cancel any existing speech first
+                        if (speechSynth.speaking) {
+                            speechSynth.cancel();
+                        }
                         
-                        utterance.onend = function() {
-                            console.log('=== FINISHED SPEAKING COMPLETE PHRASE ===');
-                            isSpeaking = false;
-                        };
-                        
-                        utterance.onerror = function(e) {
-                            console.error('Speech error:', e);
-                            isSpeaking = false;
-                        };
-                        
-                        speechSynth.speak(utterance);
+                        // Wait a moment for cancel to complete, then speak
+                        setTimeout(() => {
+                            const utterance = new SpeechSynthesisUtterance(latestFinal);
+                            utterance.rate = 0.9; // Slightly slower for clarity
+                            utterance.pitch = 1;
+                            utterance.volume = 1.0;
+                            
+                            utterance.onstart = function() {
+                                console.log('Started speaking:', latestFinal);
+                            };
+                            
+                            utterance.onend = function() {
+                                console.log('=== FINISHED SPEAKING COMPLETE PHRASE ===');
+                                isSpeaking = false;
+                            };
+                            
+                            utterance.onerror = function(event) {
+                                console.error('Speech synthesis error:', event);
+                                isSpeaking = false;
+                            };
+                            
+                            console.log('About to speak utterance...');
+                            speechSynth.speak(utterance);
+                        }, 100);
                     }
                 }
             }
@@ -1581,24 +1658,36 @@
         const textInput = document.getElementById('largeTextInputField');
         const text = textInput.value.trim();
         if (text) {
-            console.log('Speaking text from input field:', text);
+            console.log('=== SPEAKING TEXT INPUT ===');
+            console.log('Full text to speak:', text);
             
-            // FIXED: Use speechSynth directly to ensure complete text is spoken
-            speechSynth.cancel(); // Stop any current speech
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.rate = settings.speechSpeed;
-            utterance.pitch = 1;
-            utterance.volume = 0.8;
+            // Cancel any existing speech first
+            if (speechSynth.speaking) {
+                speechSynth.cancel();
+            }
             
-            utterance.onend = function() {
-                console.log('=== FINISHED SPEAKING COMPLETE TEXT ===');
-            };
-            
-            utterance.onerror = function(e) {
-                console.error('Speech error:', e);
-            };
-            
-            speechSynth.speak(utterance);
+            // Wait a moment for cancel to complete, then speak
+            setTimeout(() => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = 0.9; // Slightly slower for clarity
+                utterance.pitch = 1;
+                utterance.volume = 1.0;
+                
+                utterance.onstart = function() {
+                    console.log('Started speaking text:', text);
+                };
+                
+                utterance.onend = function() {
+                    console.log('=== FINISHED SPEAKING COMPLETE TEXT ===');
+                };
+                
+                utterance.onerror = function(event) {
+                    console.error('Speech synthesis error:', event);
+                };
+                
+                console.log('About to speak text utterance...');
+                speechSynth.speak(utterance);
+            }, 100);
         }
     }
 
