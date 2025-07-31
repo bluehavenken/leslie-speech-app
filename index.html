@@ -666,8 +666,8 @@
                     <h2>📝 Text Input</h2>
                     <button class="close-btn" id="btnCloseText">&times;</button>
                 </div>
-                <div class="text-input-content">
-                    <div class="speak-text-container" style="margin-top: 50px;">
+                <div class="text-input-content" style="margin-top: 10px;">
+                    <div class="speak-text-container" style="margin-top: 60px;">
                         <button class="speak-phrase-btn" id="speakTextBtn">
                             🔊 SPEAK TEXT
                         </button>
@@ -838,7 +838,7 @@
         initializeContacts();
         setupSwipeDetection();
         setupBackButtonHandling();
-        requestMicrophonePermission();
+        // DO NOT request microphone permission on startup to eliminate pings
         updateEnhancedSectionVisibility();
         updateTextSpeakButton();
         getUserLocation();
@@ -919,95 +919,17 @@
         }
     }
 
-    // RE-ENABLE VOICE COMMANDS WITH PROPER ISOLATION
+    // COMPLETELY DISABLE ALL SPEECH RECOGNITION EXCEPT ON SPEECH PAGE
     function setupVoiceCommandListener() {
-        // ONLY set up voice commands if NOT on speech page AND microphone is available
-        if (currentPage === 'speech' || isListening) {
-            console.log('Not starting voice commands - speech recognition is active');
-            return;
-        }
-        
-        if (!microphonePermissionGranted) {
-            console.log('No microphone permission - voice commands disabled');
-            return;
-        }
-        
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            console.log('Speech recognition not supported');
-            return;
-        }
+        // DO NOTHING - completely disable to eliminate pings
+        console.log('Voice commands completely disabled to eliminate pings');
+        return;
+    }
 
-        // Clean up any existing recognition
-        if (voiceCommandRecognition) {
-            try { 
-                voiceCommandRecognition.stop();
-                voiceCommandRecognition.abort(); 
-            } catch (e) {}
-            voiceCommandRecognition = null;
-        }
-
-        voiceCommandRecognition = new SpeechRecognition();
-        voiceCommandRecognition.continuous = false; // Single shot to avoid pinging
-        voiceCommandRecognition.interimResults = false;
-        voiceCommandRecognition.lang = 'en-US';
-        voiceCommandRecognition.maxAlternatives = 3;
-
-        voiceCommandRecognition.onstart = function() {
-            voiceCommandActive = true;
-            console.log('Voice command listening started');
-        };
-
-        voiceCommandRecognition.onresult = function(event) {
-            voiceCommandActive = false;
-            for (let i = 0; i < event.results.length; i++) {
-                if (event.results[i].isFinal) {
-                    const transcript = event.results[i][0].transcript.toLowerCase().trim();
-                    console.log('Voice command heard:', transcript);
-                    if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
-                        console.log('Processing Leslie command:', transcript);
-                        processVoiceCommand(transcript);
-                        // Restart listening after a delay
-                        setTimeout(() => {
-                            if (currentPage !== 'speech' && !isListening) {
-                                setupVoiceCommandListener();
-                            }
-                        }, 2000);
-                        return;
-                    }
-                }
-            }
-            // Restart if no command found
-            setTimeout(() => {
-                if (currentPage !== 'speech' && !isListening) {
-                    setupVoiceCommandListener();
-                }
-            }, 2000);
-        };
-
-        voiceCommandRecognition.onerror = function(event) {
-            voiceCommandActive = false;
-            console.log('Voice command error:', event.error);
-            if (event.error !== 'not-allowed' && event.error !== 'aborted') {
-                setTimeout(() => {
-                    if (currentPage !== 'speech' && !isListening) {
-                        setupVoiceCommandListener();
-                    }
-                }, 3000);
-            }
-        };
-
-        voiceCommandRecognition.onend = function() {
-            voiceCommandActive = false;
-            console.log('Voice command listening ended');
-        };
-
-        // Start voice command listening
-        try { 
-            voiceCommandRecognition.start(); 
-        } catch (error) {
-            console.log('Voice command start error:', error);
-        }
+    function requestMicrophonePermission() {
+        // Skip microphone permission to eliminate pings
+        console.log('Microphone permission skipped to eliminate pings');
+        microphonePermissionGranted = false;
     }
 
     function processVoiceCommand(transcript) {
@@ -1618,27 +1540,35 @@
                 }, 100);
             }
             
-            // Auto-load contacts when visiting phone page
+            // Auto-load contacts when visiting phone page - NO VOICE COMMANDS
             if (pageId === 'phone') {
                 setTimeout(() => {
                     console.log('Phone page loaded, auto-loading contacts...');
                     loadRealContacts();
                 }, 500);
-            } else if (pageId !== 'speech') {
-                // Only start voice commands if NOT on speech page
-                setTimeout(() => {
-                    setupVoiceCommandListener();
-                }, 1000);
             }
+            // NO voice command setup to eliminate pings
         }
     }
 
     function startTalkingFromHome() {
         showPage('speech');
         setTimeout(() => { 
-            // Auto-start listening when entering speech page
-            if (!isListening) {
-                startListening();
+            // Request microphone permission ONLY when actually starting speech recognition
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(function(stream) {
+                        microphonePermissionGranted = true;
+                        stream.getTracks().forEach(track => track.stop());
+                        // Now start listening
+                        if (!isListening) {
+                            startListening();
+                        }
+                    })
+                    .catch(function(error) {
+                        microphonePermissionGranted = false;
+                        updateStatus('Microphone permission required for speech recognition');
+                    });
             }
         }, 500);
     }
