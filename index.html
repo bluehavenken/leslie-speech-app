@@ -805,7 +805,7 @@
     </div>
 
     <script>
-        // All variables and functions contained within this single script block
+        // Global variables
         let recognition = null;
         let isListening = false;
         let speechSynth = window.speechSynthesis;
@@ -819,6 +819,8 @@
         let finalPhraseSpoken = '';
         let phraseHistory = [];
         let currentInterimTranscript = '';
+        let voiceCommandRecognition = null;
+        let isVoiceCommandListening = false;
         let settings = {
             speechSpeed: 1.0,
             speakVoiceCommands: true,
@@ -828,23 +830,30 @@
             enhancedMode: false
         };
 
+        // Initialize the app
         function initApp() {
+            console.log('Initializing Leslie Speech Assistant...');
             loadSettings();
             setupButtonHandlers();
+            
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 alert('Speech recognition not supported in this browser. Please try Chrome, Edge, or Safari.');
                 return;
             }
+            
             setupSpeechRecognition();
+            setupVoiceCommands();
             initializeContacts();
             setupSwipeDetection();
             setupBackButtonHandling();
             getUserLocation();
             updateEnhancedSectionVisibility();
             updateTextSpeakButton();
+            
             console.log('Leslie Speech Assistant initialized successfully!');
         }
 
+        // Set up button event handlers
         function setupButtonHandlers() {
             document.getElementById('btnStartTalking').onclick = startTalkingFromHome;
             document.getElementById('btnStartTexting').onclick = function() { showPage('textInput'); };
@@ -871,6 +880,7 @@
             document.getElementById('enhancedModeSwitch').onchange = function(e) { updateEnhancedMode(e.target.checked); };
         }
 
+        // Set up speech recognition for the main talking feature
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
@@ -887,8 +897,9 @@
                 isListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening... Say something!');
-                console.log('Speech recognition started - eliminating all background audio');
+                console.log('Speech recognition started');
                 
+                // Stop background audio
                 try {
                     speechSynth.cancel();
                     const audioElements = document.querySelectorAll('audio, video');
@@ -896,11 +907,11 @@
                         el.pause();
                         el.currentTime = 0;
                     });
-                    console.log('All background audio stopped');
                 } catch (e) {
                     console.log('Error stopping audio:', e);
                 }
                 
+                // Set silence timer
                 if (silenceTimer) clearTimeout(silenceTimer);
                 silenceTimer = setTimeout(function() {
                     if (isListening) {
@@ -949,6 +960,7 @@
             };
 
             recognition.onresult = function(event) {
+                // Reset silence timer
                 if (silenceTimer) {
                     clearTimeout(silenceTimer);
                     silenceTimer = setTimeout(function() {
@@ -959,98 +971,241 @@
                     }, 3 * 60 * 1000);
                 }
                 
-                let latestInterim = '';
-                let latestFinal = '';
+                let finalTranscript = '';
+                let interimTranscript = '';
                 
-                for (let i = event.results.length - 1; i >= 0; i--) {
-                    if (event.results[i].isFinal && !latestFinal) {
-                        latestFinal = event.results[i][0].transcript.trim();
-                    } else if (!event.results[i].isFinal && !latestInterim) {
-                        latestInterim = event.results[i][0].transcript.trim();
+                // Process all results
+                for (let i = 0; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript;
+                    } else {
+                        interimTranscript += transcript;
                     }
-                    if (latestFinal || latestInterim) break;
                 }
 
-                if (latestFinal && latestFinal.length > 3) {
-                    if (latestFinal.toLowerCase().includes('leslie')) {
-                        console.log('Filtered Leslie command:', latestFinal);
+                // Handle final results
+                if (finalTranscript.trim() && finalTranscript.trim().length > 2) {
+                    const cleanTranscript = finalTranscript.trim();
+                    
+                    // Skip if this is a duplicate or contains "leslie"
+                    if (cleanTranscript.toLowerCase().includes('leslie')) {
+                        console.log('Filtered Leslie command:', cleanTranscript);
                         return;
                     }
                     
-                    const isDuplicate = phraseHistory.includes(latestFinal) || 
-                                      finalPhraseSpoken === latestFinal ||
-                                      (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === latestFinal);
+                    const isDuplicate = phraseHistory.includes(cleanTranscript) || 
+                                      finalPhraseSpoken === cleanTranscript;
                     
                     if (!isDuplicate) {
-                        console.log('New complete phrase detected:', latestFinal);
+                        console.log('New complete phrase:', cleanTranscript);
                         currentInterimTranscript = '';
-                        phraseHistory.push(latestFinal);
-                        if (phraseHistory.length > 5) phraseHistory.shift();
+                        phraseHistory.push(cleanTranscript);
+                        if (phraseHistory.length > 10) phraseHistory.shift();
                         updateSpeechDisplay();
-                        finalPhraseSpoken = latestFinal;
-                        updateStatus('✅ Complete: ' + latestFinal);
+                        finalPhraseSpoken = cleanTranscript;
+                        updateStatus('✅ Complete: ' + cleanTranscript);
                         
-                        if (!isSpeaking) {
-                            isSpeaking = true;
-                            console.log('About to speak complete phrase:', latestFinal);
-                            
-                            if (speechSynth.speaking) {
-                                speechSynth.cancel();
-                            }
-                            
-                            setTimeout(() => {
-                                const utterance = new SpeechSynthesisUtterance();
-                                utterance.text = latestFinal;
-                                utterance.lang = 'en-US';
-                                utterance.rate = 1.0;
-                                utterance.pitch = 1.0;
-                                utterance.volume = 1.0;
-                                
-                                utterance.onstart = function() {
-                                    console.log('Started speaking:', this.text);
-                                };
-                                
-                                utterance.onend = function() {
-                                    console.log('Completed speaking:', this.text);
-                                    isSpeaking = false;
-                                };
-                                
-                                utterance.onerror = function(event) {
-                                    console.error('Speech error:', event.error);
-                                    isSpeaking = false;
-                                };
-                                
-                                console.log('Calling speechSynth.speak()');
-                                speechSynth.speak(utterance);
-                            }, 200);
-                        }
+                        // Speak the phrase back
+                        speakPhrase(cleanTranscript);
                     }
-                } else if (latestInterim && !isSpeaking && !latestFinal) {
-                    if (!latestInterim.toLowerCase().includes('leslie')) {
-                        if (currentInterimTranscript !== latestInterim) {
-                            currentInterimTranscript = latestInterim;
+                } else if (interimTranscript.trim() && !isSpeaking) {
+                    // Handle interim results
+                    const cleanInterim = interimTranscript.trim();
+                    if (!cleanInterim.toLowerCase().includes('leslie')) {
+                        if (currentInterimTranscript !== cleanInterim) {
+                            currentInterimTranscript = cleanInterim;
                             updateSpeechDisplay();
-                            updateStatus('🔄 Listening: ' + latestInterim);
+                            updateStatus('🔄 Listening: ' + cleanInterim);
                         }
                     }
                 }
             };
         }
 
+        // Set up voice commands (separate recognition instance)
+        function setupVoiceCommands() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) return;
+
+            voiceCommandRecognition = new SpeechRecognition();
+            voiceCommandRecognition.continuous = true;
+            voiceCommandRecognition.interimResults = false;
+            voiceCommandRecognition.lang = 'en-US';
+
+            voiceCommandRecognition.onstart = function() {
+                isVoiceCommandListening = true;
+                console.log('Voice command recognition started');
+            };
+
+            voiceCommandRecognition.onend = function() {
+                if (isVoiceCommandListening) {
+                    setTimeout(() => {
+                        if (isVoiceCommandListening) {
+                            try {
+                                voiceCommandRecognition.start();
+                            } catch (error) {
+                                console.log('Could not restart voice command recognition');
+                                isVoiceCommandListening = false;
+                            }
+                        }
+                    }, 100);
+                }
+            };
+
+            voiceCommandRecognition.onerror = function(event) {
+                console.log('Voice command recognition error:', event.error);
+                if (event.error === 'not-allowed') {
+                    isVoiceCommandListening = false;
+                }
+            };
+
+            voiceCommandRecognition.onresult = function(event) {
+                const lastResult = event.results[event.results.length - 1];
+                if (lastResult.isFinal) {
+                    const transcript = lastResult[0].transcript.toLowerCase().trim();
+                    console.log('Voice command heard:', transcript);
+                    
+                    if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
+                        processVoiceCommand(transcript);
+                    }
+                }
+            };
+
+            // Start voice command recognition
+            try {
+                voiceCommandRecognition.start();
+            } catch (error) {
+                console.log('Could not start voice command recognition:', error);
+            }
+        }
+
+        // Process voice commands
+        function processVoiceCommand(command) {
+            console.log('Processing voice command:', command);
+            
+            const cmd = command.toLowerCase();
+            
+            // Navigation commands
+            if (cmd.includes('start talking')) {
+                startTalkingFromHome();
+                speakResponse('Starting speech recognition');
+            } else if (cmd.includes('start texting')) {
+                showPage('textInput');
+                speakResponse('Opening text input');
+            } else if (cmd.includes('home')) {
+                showPage('home');
+                speakResponse('Going home');
+            } else if (cmd.includes('help') || cmd.includes('commands')) {
+                showPage('commands');
+                speakResponse('Showing commands');
+            }
+            // Weather commands
+            else if (cmd.includes('current weather') || (cmd.includes('weather') && !cmd.includes('forecast'))) {
+                showCurrentWeather();
+                speakResponse('Showing current weather');
+            } else if (cmd.includes('7 day') || cmd.includes('weekly')) {
+                showWeeklyWeather();
+                speakResponse('Showing 7 day forecast');
+            } else if (cmd.includes('hourly')) {
+                showHourlyWeather();
+                speakResponse('Showing hourly forecast');
+            } else if (cmd.includes('close')) {
+                hideWeather();
+                speakResponse('Closing weather');
+            }
+            // Phone commands
+            else if (cmd.includes('call')) {
+                handleCallCommand(command);
+            }
+            // Recognition commands
+            else if (cmd.includes('clear text')) {
+                clearSpeechText();
+                speakResponse('Clearing text');
+            } else if (cmd.includes('enhanced mode') && !cmd.includes('turn off')) {
+                updateEnhancedMode(true);
+                speakResponse('Enhanced mode enabled');
+            } else if (cmd.includes('turn off enhanced mode')) {
+                updateEnhancedMode(false);
+                speakResponse('Enhanced mode disabled');
+            }
+            // Speech settings
+            else if (cmd.includes('speak faster')) {
+                adjustSpeechSpeed(0.5);
+                speakResponse('Speech speed increased');
+            } else if (cmd.includes('talk slower') || cmd.includes('speak slower')) {
+                adjustSpeechSpeed(-0.5);
+                speakResponse('Speech speed decreased');
+            } else if (cmd.includes('turn off voice command speech')) {
+                updateVoiceCommandSetting(false);
+                // Don't speak response since they're turning it off
+            } else if (cmd.includes('turn on voice command speech')) {
+                updateVoiceCommandSetting(true);
+                speakResponse('Voice command speech enabled');
+            }
+        }
+
+        // Speak a response for voice commands
+        function speakResponse(text) {
+            if (!settings.speakVoiceCommands) return;
+            
+            setTimeout(() => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = settings.speechSpeed;
+                utterance.volume = 1.0;
+                speechSynth.speak(utterance);
+            }, 200);
+        }
+
+        // Speak a phrase back to the user
+        function speakPhrase(text) {
+            if (!isSpeaking) {
+                isSpeaking = true;
+                console.log('Speaking phrase:', text);
+                
+                if (speechSynth.speaking) {
+                    speechSynth.cancel();
+                }
+                
+                setTimeout(() => {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.lang = 'en-US';
+                    utterance.rate = settings.speechSpeed;
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
+                    
+                    utterance.onend = function() {
+                        console.log('Completed speaking:', text);
+                        isSpeaking = false;
+                    };
+                    
+                    utterance.onerror = function(event) {
+                        console.error('Speech error:', event.error);
+                        isSpeaking = false;
+                    };
+                    
+                    speechSynth.speak(utterance);
+                }, 300);
+            }
+        }
+
+        // Update the speech display
         function updateSpeechDisplay() {
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
                 let html = '';
                 
+                // Show recent phrases
                 if (phraseHistory.length > 0) {
-                    const lastPhrase = phraseHistory[phraseHistory.length - 1];
-                    html += '<div class="final-phrase">✅ ' + lastPhrase + '</div>';
-                    
-                    if (phraseHistory.length > 1) {
-                        html += '<div style="color: #999; font-size: 12px; margin-top: 8px;">Previous phrases: ' + (phraseHistory.length - 1) + '</div>';
-                    }
+                    phraseHistory.slice(-5).forEach((phrase, index) => {
+                        const isLast = index === phraseHistory.slice(-5).length - 1;
+                        html += '<div class="final-phrase">' + 
+                                (isLast ? '✅ Latest: ' : '• ') + phrase + 
+                                '</div>';
+                    });
                 }
                 
+                // Show interim text
                 if (currentInterimTranscript.trim() && !isSpeaking) {
                     const lastFinal = phraseHistory.length > 0 ? phraseHistory[phraseHistory.length - 1] : '';
                     if (currentInterimTranscript !== lastFinal) {
@@ -1064,6 +1219,7 @@
                     recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic;">Say something and your complete phrase will appear here...</div>';
                 }
                 
+                // Auto-scroll
                 const speechContent = document.querySelector('.speech-content');
                 if (speechContent) {
                     speechContent.scrollTop = speechContent.scrollHeight;
@@ -1071,15 +1227,25 @@
             }
         }
 
+        // Clear speech text
+        function clearSpeechText() {
+            phraseHistory = [];
+            currentInterimTranscript = '';
+            finalPhraseSpoken = '';
+            updateSpeechDisplay();
+        }
+
+        // Start talking from home page
         function startTalkingFromHome() {
             showPage('speech');
             setTimeout(() => { 
                 if (!isListening && !isSpeaking) {
                     startListening();
                 }
-            }, 1500);
+            }, 500);
         }
 
+        // Toggle listening state
         function toggleListening() {
             if (isListening) {
                 stopListening();
@@ -1088,6 +1254,7 @@
             }
         }
 
+        // Start listening
         function startListening() {
             if (recognition && !isListening && !isSpeaking) {
                 try { 
@@ -1099,6 +1266,7 @@
             }
         }
 
+        // Stop listening
         function stopListening() {
             if (recognition && isListening) {
                 isListening = false;
@@ -1118,6 +1286,7 @@
             }
         }
 
+        // Update listen button appearance
         function updateListenButton() {
             const listenButton = document.getElementById('listenButton');
             if (listenButton) {
@@ -1131,11 +1300,13 @@
             }
         }
 
+        // Update status text
         function updateStatus(message) {
             const statusText = document.getElementById('statusText');
             if (statusText) statusText.textContent = message;
         }
 
+        // Speak text input
         function speakTextInput() {
             const textInput = document.getElementById('largeTextInputField');
             const text = textInput.value.trim();
@@ -1147,26 +1318,18 @@
                 }
                 
                 setTimeout(() => {
-                    const utterance = new SpeechSynthesisUtterance();
-                    utterance.text = text;
+                    const utterance = new SpeechSynthesisUtterance(text);
                     utterance.lang = 'en-US';
-                    utterance.rate = 1.0;
+                    utterance.rate = settings.speechSpeed;
                     utterance.pitch = 1.0;
                     utterance.volume = 1.0;
-                    
-                    utterance.onstart = function() {
-                        console.log('Started speaking text:', this.text);
-                    };
-                    
-                    utterance.onend = function() {
-                        console.log('Completed speaking text:', this.text);
-                    };
                     
                     speechSynth.speak(utterance);
                 }, 200);
             }
         }
 
+        // Update text speak button
         function updateTextSpeakButton() {
             const speakBtn = document.getElementById('speakTextBtn');
             if (speakBtn) {
@@ -1176,13 +1339,15 @@
             }
         }
 
+        // Initialize contacts
         function initializeContacts() {
             contacts = [];
             filteredContacts = [];
         }
 
+        // Load real contacts (fixed implementation)
         async function loadRealContacts() {
-            console.log('Loading contacts on same page');
+            console.log('Loading contacts...');
             const contactsList = document.getElementById('contactsList');
             
             if (currentPage !== 'phone') {
@@ -1191,7 +1356,7 @@
                 return;
             }
             
-            contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>📱 Loading your contacts...</strong></p><p>Contacts will appear RIGHT HERE on this page</p></div>';
+            contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>📱 Loading your contacts...</strong></p><p>Please wait...</p></div>';
             
             try {
                 if ('contacts' in navigator && 'ContactsManager' in window) {
@@ -1209,17 +1374,35 @@
                         filteredContacts = contacts.slice();
                         displayContactsOnPhonePage();
                     } else {
-                        displayNoContactsMessage();
+                        contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #666; border: 2px solid #669900; border-radius: 8px; background: #f8f9fa;"><p><strong>📱 No Contacts Found</strong></p><p>No contacts were returned from your device</p></div>';
                     }
                 } else {
-                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;"><p><strong>📱 Contacts Not Available</strong></p><p>Your browser doesn\'t support the Contacts API</p><p><strong>This works on:</strong></p><p>• Chrome on Android</p><p>• Safari on iOS</p><p>• Make sure you\'re using HTTPS</p></div>';
+                    // Contacts API not supported - show demo contacts
+                    contacts = [
+                        { name: 'John Smith', phone: '(555) 123-4567' },
+                        { name: 'Jane Doe', phone: '(555) 987-6543' },
+                        { name: 'Mike Johnson', phone: '(555) 246-8135' },
+                        { name: 'Sarah Wilson', phone: '(555) 369-2580' },
+                        { name: 'Emergency Services', phone: '911' }
+                    ];
+                    filteredContacts = contacts.slice();
+                    displayContactsOnPhonePage();
+                    
+                    // Show note about demo contacts
+                    setTimeout(() => {
+                        const noteDiv = document.createElement('div');
+                        noteDiv.style.cssText = 'padding: 12px; margin-top: 8px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; font-size: 12px; color: #856404;';
+                        noteDiv.innerHTML = '<strong>Note:</strong> These are demo contacts. Contacts API requires HTTPS and is supported on Chrome Android and Safari iOS.';
+                        contactsList.appendChild(noteDiv);
+                    }, 1000);
                 }
             } catch (error) {
                 console.error('Error loading contacts:', error);
-                contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px; background: #ffebee;"><p><strong>📱 Contact Access Error</strong></p><p>Error: ' + (error.message || 'Unknown error') + '</p><p><strong>Contacts will appear on THIS page when loaded</strong></p></div>';
+                contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px; background: #ffebee;"><p><strong>📱 Contact Access Error</strong></p><p>Error: ' + (error.message || 'Unknown error') + '</p><p>This feature requires HTTPS and permission to access contacts</p></div>';
             }
         }
 
+        // Display contacts on phone page
         function displayContactsOnPhonePage() {
             const contactsList = document.getElementById('contactsList');
             if (!contactsList) return;
@@ -1227,18 +1410,12 @@
             contactsList.innerHTML = '';
             
             if (filteredContacts.length === 0) {
-                displayNoContactsMessage();
+                contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #666; border: 2px solid #669900; border-radius: 8px; background: #f8f9fa;"><p><strong>📱 No Contacts Found</strong></p><p>Try adjusting your search or loading contacts again</p></div>';
                 return;
             }
 
             const headerDiv = document.createElement('div');
-            headerDiv.style.padding = '12px';
-            headerDiv.style.textAlign = 'center';
-            headerDiv.style.fontWeight = 'bold';
-            headerDiv.style.color = '#669900';
-            headerDiv.style.background = '#f0f8ff';
-            headerDiv.style.borderRadius = '8px';
-            headerDiv.style.marginBottom = '8px';
+            headerDiv.style.cssText = 'padding: 12px; text-align: center; font-weight: bold; color: #669900; background: #f0f8ff; border-radius: 8px; margin-bottom: 8px;';
             headerDiv.textContent = '📱 ' + filteredContacts.length + ' contacts loaded - Tap any contact to call';
             contactsList.appendChild(headerDiv);
 
@@ -1253,19 +1430,13 @@
 
             if (filteredContacts.length > 100) {
                 const moreDiv = document.createElement('div');
-                moreDiv.style.padding = '16px';
-                moreDiv.style.textAlign = 'center';
-                moreDiv.style.color = '#666';
+                moreDiv.style.cssText = 'padding: 16px; text-align: center; color: #666;';
                 moreDiv.textContent = '... and ' + (filteredContacts.length - 100) + ' more contacts. Use search above to find specific contacts.';
                 contactsList.appendChild(moreDiv);
             }
         }
 
-        function displayNoContactsMessage() {
-            const contactsList = document.getElementById('contactsList');
-            contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #666; border: 2px solid #669900; border-radius: 8px; background: #f8f9fa;"><p><strong>📱 No Contacts Loaded</strong></p><p>You can try loading contacts again</p></div>';
-        }
-
+        // Filter contacts based on search
         function filterContacts(searchTerm) {
             if (!searchTerm.trim()) {
                 filteredContacts = contacts.slice();
@@ -1284,10 +1455,45 @@
             displayContactsOnPhonePage();
         }
 
+        // Call a contact
         function callContact(contact) {
+            console.log('Calling:', contact.name, contact.phone);
             window.location.href = 'tel:' + contact.phone.replace(/[^0-9]/g, '');
         }
 
+        // Handle call commands from voice
+        function handleCallCommand(command) {
+            const cmd = command.toLowerCase();
+            
+            // Extract phone number if present
+            const phoneMatch = cmd.match(/(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{10})/);
+            if (phoneMatch) {
+                const phoneNumber = phoneMatch[0].replace(/[^0-9]/g, '');
+                window.location.href = 'tel:' + phoneNumber;
+                speakResponse('Calling ' + phoneNumber);
+                return;
+            }
+            
+            // Extract contact name
+            const nameMatch = cmd.match(/call\s+(.+)/);
+            if (nameMatch) {
+                const contactName = nameMatch[1].trim();
+                const matchingContact = contacts.find(contact => 
+                    contact.name.toLowerCase().includes(contactName) ||
+                    contactName.includes(contact.name.toLowerCase())
+                );
+                
+                if (matchingContact) {
+                    callContact(matchingContact);
+                    speakResponse('Calling ' + matchingContact.name);
+                } else {
+                    showPage('phone');
+                    speakResponse('Contact not found. Opening phone page.');
+                }
+            }
+        }
+
+        // Show page navigation
         function showPage(pageId, addToHistory) {
             if (addToHistory === undefined) addToHistory = true;
             
@@ -1304,10 +1510,12 @@
                     history.pushState({page: pageId}, '', '');
                 }
                 
+                // Stop listening when leaving speech page
                 if (pageId !== 'speech' && isListening) {
                     stopListening();
                 }
                 
+                // Focus text input when entering text page
                 if (pageId === 'textInput') {
                     setTimeout(() => {
                         const textInput = document.getElementById('largeTextInputField');
@@ -1320,6 +1528,7 @@
             }
         }
 
+        // Navigate back
         function navigateBack() {
             if (pageHistory.length > 1) {
                 pageHistory.pop();
@@ -1330,6 +1539,7 @@
             }
         }
 
+        // Setup back button handling
         function setupBackButtonHandling() {
             window.addEventListener('popstate', function(event) {
                 event.preventDefault();
@@ -1338,6 +1548,7 @@
             history.pushState({page: 'home'}, '', '');
         }
 
+        // Get user location for weather
         function getUserLocation() {
             if (navigator.geolocation) {
                 const options = {
@@ -1356,6 +1567,7 @@
                     },
                     function(error) {
                         console.error('Geolocation error:', error);
+                        // Fallback to IP-based location
                         fetch('https://ipapi.co/json/')
                             .then(response => response.json())
                             .then(data => {
@@ -1370,60 +1582,146 @@
                                 }
                             })
                             .catch(() => {
-                                userLocation = { lat: 40.7128, lon: -74.0060 };
+                                userLocation = { lat: 40.7128, lon: -74.0060 }; // NYC fallback
                                 console.log('Using fallback location (New York):', userLocation);
                             });
                     },
                     options
                 );
             } else {
-                userLocation = { lat: 40.7128, lon: -74.0060 };
+                userLocation = { lat: 40.7128, lon: -74.0060 }; // NYC fallback
                 console.log('Geolocation not supported, using fallback location');
             }
         }
 
+        // Weather functions
         async function showCurrentWeather() {
-            const weatherDisplay = document.getElementById('weatherDisplay');
-            const weatherTitle = document.getElementById('weatherTitle');
-            const weatherContent = document.getElementById('weatherContent');
-            
-            weatherTitle.textContent = '7-Day Forecast';
-            weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Loading 7-day forecast...</div>';
-            weatherDisplay.classList.remove('hidden');
+            showWeatherDisplay('Current Weather', 'Loading current weather...');
             
             try {
-                let lat, lon;
-                if (userLocation) {
-                    lat = userLocation.lat;
-                    lon = userLocation.lon;
-                } else {
-                    lat = 40.7128;
-                    lon = -74.0060;
-                }
+                const { lat, lon } = userLocation || { lat: 40.7128, lon: -74.0060 };
                 
-                const response = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto&forecast_days=7');
+                const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`);
+                const data = await response.json();
+                
+                const currentTime = new Date();
+                const dateString = currentTime.toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
+                
+                const temperature = Math.round(data.current.temperature_2m * 9/5 + 32);
+                const humidity = data.current.relative_humidity_2m;
+                const windSpeed = Math.round(data.current.wind_speed_10m * 0.621371);
+                const conditions = getWeatherDescription(data.current.weather_code);
+                
+                const weatherContent = `
+                    <div style="text-align: center; padding: 10px;">
+                        <div style="font-size: 16px; color: #666; margin-bottom: 12px; font-weight: bold;">${dateString}</div>
+                        <div style="font-size: 28px; font-weight: bold; color: #0099cc; margin-bottom: 8px;">${temperature}°F</div>
+                        <div style="font-size: 18px; font-weight: bold; margin-bottom: 16px; color: #333;">${conditions}</div>
+                        <div style="font-size: 14px; line-height: 1.6;">
+                            <div><strong>Humidity:</strong> ${humidity}%</div>
+                            <div><strong>Wind:</strong> ${windSpeed} mph</div>
+                            <div><strong>Time:</strong> ${currentTime.toLocaleTimeString()}</div>
+                        </div>
+                    </div>
+                `;
+                
+                document.getElementById('weatherContent').innerHTML = weatherContent;
+            } catch (error) {
+                console.error('Weather fetch error:', error);
+                document.getElementById('weatherContent').innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load weather data.</div>';
+            }
+        }
+
+        async function showHourlyWeather() {
+            showWeatherDisplay('24-Hour Forecast', 'Loading hourly forecast...');
+            
+            try {
+                const { lat, lon } = userLocation || { lat: 40.7128, lon: -74.0060 };
+                
+                const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=1`);
+                const data = await response.json();
+                
+                let hourlyData = '<div class="hourly-forecast" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 6px; padding: 10px;">';
+                
+                for (let i = 0; i < Math.min(24, data.hourly.time.length); i++) {
+                    const time = new Date(data.hourly.time[i]);
+                    const hour = time.getHours();
+                    const temp = Math.round(data.hourly.temperature_2m[i] * 9/5 + 32);
+                    const conditions = getWeatherDescription(data.hourly.weather_code[i]);
+                    const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+                    const ampm = hour >= 12 ? 'PM' : 'AM';
+                    
+                    hourlyData += `
+                        <div class="hourly-item">
+                            <strong>${displayHour} ${ampm}</strong><br>
+                            ${temp}°F<br>
+                            <small>${conditions}</small>
+                        </div>
+                    `;
+                }
+                hourlyData += '</div>';
+                
+                document.getElementById('weatherContent').innerHTML = hourlyData;
+            } catch (error) {
+                console.error('Hourly weather fetch error:', error);
+                document.getElementById('weatherContent').innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load hourly forecast.</div>';
+            }
+        }
+
+        async function showWeeklyWeather() {
+            showWeatherDisplay('7-Day Forecast', 'Loading 7-day forecast...');
+            
+            try {
+                const { lat, lon } = userLocation || { lat: 40.7128, lon: -74.0060 };
+                
+                const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto&forecast_days=7`);
                 const data = await response.json();
                 
                 const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
                 let weeklyData = '<div class="weekly-forecast" style="display: grid; gap: 6px; padding: 10px;">';
                 
-                for (let i = 0; i < 7; i++) {
-                    if (i < data.daily.time.length) {
-                        const date = new Date(data.daily.time[i]);
-                        const dayName = days[date.getDay()];
-                        const high = Math.round(data.daily.temperature_2m_max[i] * 9/5 + 32);
-                        const low = Math.round(data.daily.temperature_2m_min[i] * 9/5 + 32);
-                        const conditions = getWeatherDescription(data.daily.weather_code[i]);
-                        
-                        weeklyData += '<div class="weekly-item"><div class="day-name">' + dayName + '</div><div class="day-temps">' + high + '°/' + low + '°</div><div class="day-condition">' + conditions + '</div></div>';
-                    }
+                for (let i = 0; i < Math.min(7, data.daily.time.length); i++) {
+                    const date = new Date(data.daily.time[i]);
+                    const dayName = days[date.getDay()];
+                    const high = Math.round(data.daily.temperature_2m_max[i] * 9/5 + 32);
+                    const low = Math.round(data.daily.temperature_2m_min[i] * 9/5 + 32);
+                    const conditions = getWeatherDescription(data.daily.weather_code[i]);
+                    
+                    weeklyData += `
+                        <div class="weekly-item">
+                            <div class="day-name">${dayName}</div>
+                            <div class="day-temps">${high}°/${low}°</div>
+                            <div class="day-condition">${conditions}</div>
+                        </div>
+                    `;
                 }
                 weeklyData += '</div>';
-                weatherContent.innerHTML = weeklyData;
+                
+                document.getElementById('weatherContent').innerHTML = weeklyData;
             } catch (error) {
                 console.error('Weekly weather fetch error:', error);
-                weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load 7-day forecast.</div>';
+                document.getElementById('weatherContent').innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load 7-day forecast.</div>';
             }
+        }
+
+        function showWeatherDisplay(title, content) {
+            const weatherDisplay = document.getElementById('weatherDisplay');
+            const weatherTitle = document.getElementById('weatherTitle');
+            const weatherContent = document.getElementById('weatherContent');
+            
+            weatherTitle.textContent = title;
+            weatherContent.innerHTML = `<div style="text-align: center; padding: 20px;">${content}</div>`;
+            weatherDisplay.classList.remove('hidden');
+        }
+
+        function hideWeather() {
+            const weatherDisplay = document.getElementById('weatherDisplay');
+            weatherDisplay.classList.add('hidden');
         }
 
         function getWeatherDescription(code) {
@@ -1453,11 +1751,7 @@
             return weatherCodes[code] || 'Unknown';
         }
 
-        function hideWeather() {
-            const weatherDisplay = document.getElementById('weatherDisplay');
-            weatherDisplay.classList.add('hidden');
-        }
-
+        // Setup swipe detection for weather
         function setupSwipeDetection() {
             const swipeBottom = document.getElementById('swipeBottom');
             const swipeLeft = document.getElementById('swipeLeft');
@@ -1467,67 +1761,64 @@
             let touchStartY = 0;
             let touchEndX = 0;
             let touchEndY = 0;
-            let minSwipeDistance = 50;
+            const minSwipeDistance = 50;
 
+            // Bottom swipe for current weather
             swipeBottom.addEventListener('touchstart', function(e) {
                 touchStartY = e.changedTouches[0].clientY;
                 e.preventDefault();
-                e.stopPropagation();
             }, { passive: false });
 
             swipeBottom.addEventListener('touchend', function(e) {
                 touchEndY = e.changedTouches[0].clientY;
                 const swipeDistance = touchStartY - touchEndY;
                 if (swipeDistance > minSwipeDistance) {
+                    console.log('Bottom swipe detected - showing current weather');
                     showCurrentWeather();
                 }
                 e.preventDefault();
-                e.stopPropagation();
             }, { passive: false });
 
+            // Left swipe for hourly weather
             swipeLeft.addEventListener('touchstart', function(e) {
                 touchStartX = e.changedTouches[0].clientX;
                 e.preventDefault();
-                e.stopPropagation();
             }, { passive: false });
 
             swipeLeft.addEventListener('touchend', function(e) {
                 touchEndX = e.changedTouches[0].clientX;
                 const swipeDistance = touchEndX - touchStartX;
                 if (swipeDistance > minSwipeDistance) {
+                    console.log('Left swipe detected - showing hourly weather');
                     showHourlyWeather();
                 }
                 e.preventDefault();
-                e.stopPropagation();
             }, { passive: false });
 
+            // Right swipe for weekly weather
             swipeRight.addEventListener('touchstart', function(e) {
                 touchStartX = e.changedTouches[0].clientX;
                 e.preventDefault();
-                e.stopPropagation();
             }, { passive: false });
 
             swipeRight.addEventListener('touchend', function(e) {
                 touchEndX = e.changedTouches[0].clientX;
                 const swipeDistance = touchStartX - touchEndX;
                 if (swipeDistance > minSwipeDistance) {
+                    console.log('Right swipe detected - showing weekly weather');
                     showWeeklyWeather();
                 }
                 e.preventDefault();
-                e.stopPropagation();
             }, { passive: false });
         }
 
+        // Settings functions
         function loadSettings() {
             try {
                 const savedSettings = localStorage.getItem('leslieSettings');
                 if (savedSettings) {
                     const parsed = JSON.parse(savedSettings);
-                    for (let key in parsed) {
-                        if (settings.hasOwnProperty(key)) {
-                            settings[key] = parsed[key];
-                        }
-                    }
+                    Object.assign(settings, parsed);
                 }
             } catch (error) {
                 console.error('Error loading settings:', error);
@@ -1544,19 +1835,21 @@
         }
 
         function updateSettingsUI() {
-            const speedSlider = document.getElementById('speechSpeedSlider');
-            const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
-            const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
-            const enhancedSwitch = document.getElementById('autoEnhancedSwitch');
-            const enhancedModeSwitch = document.getElementById('enhancedModeSwitch');
-            const apiKeyInput = document.getElementById('apiKeyInput');
+            const elements = {
+                speedSlider: document.getElementById('speechSpeedSlider'),
+                pauseSlider: document.getElementById('pauseBetweenWordsSlider'),
+                voiceSwitch: document.getElementById('speakVoiceCommandsSwitch'),
+                enhancedSwitch: document.getElementById('autoEnhancedSwitch'),
+                enhancedModeSwitch: document.getElementById('enhancedModeSwitch'),
+                apiKeyInput: document.getElementById('apiKeyInput')
+            };
 
-            if (speedSlider) speedSlider.value = settings.speechSpeed;
-            if (pauseSlider) pauseSlider.value = settings.pauseBetweenWords;
-            if (voiceSwitch) voiceSwitch.checked = settings.speakVoiceCommands;
-            if (enhancedSwitch) enhancedSwitch.checked = settings.autoEnhanced;
-            if (enhancedModeSwitch) enhancedModeSwitch.checked = settings.enhancedMode;
-            if (apiKeyInput) apiKeyInput.value = settings.apiKey;
+            if (elements.speedSlider) elements.speedSlider.value = settings.speechSpeed;
+            if (elements.pauseSlider) elements.pauseSlider.value = settings.pauseBetweenWords;
+            if (elements.voiceSwitch) elements.voiceSwitch.checked = settings.speakVoiceCommands;
+            if (elements.enhancedSwitch) elements.enhancedSwitch.checked = settings.autoEnhanced;
+            if (elements.enhancedModeSwitch) elements.enhancedModeSwitch.checked = settings.enhancedMode;
+            if (elements.apiKeyInput) elements.apiKeyInput.value = settings.apiKey;
 
             updateSpeechSpeed(settings.speechSpeed);
             updatePauseBetweenWords(settings.pauseBetweenWords);
@@ -1569,11 +1862,7 @@
             settings.speechSpeed = parseFloat(value);
             const label = document.getElementById('speechSpeedValue');
             if (label) {
-                if (value == 1.0) {
-                    label.textContent = 'Normal (1.0x)';
-                } else {
-                    label.textContent = value + 'x';
-                }
+                label.textContent = value == 1.0 ? 'Normal (1.0x)' : value + 'x';
             }
             saveSettings();
         }
@@ -1598,7 +1887,6 @@
             if (switchElement) {
                 switchElement.checked = checked;
             }
-            
             saveSettings();
         }
 
@@ -1618,7 +1906,6 @@
             if (switchElement) {
                 switchElement.checked = checked;
             }
-            
             saveSettings();
         }
 
@@ -1646,127 +1933,43 @@
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
 
-        function showEnhancedSuggestion() {
-            const enhancedSection = document.getElementById('enhancedSection');
-            if (enhancedSection && settings.apiKey) {
-                enhancedSection.classList.add('show');
-                const enhancedStatus = document.getElementById('enhancedStatus');
-                if (enhancedStatus) {
-                    enhancedStatus.textContent = 'Low confidence detected. Try Enhanced Recognition for better accuracy.';
-                    enhancedStatus.style.color = '#ff6600';
-                    enhancedStatus.style.fontWeight = 'bold';
-                }
-            }
+        function adjustSpeechSpeed(delta) {
+            const newSpeed = Math.max(0.5, Math.min(2.0, settings.speechSpeed + delta));
+            updateSpeechSpeed(newSpeed);
+            const slider = document.getElementById('speechSpeedSlider');
+            if (slider) slider.value = newSpeed;
         }
 
+        // Initialize app when DOM is loaded
         document.addEventListener('DOMContentLoaded', function() {
             console.log('DOM loaded, initializing Leslie Speech Assistant...');
             initApp();
         });
 
+        // Handle visibility change
         document.addEventListener('visibilitychange', function() {
-            console.log('Tab visibility changed - maintaining current state');
+            if (document.hidden) {
+                console.log('Tab hidden - pausing voice commands');
+                if (isVoiceCommandListening) {
+                    try {
+                        voiceCommandRecognition.stop();
+                        isVoiceCommandListening = false;
+                    } catch (e) {
+                        console.log('Error stopping voice commands:', e);
+                    }
+                }
+            } else {
+                console.log('Tab visible - resuming voice commands');
+                if (!isVoiceCommandListening && voiceCommandRecognition) {
+                    try {
+                        voiceCommandRecognition.start();
+                        isVoiceCommandListening = true;
+                    } catch (e) {
+                        console.log('Error starting voice commands:', e);
+                    }
+                }
+            }
         });
     </script>
 </body>
-</html>Title.textContent = 'Current Weather';
-            weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Loading weather data...</div>';
-            weatherDisplay.classList.remove('hidden');
-            
-            try {
-                let lat, lon;
-                if (userLocation) {
-                    lat = userLocation.lat;
-                    lon = userLocation.lon;
-                } else {
-                    lat = 40.7128;
-                    lon = -74.0060;
-                }
-                
-                let locationName = 'Current Location';
-                try {
-                    const geoResponse = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current=temperature_2m&timezone=auto');
-                    const geoData = await geoResponse.json();
-                    if (geoData.timezone) {
-                        const timezoneParts = geoData.timezone.split('/');
-                        if (timezoneParts.length > 1) {
-                            locationName = timezoneParts[timezoneParts.length - 1].replace(/_/g, ' ');
-                        }
-                    }
-                } catch (e) {
-                    locationName = lat.toFixed(1) + ', ' + lon.toFixed(1);
-                }
-                
-                const response = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto');
-                const data = await response.json();
-                
-                const currentTime = new Date();
-                const dateString = currentTime.toLocaleDateString('en-US', {
-                    weekday: 'long',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
-                });
-                
-                const temperature = Math.round(data.current.temperature_2m * 9/5 + 32);
-                const humidity = data.current.relative_humidity_2m;
-                const windSpeed = Math.round(data.current.wind_speed_10m * 0.621371);
-                const conditions = getWeatherDescription(data.current.weather_code);
-                
-                weatherContent.innerHTML = '<div style="text-align: center; padding: 10px;"><div style="font-size: 16px; color: #666; margin-bottom: 12px; font-weight: bold;">' + dateString + '</div><div style="font-size: 28px; font-weight: bold; color: #0099cc; margin-bottom: 8px;">' + temperature + '°F</div><div style="font-size: 18px; font-weight: bold; margin-bottom: 16px; color: #333;">' + conditions + '</div><div style="font-size: 14px; line-height: 1.6;"><div><strong>Humidity:</strong> ' + humidity + '%</div><div><strong>Wind:</strong> ' + windSpeed + ' mph</div><div><strong>Time:</strong> ' + currentTime.toLocaleTimeString() + '</div><div><strong>Location:</strong> ' + locationName + '</div></div></div>';
-            } catch (error) {
-                console.error('Weather fetch error:', error);
-                weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load weather data.</div>';
-            }
-        }
-
-        async function showHourlyWeather() {
-            const weatherDisplay = document.getElementById('weatherDisplay');
-            const weatherTitle = document.getElementById('weatherTitle');
-            const weatherContent = document.getElementById('weatherContent');
-            
-            weatherTitle.textContent = '24-Hour Forecast';
-            weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Loading hourly forecast...</div>';
-            weatherDisplay.classList.remove('hidden');
-            
-            try {
-                let lat, lon;
-                if (userLocation) {
-                    lat = userLocation.lat;
-                    lon = userLocation.lon;
-                } else {
-                    lat = 40.7128;
-                    lon = -74.0060;
-                }
-                
-                const response = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=1');
-                const data = await response.json();
-                
-                let hourlyData = '<div class="hourly-forecast" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 6px; padding: 10px;">';
-                
-                for (let i = 0; i < 24; i++) {
-                    if (i < data.hourly.time.length) {
-                        const time = new Date(data.hourly.time[i]);
-                        const hour = time.getHours();
-                        const temp = Math.round(data.hourly.temperature_2m[i] * 9/5 + 32);
-                        const conditions = getWeatherDescription(data.hourly.weather_code[i]);
-                        const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-                        const ampm = hour >= 12 ? 'PM' : 'AM';
-                        
-                        hourlyData += '<div class="hourly-item"><strong>' + displayHour + ' ' + ampm + '</strong><br>' + temp + '°F<br><small>' + conditions + '</small></div>';
-                    }
-                }
-                hourlyData += '</div>';
-                weatherContent.innerHTML = hourlyData;
-            } catch (error) {
-                console.error('Hourly weather fetch error:', error);
-                weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load hourly forecast.</div>';
-            }
-        }
-
-        async function showWeeklyWeather() {
-            const weatherDisplay = document.getElementById('weatherDisplay');
-            const weatherTitle = document.getElementById('weatherTitle');
-            const weatherContent = document.getElementById('weatherContent');
-            
-            weather
+</html>
