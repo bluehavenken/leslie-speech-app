@@ -923,79 +923,91 @@
         }
     }
 
-    // --- VOICE COMMAND LISTENER ---
+    // --- VOICE COMMAND LISTENER - STOP THE PINGING ---
     function setupVoiceCommandListener() {
+        // ONLY set up voice commands if NOT on speech page
+        if (currentPage === 'speech') {
+            console.log('On speech page - NOT starting voice command listener');
+            return;
+        }
+        
         if (!microphonePermissionGranted) return;
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) return;
 
+        // Stop any existing recognition completely
         if (voiceCommandRecognition) {
-            try { voiceCommandRecognition.abort(); } catch (e) {}
+            try { 
+                voiceCommandRecognition.stop();
+                voiceCommandRecognition.abort(); 
+            } catch (e) {}
             voiceCommandRecognition = null;
         }
 
         voiceCommandRecognition = new SpeechRecognition();
-        voiceCommandRecognition.continuous = true;
+        voiceCommandRecognition.continuous = false; // Changed to false to stop pinging
         voiceCommandRecognition.interimResults = false;
         voiceCommandRecognition.lang = 'en-US';
-        voiceCommandRecognition.maxAlternatives = 5; // More alternatives for better recognition
+        voiceCommandRecognition.maxAlternatives = 3;
 
         voiceCommandRecognition.onstart = function() {
             voiceCommandActive = true;
+            console.log('Voice command recognition started');
         };
 
         voiceCommandRecognition.onresult = function(event) {
-            for (let i = event.resultIndex; i < event.results.length; i++) {
+            for (let i = 0; i < event.results.length; i++) {
                 if (event.results[i].isFinal) {
                     // Try all alternatives for better command recognition
                     for (let j = 0; j < Math.min(event.results[i].length, 3); j++) {
                         const transcript = event.results[i][j].transcript.toLowerCase().trim();
-                        console.log(`Voice command attempt ${j + 1}:`, transcript);
+                        console.log(`Voice command detected:`, transcript);
                         if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
-                            console.log('Processing voice command:', transcript);
                             processVoiceCommand(transcript);
-                            return; // Stop after first successful match
+                            // Restart after processing command
+                            setTimeout(startVoiceCommandListening, 1000);
+                            return;
                         }
                     }
                 }
             }
+            // Restart if no command found
+            setTimeout(startVoiceCommandListening, 1000);
         };
 
         voiceCommandRecognition.onerror = function(event) {
             console.log('Voice command error:', event.error);
             voiceCommandActive = false;
             if (event.error !== 'not-allowed' && event.error !== 'aborted') {
-                setTimeout(startVoiceCommandListening, 500); // Very fast restart
+                setTimeout(startVoiceCommandListening, 2000);
             }
         };
 
         voiceCommandRecognition.onend = function() {
             voiceCommandActive = false;
-            if (currentPage !== 'speech' || !isListening) {
-                setTimeout(startVoiceCommandListening, 200); // Very fast restart
+            console.log('Voice command recognition ended');
+            // Only restart if not on speech page
+            if (currentPage !== 'speech' && !isListening) {
+                setTimeout(startVoiceCommandListening, 2000);
             }
         };
 
         function startVoiceCommandListening() {
-            if ((currentPage !== 'speech' || !isListening) && microphonePermissionGranted && !voiceCommandActive) {
-                try { 
-                    voiceCommandRecognition.start(); 
-                    console.log('Voice command listener started');
-                } catch (error) {
-                    console.log('Voice command start error:', error);
-                    setTimeout(startVoiceCommandListening, 1000);
-                }
+            // NEVER start if on speech page or if speech recognition is active
+            if (currentPage === 'speech' || isListening || !microphonePermissionGranted || voiceCommandActive) {
+                return;
+            }
+            
+            try { 
+                voiceCommandRecognition.start(); 
+            } catch (error) {
+                console.log('Voice command start error:', error);
+                setTimeout(startVoiceCommandListening, 3000);
             }
         }
 
-        startVoiceCommandListening();
-        
-        // More frequent restart attempts to prevent the 5-second pinging
-        setInterval(() => {
-            if (!voiceCommandActive && (currentPage !== 'speech' || !isListening)) {
-                startVoiceCommandListening();
-            }
-        }, 5000); // Every 5 seconds but with faster individual restarts
+        // Start initial listening
+        setTimeout(startVoiceCommandListening, 1000);
     }
 
     function processVoiceCommand(transcript) {
@@ -1089,28 +1101,38 @@
             enhancedMode = false;
             speak('Enhanced mode disabled');
         }
-        // Speech settings commands - with slider updates
+        // Speech settings commands - FIXED with proper function calls
         else if (transcript.includes('speak faster')) {
-            adjustSpeechSpeed(0.5);
-            updateSettingsUI(); // Update the slider position
-            speak('Speech speed increased');
+            console.log('SPEAK FASTER command detected');
+            const oldSpeed = settings.speechSpeed;
+            settings.speechSpeed = Math.min(2.0, settings.speechSpeed + 0.5);
+            updateSpeechSpeed(settings.speechSpeed);
+            console.log(`Speed changed from ${oldSpeed} to ${settings.speechSpeed}`);
+            speak(`Speech speed increased to ${settings.speechSpeed}`);
         }
         else if (transcript.includes('talk slower') || transcript.includes('speak slower')) {
-            adjustSpeechSpeed(-0.5);
-            updateSettingsUI(); // Update the slider position  
-            speak('Speech speed decreased');
+            console.log('SPEAK SLOWER command detected');
+            const oldSpeed = settings.speechSpeed;
+            settings.speechSpeed = Math.max(0.5, settings.speechSpeed - 0.5);
+            updateSpeechSpeed(settings.speechSpeed);
+            console.log(`Speed changed from ${oldSpeed} to ${settings.speechSpeed}`);
+            speak(`Speech speed decreased to ${settings.speechSpeed}`);
         }
         else if (transcript.includes('pause more')) {
-            console.log('Pause more command detected');
-            adjustPauseBetweenWords(0.5);
-            updateSettingsUI(); // Update the slider position
-            speak('Pause between words increased');
+            console.log('PAUSE MORE command detected');
+            const oldPause = settings.pauseBetweenWords;
+            settings.pauseBetweenWords = Math.min(2.0, settings.pauseBetweenWords + 0.5);
+            updatePauseBetweenWords(settings.pauseBetweenWords);
+            console.log(`Pause changed from ${oldPause} to ${settings.pauseBetweenWords}`);
+            speak(`Pause between words increased to ${settings.pauseBetweenWords} seconds`);
         }
         else if (transcript.includes('pause less')) {
-            console.log('Pause less command detected');
-            adjustPauseBetweenWords(-0.5);
-            updateSettingsUI(); // Update the slider position
-            speak('Pause between words decreased');
+            console.log('PAUSE LESS command detected');
+            const oldPause = settings.pauseBetweenWords;
+            settings.pauseBetweenWords = Math.max(0, settings.pauseBetweenWords - 0.5);
+            updatePauseBetweenWords(settings.pauseBetweenWords);
+            console.log(`Pause changed from ${oldPause} to ${settings.pauseBetweenWords}`);
+            speak(`Pause between words decreased to ${settings.pauseBetweenWords} seconds`);
         }
         else if (transcript.includes('turn off voice command speech')) {
             settings.speakVoiceCommands = false;
@@ -1258,8 +1280,12 @@
                 }
             }, 3 * 60 * 1000); // 3 minutes
             
+            // COMPLETELY stop voice command recognition when speech page is active
             if (voiceCommandRecognition && voiceCommandActive) {
-                try { voiceCommandRecognition.stop(); } catch (e) {}
+                try { 
+                    voiceCommandRecognition.stop();
+                    voiceCommandRecognition.abort();
+                } catch (e) {}
                 voiceCommandActive = false;
             }
         };
@@ -1549,7 +1575,9 @@
                     contact.name.toLowerCase().split(' ').some(word => word.startsWith(searchLower));
             });
         }
-        displayContacts();
+        
+        // Use the new display function
+        displayContactsOnPhonePage();
     }
 
     function callContact(contact) {
@@ -1587,39 +1615,28 @@
                 }, 100);
             }
             
-            // Auto-load contacts when visiting phone page
+            // Auto-load contacts when visiting phone page and STOP pinging
             if (pageId === 'phone') {
+                // Completely stop voice command listener to prevent pinging
+                if (voiceCommandRecognition) {
+                    try {
+                        voiceCommandRecognition.stop();
+                        voiceCommandRecognition.abort();
+                    } catch (e) {}
+                    voiceCommandActive = false;
+                }
+                
                 setTimeout(() => {
-                    console.log('Phone page loaded, attempting to load contacts...');
-                    
-                    // Check if Contact Picker API is supported
-                    if ('contacts' in navigator && 'ContactsManager' in window) {
-                        console.log('Contact Picker API supported, loading contacts...');
-                        loadRealContacts();
-                    } else {
-                        console.log('Contact Picker API not supported');
-                        const contactsList = document.getElementById('contactsList');
-                        if (contactsList) {
-                            contactsList.innerHTML = `
-                                <div style="padding: 16px; text-align: center; color: #cc6600;">
-                                    <p><strong>📱 Contact Picker API Not Supported</strong></p>
-                                    <p>Your browser or device doesn't support automatic contact loading.</p>
-                                    <br>
-                                    <p><strong>Supported browsers:</strong></p>
-                                    <p>• Chrome on Android</p>
-                                    <p>• Edge on Android</p>
-                                    <p>• Safari on iOS (limited support)</p>
-                                    <br>
-                                    <p>Desktop browsers generally don't support this feature.</p>
-                                    <br>
-                                    <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                                        📞 Try Anyway
-                                    </button>
-                                </div>
-                            `;
-                        }
-                    }
-                }, 300);
+                    console.log('Phone page loaded, loading contacts directly...');
+                    loadRealContacts();
+                }, 500);
+            } else {
+                // Only start voice commands if NOT on phone or speech page
+                if (pageId !== 'speech') {
+                    setTimeout(() => {
+                        setupVoiceCommandListener();
+                    }, 1000);
+                }
             }
         }
     }
@@ -1767,11 +1784,13 @@
                         <div style="font-size: 36px; font-weight: bold; color: #0099cc; text-align: center; margin-bottom: 8px;">${temperature}°F</div>
                         <div style="font-size: 22px; font-weight: bold; margin: 12px 0; text-align: center; color: #333;">${conditions}</div>
                     </div>
-                    <div style="line-height: 2; font-size: 16px; text-align: left; max-width: 400px; margin: 0 auto;">
-                        <strong>Humidity:</strong> ${humidity}%<br>
-                        <strong>Wind:</strong> ${windSpeed} mph<br>
-                        <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
-                        <strong>Location:</strong> Current Location<br>
+                    <div style="line-height: 2; font-size: 16px; max-width: 400px; margin: 0 auto;">
+                        <div style="text-align: left;">
+                            <strong>Humidity:</strong> ${humidity}%<br>
+                            <strong>Wind:</strong> ${windSpeed} mph<br>
+                            <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
+                            <strong>Location:</strong> Current Location<br>
+                        </div>
                     </div>
                 </div>
             `;
