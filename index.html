@@ -1090,28 +1090,31 @@
             updateListenButton();
             updateStatus('🎤 Listening... Say something!');
             
-            // Stop voice command recognition when speech page is active
-            if (voiceCommandRecognition && voiceCommandActive) {
+            // COMPLETELY STOP ANY AUDIO PROCESSING TO ELIMINATE PINGING
+            if (voiceCommandRecognition) {
                 try { 
                     voiceCommandRecognition.stop();
                     voiceCommandRecognition.abort();
                 } catch (e) {}
-                voiceCommandActive = false;
+                voiceCommandRecognition = null;
             }
+            voiceCommandActive = false;
             
-            // Clear any reconnect timers
+            // Clear any timers
             if (voiceCommandReconnectTimer) {
                 clearTimeout(voiceCommandReconnectTimer);
                 voiceCommandReconnectTimer = null;
             }
             
-            // Start 3-minute silence timer
+            // Start silence timer
             silenceTimer = setTimeout(function() {
                 if (isListening) {
                     stopListening();
                     updateStatus('Stopped listening due to 3 minutes of silence');
                 }
             }, 3 * 60 * 1000);
+            
+            console.log('Speech recognition started - all other audio processing stopped');
         };
 
         recognition.onend = function() {
@@ -1180,82 +1183,79 @@
                 }, 3 * 60 * 1000);
             }
             
-            let interimTranscript = '';
-            let finalText = '';
+            let completeTranscript = '';
+            let hasNewFinal = false;
             
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                const transcript = event.results[i][0].transcript;
+            // Get the MOST RECENT final result only - no accumulation
+            for (let i = event.results.length - 1; i >= 0; i--) {
                 if (event.results[i].isFinal) {
-                    finalText += transcript;
-                } else {
-                    interimTranscript += transcript;
+                    completeTranscript = event.results[i][0].transcript.trim();
+                    hasNewFinal = true;
+                    break;
                 }
             }
-
-            // Handle final results - ONLY COMPLETE PHRASES, NO CASCADING
-            if (finalText.trim()) {
-                const cleanText = finalText.trim();
-                
-                // Filter out Leslie commands from speech recognition display
-                if (cleanText.toLowerCase().includes('hey leslie') || cleanText.toLowerCase().includes('leslie')) {
-                    console.log('Filtered out Leslie command from speech display:', cleanText);
-                    return;
-                }
-                
-                // COMPLETELY PREVENT DUPLICATE PHRASES - CHECK AGAINST LAST PHRASE
-                if (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === cleanText) {
-                    console.log('Duplicate final phrase prevented:', cleanText);
-                    return;
-                }
-                
-                // ALSO CHECK AGAINST CURRENTLY SPOKEN PHRASE
-                if (finalPhraseSpoken === cleanText) {
-                    console.log('Currently speaking this phrase, skipping:', cleanText);
-                    return;
-                }
-                
-                // Clear interim display BEFORE adding to history
-                currentInterimTranscript = '';
-                
-                // Add ONLY to phrase history (no cascading)
-                phraseHistory.push(cleanText);
-                if (phraseHistory.length > 10) phraseHistory.shift(); // Reduced history size
-                
-                // Update display - this should show ONLY final phrases
-                updateSpeechDisplay();
-                
-                finalPhraseSpoken = cleanText;
-                updateStatus('✅ Complete phrase: ' + cleanText);
-                
-                // Speak the COMPLETE phrase ONLY ONCE
-                if (!isSpeaking && cleanText.length > 2) { // Don't speak very short phrases
-                    isSpeaking = true;
-                    console.log('Speaking complete phrase:', cleanText);
-                    speak(cleanText, true); // Speak the FULL phrase with word pauses
-                    
-                    // Calculate total speaking duration
-                    const words = cleanText.split(' ');
-                    const baseTime = words.length * 600; // 600ms per word
-                    const pauseTime = settings.pauseBetweenWords * words.length * 1000;
-                    const totalTime = baseTime + pauseTime;
-                    
-                    setTimeout(() => { 
-                        isSpeaking = false;
-                        console.log('Finished speaking phrase');
-                    }, totalTime);
-                }
-            } 
-            // Handle interim results - SHOW AS SINGLE INTERIM, DON'T SPEAK
-            else if (interimTranscript.trim() && !isSpeaking) {
-                const cleanInterim = interimTranscript.trim();
-                // Don't show Leslie commands in interim either
-                if (!cleanInterim.toLowerCase().includes('hey leslie') && !cleanInterim.toLowerCase().includes('leslie')) {
-                    // ONLY UPDATE if it's different from current interim
-                    if (currentInterimTranscript !== cleanInterim) {
-                        currentInterimTranscript = cleanInterim;
-                        updateSpeechDisplay();
-                        updateStatus('🔄 Listening: ' + cleanInterim);
+            
+            // If no final result, get the most recent interim
+            if (!hasNewFinal) {
+                for (let i = event.results.length - 1; i >= 0; i--) {
+                    if (!event.results[i].isFinal) {
+                        const interimText = event.results[i][0].transcript.trim();
+                        if (interimText && !interimText.toLowerCase().includes('leslie')) {
+                            if (currentInterimTranscript !== interimText) {
+                                currentInterimTranscript = interimText;
+                                updateSpeechDisplay();
+                                updateStatus('🔄 Listening: ' + interimText);
+                            }
+                        }
+                        break;
                     }
+                }
+                return; // Don't process final results
+            }
+
+            // Process ONLY complete final results - NO PARTIAL PHRASES
+            if (completeTranscript && completeTranscript.length > 3) {
+                
+                // Filter out Leslie commands
+                if (completeTranscript.toLowerCase().includes('leslie')) {
+                    console.log('Filtered out Leslie command:', completeTranscript);
+                    return;
+                }
+                
+                // CRITICAL: Only process if this is a NEW complete phrase
+                const isNewPhrase = !phraseHistory.includes(completeTranscript) && finalPhraseSpoken !== completeTranscript;
+                
+                if (isNewPhrase) {
+                    // Clear interim display
+                    currentInterimTranscript = '';
+                    
+                    // Add to history
+                    phraseHistory.push(completeTranscript);
+                    if (phraseHistory.length > 8) phraseHistory.shift();
+                    
+                    // Update display
+                    updateSpeechDisplay();
+                    
+                    finalPhraseSpoken = completeTranscript;
+                    updateStatus('✅ Complete: ' + completeTranscript);
+                    
+                    // Speak ONLY complete phrases
+                    if (!isSpeaking) {
+                        isSpeaking = true;
+                        console.log('Speaking complete phrase:', completeTranscript);
+                        speak(completeTranscript, true);
+                        
+                        // Calculate total speaking time
+                        const words = completeTranscript.split(' ');
+                        const speakTime = words.length * 800 + (settings.pauseBetweenWords * words.length * 1000);
+                        
+                        setTimeout(() => { 
+                            isSpeaking = false;
+                            console.log('Finished speaking');
+                        }, speakTime);
+                    }
+                } else {
+                    console.log('Duplicate phrase ignored:', completeTranscript);
                 }
             }
         };
@@ -1308,20 +1308,33 @@
     }
 
     async function loadRealContacts() {
+        console.log('Loading real contacts...');
         const contactsList = document.getElementById('contactsList');
+        
+        // Make sure we're on the phone page
+        if (currentPage !== 'phone') {
+            console.log('Not on phone page, switching to phone page first');
+            showPage('phone');
+            // Wait for page to load then try again
+            setTimeout(() => loadRealContacts(), 500);
+            return;
+        }
         
         try {
             if ('contacts' in navigator && 'ContactsManager' in window) {
                 contactsList.innerHTML = `
-                    <div style="padding: 16px; text-align: center; color: #666;">
-                        <p>Loading your contacts...</p>
+                    <div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;">
+                        <p><strong>📱 Loading your contacts...</strong></p>
+                        <p>Please select contacts to import</p>
                     </div>
                 `;
                 
                 const props = ['name', 'tel'];
                 const opts = {multiple: true};
                 
+                console.log('Requesting contact access...');
                 const contactList = await navigator.contacts.select(props, opts);
+                console.log('Contacts received:', contactList.length);
                 
                 if (contactList.length > 0) {
                     contacts = contactList.map(contact => ({
@@ -1330,25 +1343,32 @@
                     }));
                     contacts.sort((a, b) => a.name.localeCompare(b.name));
                     filteredContacts = [...contacts];
-                    displayContacts();
+                    
+                    console.log('Contacts processed:', contacts.length);
+                    displayContactsOnPhonePage();
                 } else {
-                    contacts = [];
-                    filteredContacts = [];
+                    console.log('No contacts selected by user');
                     displayNoContactsMessage();
                 }
             } else {
+                console.log('Contacts API not supported');
                 displayContactsNotSupported();
             }
         } catch (error) {
             console.error('Error loading contacts:', error);
-            contacts = [];
-            filteredContacts = [];
-            displayNoContactsMessage();
+            displayContactAccessError();
         }
     }
 
-    function displayContacts() {
+    function displayContactsOnPhonePage() {
+        console.log('Displaying contacts on phone page:', filteredContacts.length);
         const contactsList = document.getElementById('contactsList');
+        
+        if (!contactsList) {
+            console.error('Contacts list element not found!');
+            return;
+        }
+        
         contactsList.innerHTML = '';
         
         if (filteredContacts.length === 0) {
@@ -1356,15 +1376,20 @@
             return;
         }
 
-        const countDiv = document.createElement('div');
-        countDiv.style.padding = '8px';
-        countDiv.style.textAlign = 'center';
-        countDiv.style.fontWeight = 'bold';
-        countDiv.style.color = '#669900';
-        countDiv.textContent = `${filteredContacts.length} contacts loaded`;
-        contactsList.appendChild(countDiv);
+        // Header with count
+        const headerDiv = document.createElement('div');
+        headerDiv.style.padding = '12px';
+        headerDiv.style.textAlign = 'center';
+        headerDiv.style.fontWeight = 'bold';
+        headerDiv.style.color = '#669900';
+        headerDiv.style.background = '#f0f8ff';
+        headerDiv.style.borderRadius = '8px';
+        headerDiv.style.marginBottom = '8px';
+        headerDiv.textContent = `📱 ${filteredContacts.length} contacts loaded - Tap any contact to call`;
+        contactsList.appendChild(headerDiv);
 
-        const contactsToShow = filteredContacts.slice(0, 200);
+        // Show contacts (limit to 100 for performance)
+        const contactsToShow = filteredContacts.slice(0, 100);
         contactsToShow.forEach((contact, index) => {
             const contactEl = document.createElement('div');
             contactEl.className = 'contact-item';
@@ -1372,34 +1397,37 @@
                 <div class="contact-name">${contact.name}</div>
                 <div class="contact-phone">${contact.phone}</div>
             `;
-            contactEl.onclick = () => callContact(contact);
+            contactEl.onclick = () => {
+                console.log('Calling contact:', contact.name, contact.phone);
+                callContact(contact);
+            };
             contactsList.appendChild(contactEl);
         });
 
-        if (filteredContacts.length > 200) {
+        // Show "more contacts" if needed
+        if (filteredContacts.length > 100) {
             const moreDiv = document.createElement('div');
             moreDiv.style.padding = '16px';
             moreDiv.style.textAlign = 'center';
             moreDiv.style.color = '#666';
-            moreDiv.textContent = `... and ${filteredContacts.length - 200} more contacts. Use search to find specific contacts.`;
+            moreDiv.style.fontStyle = 'italic';
+            moreDiv.textContent = `... and ${filteredContacts.length - 100} more contacts. Use search above to find specific contacts.`;
             contactsList.appendChild(moreDiv);
         }
+        
+        console.log('Contacts displayed successfully on phone page');
     }
 
     function displayNoContactsMessage() {
         const contactsList = document.getElementById('contactsList');
         contactsList.innerHTML = `
-            <div style="padding: 16px; text-align: center; color: #666;">
-                <p><strong>📱 Access Your Real Contacts</strong></p>
-                <p>Your contacts are accessed locally on your device only.</p>
-                <p>No contact data is sent to servers or made public.</p>
+            <div style="padding: 20px; text-align: center; color: #666; border: 2px solid #669900; border-radius: 8px; background: #f8f9fa;">
+                <p><strong>📱 No Contacts Loaded</strong></p>
+                <p>You can try loading contacts again, or your device may not have any contacts stored.</p>
                 <br>
                 <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                    📞 Load Your Contacts
+                    📞 Try Loading Contacts Again
                 </button>
-                <p style="margin-top: 16px; font-size: 12px; color: #999;">
-                    If no contacts appear after clicking, your browser may not support the Contacts API.
-                </p>
             </div>
         `;
     }
@@ -1407,15 +1435,38 @@
     function displayContactsNotSupported() {
         const contactsList = document.getElementById('contactsList');
         contactsList.innerHTML = `
-            <div style="padding: 16px; text-align: center; color: #666;">
-                <p><strong>📱 Contacts Not Supported</strong></p>
-                <p>Your browser doesn't support the Contacts API.</p>
-                <p>Try using Chrome on Android or Safari on iOS for contact access.</p>
+            <div style="padding: 20px; text-align: center; color: #666; border: 2px solid #ff6600; border-radius: 8px; background: #fff3e0;">
+                <p><strong>📱 Contacts API Not Supported</strong></p>
+                <p>Your browser or device doesn't support accessing contacts.</p>
+                <p><strong>Try:</strong></p>
+                <p>• Chrome on Android</p>
+                <p>• Safari on iOS</p>
+                <p>• Make sure you're using HTTPS</p>
+            </div>
+        `;
+    }
+
+    function displayContactAccessError() {
+        const contactsList = document.getElementById('contactsList');
+        contactsList.innerHTML = `
+            <div style="padding: 20px; text-align: center; color: #666; border: 2px solid #cc0000; border-radius: 8px; background: #ffebee;">
+                <p><strong>📱 Contact Access Error</strong></p>
+                <p>There was an error accessing your contacts.</p>
+                <p>This could be due to:</p>
+                <p>• Permission denied</p>
+                <p>• Browser security settings</p>
+                <p>• Device restrictions</p>
+                <br>
+                <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                    📞 Try Again
+                </button>
             </div>
         `;
     }
 
     function filterContacts(searchTerm) {
+        console.log('Filtering contacts with term:', searchTerm);
+        
         if (!searchTerm.trim()) {
             filteredContacts = [...contacts];
         } else {
@@ -1431,7 +1482,8 @@
             });
         }
         
-        displayContacts();
+        console.log('Filtered contacts:', filteredContacts.length);
+        displayContactsOnPhonePage(); // Use the correct display function
     }
 
     function callContact(contact) {
