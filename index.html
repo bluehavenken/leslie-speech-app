@@ -1,41 +1,4 @@
-recognition.onstart = function() {
-            isListening = true;
-            updateListenButton();
-            updateStatus('🎤 Listening... Say something!');
-            console.log('=== SPEECH RECOGNITION STARTED - STOPPING ALL PINGING ===');
-            
-            // COMPLETELY STOP all voice command recognition to eliminate pinging
-            if (voiceCommandRecognition) {
-                try {
-                    voiceCommandRecognition.stop();
-                    voiceCommandRecognition.abort();
-                } catch (e) {
-                    console.log('Error stopping voice commands:', e);
-                }
-            }
-            voiceCommandRecognition = null;
-            voiceCommandActive = false;
-            
-            // Clear timers
-            if (silenceTimer) {
-                clearTimeout(silenceTimer);
-                silenceTimer = null;
-            }
-            if (voiceCommandReconnectTimer) {
-                clearTimeout(voiceCommandReconnectTimer);
-                voiceCommandReconnectTimer = null;
-            }
-            
-            console.log('=== ALL BACKGROUND AUDIO PROCESSING STOPPED ===');
-            
-            // Start silence timer
-            silenceTimer = setTimeout(function() {
-                if (isListening) {
-                    stopListening();
-                    updateStatus('Stopped listening due to 3 minutes of silence');
-                }
-            }, 3 * 60 * 1000);
-        };<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -838,1299 +801,996 @@ recognition.onstart = function() {
     </div>
 
     <script>
-    // --- GLOBALS ---
-    let recognition = null;
-    let voiceCommandRecognition = null;
-    let isListening = false;
-    let speechSynth = window.speechSynthesis;
-    let currentPage = 'home';
-    let pageHistory = ['home'];
-    let contacts = [];
-    let filteredContacts = [];
-    let isSpeaking = false;
-    let microphonePermissionGranted = false;
-    let voiceCommandActive = false;
-    let silenceTimer = null;
-    let enhancedMode = false;
-    let userLocation = null;
-    let finalPhraseSpoken = '';
-    let voiceCommandReconnectTimer = null;
-    let micPermissionRequested = false;
+        // Global variables
+        let recognition = null;
+        let isListening = false;
+        let speechSynth = window.speechSynthesis;
+        let currentPage = 'home';
+        let pageHistory = ['home'];
+        let contacts = [];
+        let filteredContacts = [];
+        let isSpeaking = false;
+        let silenceTimer = null;
+        let userLocation = null;
+        let finalPhraseSpoken = '';
+        let phraseHistory = [];
+        let currentInterimTranscript = '';
 
-    // Settings
-    let settings = {
-        speechSpeed: 1.0,
-        speakVoiceCommands: true,
-        autoEnhanced: true,
-        apiKey: '',
-        pauseBetweenWords: 0.5,
-        enhancedMode: false
-    };
-    let phraseHistory = [];
-    let currentInterimTranscript = '';
-
-    // ---- INIT APP ----
-    function initApp() {
-        loadSettings();
-        setupButtonHandlers();
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-            alert('Speech recognition not supported in this browser. Please try Chrome, Edge, or Safari.');
-            return;
-        }
-        setupSpeechRecognition();
-        initializeContacts();
-        setupSwipeDetection();
-        setupBackButtonHandling();
-        getUserLocation();
-        updateEnhancedSectionVisibility();
-        updateTextSpeakButton();
-        
-        // Request microphone permission on first interaction
-        document.addEventListener('click', requestMicrophonePermissionOnce, { once: true });
-        
-        console.log('Leslie Speech Assistant initialized successfully!');
-    }
-
-    function requestMicrophonePermissionOnce() {
-        if (!micPermissionRequested && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            micPermissionRequested = true;
-            navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(function(stream) {
-                    microphonePermissionGranted = true;
-                    stream.getTracks().forEach(track => track.stop());
-                    console.log('Microphone permission granted');
-                })
-                .catch(function(error) {
-                    microphonePermissionGranted = false;
-                    console.log('Microphone permission not granted');
-                });
-        }
-    }
-
-    // --- BUTTON HANDLERS ---
-    function setupButtonHandlers() {
-        console.log('Setting up button handlers...');
-        
-        document.getElementById('btnStartTalking').onclick = startTalkingFromHome;
-        document.getElementById('btnStartTexting').onclick = function() { showPage('textInput'); };
-        document.getElementById('btnPhoneCall').onclick = function() { showPage('phone'); };
-        document.getElementById('btnCommands').onclick = function() { showPage('commands'); };
-        document.getElementById('btnSettings').onclick = function() { showPage('settings'); };
-
-        // Speech Page
-        document.getElementById('btnCloseSpeech').onclick = navigateBack;
-        document.getElementById('listenButton').onclick = toggleListening;
-        document.getElementById('enhancedButton').onclick = startEnhancedRecognition;
-
-        // Phone Page
-        document.getElementById('btnClosePhone').onclick = function() { showPage('home'); };
-        document.getElementById('btnPhoneHome').onclick = function() { showPage('home'); };
-
-        // Commands Page
-        document.getElementById('btnCloseCommands').onclick = navigateBack;
-
-        // Text Input Page
-        document.getElementById('btnCloseText').onclick = navigateBack;
-        document.getElementById('speakTextBtn').onclick = speakTextInput;
-        document.getElementById('btnTextHome').onclick = function() { showPage('home'); };
-        document.getElementById('largeTextInputField').oninput = updateTextSpeakButton;
-
-        // Settings Page
-        document.getElementById('btnCloseSettings').onclick = navigateBack;
-        document.getElementById('btnSettingsHome').onclick = function() { showPage('home'); };
-        document.getElementById('apiKeyInput').onchange = function(e) { saveApiKey(e.target.value); };
-        document.getElementById('speechSpeedSlider').oninput = function(e) { updateSpeechSpeed(e.target.value); };
-        document.getElementById('pauseBetweenWordsSlider').oninput = function(e) { updatePauseBetweenWords(e.target.value); };
-        document.getElementById('speakVoiceCommandsSwitch').onchange = function(e) { updateVoiceCommandSetting(e.target.checked); };
-        document.getElementById('autoEnhancedSwitch').onchange = function(e) { updateAutoEnhanced(e.target.checked); };
-        document.getElementById('enhancedModeSwitch').onchange = function(e) { updateEnhancedMode(e.target.checked); };
-        
-        console.log('Button handlers set up successfully!');
-    }
-
-    // --- GEOLOCATION ---
-    function getUserLocation() {
-        console.log('Getting user location for weather...');
-        if (navigator.geolocation) {
-            // Use high accuracy to get precise location
-            const options = {
-                enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 300000 // 5 minutes
-            };
-            
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    userLocation = {
-                        lat: position.coords.latitude,
-                        lon: position.coords.longitude
-                    };
-                    console.log('Actual location obtained:', userLocation);
-                    console.log(`Coordinates: ${userLocation.lat}, ${userLocation.lon}`);
-                },
-                function(error) {
-                    console.error('Geolocation error:', error);
-                    // Try to get approximate location based on IP
-                    fetch('https://ipapi.co/json/')
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.latitude && data.longitude) {
-                                userLocation = { 
-                                    lat: data.latitude, 
-                                    lon: data.longitude 
-                                };
-                                console.log('IP-based location obtained:', userLocation);
-                                console.log(`Location: ${data.city}, ${data.region}, ${data.country}`);
-                            } else {
-                                throw new Error('IP location failed');
-                            }
-                        })
-                        .catch(() => {
-                            userLocation = { lat: 40.7128, lon: -74.0060 }; // New York fallback
-                            console.log('Using fallback location (New York):', userLocation);
-                        });
-                },
-                options
-            );
-        } else {
-            userLocation = { lat: 40.7128, lon: -74.0060 }; // New York fallback
-            console.log('Geolocation not supported, using fallback location');
-        }
-    }
-
-    function speak(text, useWordPauses = false) {
-        if (settings.speakVoiceCommands && text.trim()) {
-            console.log('=== SPEAKING COMPLETE PHRASE ===');
-            console.log('Full text to speak:', text);
-            console.log('Use word pauses:', useWordPauses);
-            
-            speechSynth.cancel(); // Stop any current speech
-            
-            if (useWordPauses && settings.pauseBetweenWords > 0) {
-                console.log('Speaking with word pauses...');
-                const words = text.split(' ');
-                console.log('Words to speak:', words);
-                let wordIndex = 0;
-                
-                function speakNextWord() {
-                    if (wordIndex < words.length) {
-                        console.log(`Speaking word ${wordIndex + 1}/${words.length}: "${words[wordIndex]}"`);
-                        const utterance = new SpeechSynthesisUtterance(words[wordIndex]);
-                        utterance.rate = settings.speechSpeed;
-                        utterance.pitch = 1;
-                        utterance.volume = 0.8;
-                        
-                        utterance.onend = function() {
-                            wordIndex++;
-                            if (wordIndex < words.length) {
-                                console.log(`Pausing ${settings.pauseBetweenWords} seconds before next word`);
-                                setTimeout(speakNextWord, settings.pauseBetweenWords * 1000);
-                            } else {
-                                console.log('=== FINISHED SPEAKING ALL WORDS ===');
-                            }
-                        };
-                        
-                        utterance.onerror = function(e) {
-                            console.error('Speech error:', e);
-                        };
-                        
-                        speechSynth.speak(utterance);
-                    }
-                }
-                
-                speakNextWord();
-            } else {
-                console.log('Speaking complete phrase without word pauses...');
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = settings.speechSpeed;
-                utterance.pitch = 1;
-                utterance.volume = 0.8;
-                
-                utterance.onend = function() {
-                    console.log('=== FINISHED SPEAKING COMPLETE PHRASE ===');
-                };
-                
-                utterance.onerror = function(e) {
-                    console.error('Speech error:', e);
-                };
-                
-                speechSynth.speak(utterance);
-            }
-        } else {
-            console.log('Speech disabled or empty text');
-        }
-    }
-
-    // --- BACK BUTTON HANDLING ---
-    function setupBackButtonHandling() {
-        window.addEventListener('popstate', function(event) {
-            event.preventDefault();
-            navigateBack();
-        });
-        history.pushState({page: 'home'}, '', '');
-    }
-
-    function navigateBack() {
-        if (pageHistory.length > 1) {
-            pageHistory.pop();
-            const previousPage = pageHistory[pageHistory.length - 1];
-            showPage(previousPage, false);
-        } else {
-            showPage('home', false);
-        }
-    }
-
-    // --- SPEECH RECOGNITION SETUP ---
-    function setupSpeechRecognition() {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert('Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari.');
-            return;
-        }
-
-        recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
-
-        recognition.onstart = function() {
-            isListening = true;
-            updateListenButton();
-            updateStatus('🎤 Listening... Say something!');
-            console.log('=== SPEECH RECOGNITION STARTED ===');
-            
-            // Clear only our specific timers, not ALL browser timers
-            if (silenceTimer) {
-                clearTimeout(silenceTimer);
-                silenceTimer = null;
-            }
-            if (voiceCommandReconnectTimer) {
-                clearTimeout(voiceCommandReconnectTimer);
-                voiceCommandReconnectTimer = null;
-            }
-            
-            // COMPLETELY DISABLE voice command recognition to stop pinging
-            voiceCommandRecognition = null;
-            voiceCommandActive = false;
-            
-            // Start silence timer
-            silenceTimer = setTimeout(function() {
-                if (isListening) {
-                    stopListening();
-                    updateStatus('Stopped listening due to 3 minutes of silence');
-                }
-            }, 3 * 60 * 1000);
+        // Settings
+        let settings = {
+            speechSpeed: 1.0,
+            speakVoiceCommands: true,
+            autoEnhanced: true,
+            apiKey: '',
+            pauseBetweenWords: 0.5,
+            enhancedMode: false
         };
 
-        recognition.onend = function() {
-            if (isListening) {
-                // Restart recognition to keep listening
-                setTimeout(() => {
-                    if (isListening) {
-                        try {
-                            recognition.start();
-                        } catch (error) {
-                            console.log('Could not restart recognition');
-                            isListening = false;
-                            updateListenButton();
-                            updateStatus('Recognition stopped');
-                        }
-                    }
-                }, 100);
-            } else {
+        // Initialize app
+        function initApp() {
+            loadSettings();
+            setupButtonHandlers();
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                alert('Speech recognition not supported in this browser. Please try Chrome, Edge, or Safari.');
+                return;
+            }
+            setupSpeechRecognition();
+            initializeContacts();
+            setupSwipeDetection();
+            setupBackButtonHandling();
+            getUserLocation();
+            updateEnhancedSectionVisibility();
+            updateTextSpeakButton();
+            console.log('Leslie Speech Assistant initialized successfully!');
+        }
+
+        // Setup button handlers
+        function setupButtonHandlers() {
+            document.getElementById('btnStartTalking').onclick = startTalkingFromHome;
+            document.getElementById('btnStartTexting').onclick = function() { showPage('textInput'); };
+            document.getElementById('btnPhoneCall').onclick = function() { showPage('phone'); };
+            document.getElementById('btnCommands').onclick = function() { showPage('commands'); };
+            document.getElementById('btnSettings').onclick = function() { showPage('settings'); };
+            document.getElementById('btnCloseSpeech').onclick = navigateBack;
+            document.getElementById('listenButton').onclick = toggleListening;
+            document.getElementById('enhancedButton').onclick = startEnhancedRecognition;
+            document.getElementById('btnClosePhone').onclick = function() { showPage('home'); };
+            document.getElementById('btnPhoneHome').onclick = function() { showPage('home'); };
+            document.getElementById('btnCloseCommands').onclick = navigateBack;
+            document.getElementById('btnCloseText').onclick = navigateBack;
+            document.getElementById('speakTextBtn').onclick = speakTextInput;
+            document.getElementById('btnTextHome').onclick = function() { showPage('home'); };
+            document.getElementById('largeTextInputField').oninput = updateTextSpeakButton;
+            document.getElementById('btnCloseSettings').onclick = navigateBack;
+            document.getElementById('btnSettingsHome').onclick = function() { showPage('home'); };
+            document.getElementById('apiKeyInput').onchange = function(e) { saveApiKey(e.target.value); };
+            document.getElementById('speechSpeedSlider').oninput = function(e) { updateSpeechSpeed(e.target.value); };
+            document.getElementById('pauseBetweenWordsSlider').oninput = function(e) { updatePauseBetweenWords(e.target.value); };
+            document.getElementById('speakVoiceCommandsSwitch').onchange = function(e) { updateVoiceCommandSetting(e.target.checked); };
+            document.getElementById('autoEnhancedSwitch').onchange = function(e) { updateAutoEnhanced(e.target.checked); };
+            document.getElementById('enhancedModeSwitch').onchange = function(e) { updateEnhancedMode(e.target.checked); };
+        }
+
+        // Setup speech recognition
+        function setupSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                alert('Speech recognition not supported in this browser.');
+                return;
+            }
+
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onstart = function() {
+                isListening = true;
                 updateListenButton();
-                updateStatus('Ready to listen - Click "START TALKING" below');
-            }
-            
-            if (silenceTimer) {
-                clearTimeout(silenceTimer);
-                silenceTimer = null;
-            }
-        };
-
-        recognition.onerror = function(event) {
-            console.log('Recognition error:', event.error);
-            isListening = false;
-            updateListenButton();
-            
-            if (silenceTimer) {
-                clearTimeout(silenceTimer);
-                silenceTimer = null;
-            }
-            
-            if (event.error === 'no-speech') {
-                updateStatus('No speech detected. Keep talking or click START TALKING again.');
-            } else if (event.error === 'audio-capture') {
-                updateStatus('Microphone error. Please check permissions and try again.');
-            } else if (event.error === 'not-allowed') {
-                updateStatus('Microphone permission denied. Please allow microphone access.');
-            } else if (event.error === 'network') {
-                updateStatus('Network error. Please check your connection.');
-            } else {
-                updateStatus(`Recognition error (${event.error}). Try again or use Enhanced Recognition.`);
-                if (settings.autoEnhanced) {
-                    showEnhancedSuggestion();
+                updateStatus('🎤 Listening... Say something!');
+                console.log('Speech recognition started - stopping all background audio');
+                
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
                 }
-            }
-        };
-
-        recognition.onresult = function(event) {
-            // Reset silence timer when speech is detected
-            if (silenceTimer) {
-                clearTimeout(silenceTimer);
+                
                 silenceTimer = setTimeout(function() {
                     if (isListening) {
                         stopListening();
                         updateStatus('Stopped listening due to 3 minutes of silence');
                     }
                 }, 3 * 60 * 1000);
-            }
-            
-            let latestInterim = '';
-            let latestFinal = '';
-            
-            // Process results in REVERSE to get only the LATEST
-            for (let i = event.results.length - 1; i >= 0; i--) {
-                if (event.results[i].isFinal && !latestFinal) {
-                    latestFinal = event.results[i][0].transcript.trim();
-                } else if (!event.results[i].isFinal && !latestInterim) {
-                    latestInterim = event.results[i][0].transcript.trim();
-                }
-                
-                // Break once we have what we need
-                if (latestFinal || latestInterim) break;
-            }
-
-            // Handle ONLY final results
-            if (latestFinal && latestFinal.length > 3) {
-                
-                // Filter out Leslie commands
-                if (latestFinal.toLowerCase().includes('leslie')) {
-                    console.log('Filtered Leslie command:', latestFinal);
-                    return;
-                }
-                
-                // ONLY add if it's truly NEW and DIFFERENT
-                const isDuplicate = phraseHistory.includes(latestFinal) || 
-                                  finalPhraseSpoken === latestFinal ||
-                                  (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === latestFinal);
-                
-                if (!isDuplicate) {
-                    console.log('New complete phrase detected:', latestFinal);
-                    
-                    // Clear interim completely
-                    currentInterimTranscript = '';
-                    
-                    // Add to history
-                    phraseHistory.push(latestFinal);
-                    if (phraseHistory.length > 5) phraseHistory.shift(); // Keep only 5 phrases
-                    
-                    // Update display
-                    updateSpeechDisplay();
-                    
-                    finalPhraseSpoken = latestFinal;
-                    updateStatus('✅ Complete: ' + latestFinal);
-                    
-                    // FIXED: Speak complete phrase with proper timing
-                    if (!isSpeaking) {
-                        isSpeaking = true;
-                        console.log('=== SPEAKING COMPLETE PHRASE ===');
-                        console.log('Full phrase to speak:', latestFinal);
-                        
-                        // Cancel any existing speech first
-                        if (speechSynth.speaking) {
-                            speechSynth.cancel();
-                        }
-                        
-                        // Wait a moment for cancel to complete, then speak
-                        setTimeout(() => {
-                            const utterance = new SpeechSynthesisUtterance(latestFinal);
-                            utterance.rate = 0.9; // Slightly slower for clarity
-                            utterance.pitch = 1;
-                            utterance.volume = 1.0;
-                            
-                            utterance.onstart = function() {
-                                console.log('Started speaking:', latestFinal);
-                            };
-                            
-                            utterance.onend = function() {
-                                console.log('=== FINISHED SPEAKING COMPLETE PHRASE ===');
-                                isSpeaking = false;
-                            };
-                            
-                            utterance.onerror = function(event) {
-                                console.error('Speech synthesis error:', event);
-                                isSpeaking = false;
-                            };
-                            
-                            console.log('About to speak utterance...');
-                            speechSynth.speak(utterance);
-                        }, 100);
-                    }
-                }
-            }
-            // Show interim ONLY if no final result and not currently speaking
-            else if (latestInterim && !isSpeaking && !latestFinal) {
-                if (!latestInterim.toLowerCase().includes('leslie')) {
-                    if (currentInterimTranscript !== latestInterim) {
-                        currentInterimTranscript = latestInterim;
-                        updateSpeechDisplay();
-                        updateStatus('🔄 Listening: ' + latestInterim);
-                    }
-                }
-            }
-        };
-    }
-
-    function updateSpeechDisplay() {
-        const recognizedTextEl = document.getElementById('recognizedText');
-        if (recognizedTextEl) {
-            let html = '';
-            
-            // Show ONLY final phrases
-            if (phraseHistory.length > 0) {
-                // Only show the LAST phrase to prevent cascading
-                const lastPhrase = phraseHistory[phraseHistory.length - 1];
-                html += `<div class="final-phrase">✅ ${lastPhrase}</div>`;
-                
-                // Optionally show previous phrases in a collapsed way
-                if (phraseHistory.length > 1) {
-                    html += `<div style="color: #999; font-size: 12px; margin-top: 8px;">Previous phrases: ${phraseHistory.length - 1}</div>`;
-                }
-            }
-            
-            // Show interim ONLY if we have one and it's different from last final
-            if (currentInterimTranscript.trim() && !isSpeaking) {
-                const lastFinal = phraseHistory.length > 0 ? phraseHistory[phraseHistory.length - 1] : '';
-                if (currentInterimTranscript !== lastFinal) {
-                    html += `<div class="interim-phrase">🔄 ${currentInterimTranscript}</div>`;
-                }
-            }
-            
-            if (html) {
-                recognizedTextEl.innerHTML = html;
-            } else {
-                recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic;">Say something and your complete phrase will appear here...</div>';
-            }
-            
-            // Auto-scroll to bottom
-            const speechContent = document.querySelector('.speech-content');
-            if (speechContent) {
-                speechContent.scrollTop = speechContent.scrollHeight;
-            }
-        }
-    }
-
-    function clearSpeechText() {
-        currentInterimTranscript = '';
-        phraseHistory = [];
-        finalPhraseSpoken = '';
-        updateSpeechDisplay();
-        updateStatus('Text cleared - Ready to listen');
-    }
-
-    // --- CONTACTS ---
-    function initializeContacts() {
-        contacts = [];
-        filteredContacts = [];
-    }
-
-    async function loadRealContacts() {
-        console.log('Loading real contacts...');
-        const contactsList = document.getElementById('contactsList');
-        
-        // Make sure we're on the phone page
-        if (currentPage !== 'phone') {
-            console.log('Not on phone page, switching to phone page first');
-            showPage('phone');
-            return;
-        }
-        
-        try {
-            if ('contacts' in navigator && 'ContactsManager' in window) {
-                contactsList.innerHTML = `
-                    <div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;">
-                        <p><strong>📱 Loading your contacts...</strong></p>
-                        <p>Please select contacts to import when the browser asks</p>
-                    </div>
-                `;
-                
-                const props = ['name', 'tel'];
-                const opts = {multiple: true};
-                
-                console.log('Requesting contact access...');
-                const contactList = await navigator.contacts.select(props, opts);
-                console.log('Contacts received:', contactList.length);
-                
-                if (contactList.length > 0) {
-                    contacts = contactList.map(contact => ({
-                        name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
-                        phone: contact.tel && contact.tel[0] ? contact.tel[0] : 'No phone'
-                    }));
-                    contacts.sort((a, b) => a.name.localeCompare(b.name));
-                    filteredContacts = [...contacts];
-                    
-                    console.log('Contacts processed:', contacts.length);
-                    displayContactsOnPhonePage();
-                } else {
-                    console.log('No contacts selected by user');
-                    displayNoContactsMessage();
-                }
-            } else {
-                console.log('Contacts API not supported');
-                contactsList.innerHTML = `
-                    <div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;">
-                        <p><strong>📱 Contacts Not Available</strong></p>
-                        <p>Your browser doesn't support the Contacts API</p>
-                        <p><strong>This works on:</strong></p>
-                        <p>• Chrome on Android</p>
-                        <p>• Safari on iOS</p>
-                        <p>• Make sure you're using HTTPS</p>
-                        <br>
-                        <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 14px 24px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                            📞 Try Again
-                        </button>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            console.error('Error loading contacts:', error);
-            contactsList.innerHTML = `
-                <div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px; background: #ffebee;">
-                    <p><strong>📱 Contact Access Error</strong></p>
-                    <p>Error: ${error.message || 'Unknown error'}</p>
-                    <p>This could be due to:</p>
-                    <p>• Permission denied</p>
-                    <p>• Browser security settings</p>
-                    <p>• Device restrictions</p>
-                    <br>
-                    <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                        📞 Try Again
-                    </button>
-                </div>
-            `;
-        }
-    }
-
-    function displayContactsOnPhonePage() {
-        console.log('Displaying contacts on phone page:', filteredContacts.length);
-        const contactsList = document.getElementById('contactsList');
-        
-        if (!contactsList) {
-            console.error('Contacts list element not found!');
-            return;
-        }
-        
-        contactsList.innerHTML = '';
-        
-        if (filteredContacts.length === 0) {
-            displayNoContactsMessage();
-            return;
-        }
-
-        // Header with count
-        const headerDiv = document.createElement('div');
-        headerDiv.style.padding = '12px';
-        headerDiv.style.textAlign = 'center';
-        headerDiv.style.fontWeight = 'bold';
-        headerDiv.style.color = '#669900';
-        headerDiv.style.background = '#f0f8ff';
-        headerDiv.style.borderRadius = '8px';
-        headerDiv.style.marginBottom = '8px';
-        headerDiv.textContent = `📱 ${filteredContacts.length} contacts loaded - Tap any contact to call`;
-        contactsList.appendChild(headerDiv);
-
-        // Show contacts (limit to 100 for performance)
-        const contactsToShow = filteredContacts.slice(0, 100);
-        contactsToShow.forEach((contact, index) => {
-            const contactEl = document.createElement('div');
-            contactEl.className = 'contact-item';
-            contactEl.innerHTML = `
-                <div class="contact-name">${contact.name}</div>
-                <div class="contact-phone">${contact.phone}</div>
-            `;
-            contactEl.onclick = () => {
-                console.log('Calling contact:', contact.name, contact.phone);
-                callContact(contact);
             };
-            contactsList.appendChild(contactEl);
-        });
 
-        // Show "more contacts" if needed
-        if (filteredContacts.length > 100) {
-            const moreDiv = document.createElement('div');
-            moreDiv.style.padding = '16px';
-            moreDiv.style.textAlign = 'center';
-            moreDiv.style.color = '#666';
-            moreDiv.style.fontStyle = 'italic';
-            moreDiv.textContent = `... and ${filteredContacts.length - 100} more contacts. Use search above to find specific contacts.`;
-            contactsList.appendChild(moreDiv);
-        }
-        
-        console.log('Contacts displayed successfully on phone page');
-    }
+            recognition.onend = function() {
+                if (isListening) {
+                    setTimeout(() => {
+                        if (isListening) {
+                            try {
+                                recognition.start();
+                            } catch (error) {
+                                console.log('Could not restart recognition');
+                                isListening = false;
+                                updateListenButton();
+                                updateStatus('Recognition stopped');
+                            }
+                        }
+                    }, 100);
+                } else {
+                    updateListenButton();
+                    updateStatus('Ready to listen - Click "START TALKING" below');
+                }
+                
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+            };
 
-    function displayNoContactsMessage() {
-        const contactsList = document.getElementById('contactsList');
-        contactsList.innerHTML = `
-            <div style="padding: 20px; text-align: center; color: #666; border: 2px solid #669900; border-radius: 8px; background: #f8f9fa;">
-                <p><strong>📱 No Contacts Loaded</strong></p>
-                <p>You can try loading contacts again, or your device may not have any contacts stored.</p>
-                <br>
-                <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                    📞 Try Loading Contacts Again
-                </button>
-            </div>
-        `;
-    }
+            recognition.onerror = function(event) {
+                console.log('Recognition error:', event.error);
+                isListening = false;
+                updateListenButton();
+                
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+                
+                updateStatus(`Recognition error (${event.error}). Please try again.`);
+            };
 
-    function displayContactsNotSupported() {
-        const contactsList = document.getElementById('contactsList');
-        contactsList.innerHTML = `
-            <div style="padding: 20px; text-align: center; color: #666; border: 2px solid #ff6600; border-radius: 8px; background: #fff3e0;">
-                <p><strong>📱 Contacts API Not Supported</strong></p>
-                <p>Your browser or device doesn't support accessing contacts.</p>
-                <p><strong>Try:</strong></p>
-                <p>• Chrome on Android</p>
-                <p>• Safari on iOS</p>
-                <p>• Make sure you're using HTTPS</p>
-            </div>
-        `;
-    }
-
-    function displayContactAccessError() {
-        const contactsList = document.getElementById('contactsList');
-        contactsList.innerHTML = `
-            <div style="padding: 20px; text-align: center; color: #666; border: 2px solid #cc0000; border-radius: 8px; background: #ffebee;">
-                <p><strong>📱 Contact Access Error</strong></p>
-                <p>There was an error accessing your contacts.</p>
-                <p>This could be due to:</p>
-                <p>• Permission denied</p>
-                <p>• Browser security settings</p>
-                <p>• Device restrictions</p>
-                <br>
-                <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
-                    📞 Try Again
-                </button>
-            </div>
-        `;
-    }
-
-    function filterContacts(searchTerm) {
-        console.log('Filtering contacts with term:', searchTerm);
-        
-        if (!searchTerm.trim()) {
-            filteredContacts = [...contacts];
-        } else {
-            const searchLower = searchTerm.toLowerCase().trim();
-            filteredContacts = contacts.filter(contact => {
-                const nameLower = contact.name.toLowerCase();
-                const phoneNumbers = contact.phone.replace(/[^0-9]/g, '');
-                const searchNumbers = searchTerm.replace(/[^0-9]/g, '');
-                return nameLower.includes(searchLower) ||
-                    nameLower.startsWith(searchLower) ||
-                    phoneNumbers.includes(searchNumbers) ||
-                    contact.name.toLowerCase().split(' ').some(word => word.startsWith(searchLower));
-            });
-        }
-        
-        console.log('Filtered contacts:', filteredContacts.length);
-        displayContactsOnPhonePage();
-    }
-
-    function callContact(contact) {
-        window.location.href = `tel:${contact.phone.replace(/[^0-9]/g, '')}`;
-    }
-
-    // --- PAGE NAVIGATION ---
-    function showPage(pageId, addToHistory = true) {
-        console.log('Navigating to page:', pageId);
-        
-        const pages = document.querySelectorAll('.page');
-        pages.forEach(page => page.classList.remove('active'));
-        
-        const targetPage = document.getElementById(pageId + 'Page');
-        if (targetPage) {
-            targetPage.classList.add('active');
-            currentPage = pageId;
-            
-            if (addToHistory) {
-                pageHistory.push(pageId);
-                history.pushState({page: pageId}, '', '');
-            }
-            
-            // Stop listening if leaving speech page
-            if (pageId !== 'speech' && isListening) {
-                stopListening();
-            }
-            
-            // Auto-focus text input
-            if (pageId === 'textInput') {
-                setTimeout(() => {
-                    const textInput = document.getElementById('largeTextInputField');
-                    if (textInput) {
-                        textInput.focus();
+            recognition.onresult = function(event) {
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = setTimeout(function() {
+                        if (isListening) {
+                            stopListening();
+                            updateStatus('Stopped listening due to 3 minutes of silence');
+                        }
+                    }, 3 * 60 * 1000);
+                }
+                
+                let latestInterim = '';
+                let latestFinal = '';
+                
+                for (let i = event.results.length - 1; i >= 0; i--) {
+                    if (event.results[i].isFinal && !latestFinal) {
+                        latestFinal = event.results[i][0].transcript.trim();
+                    } else if (!event.results[i].isFinal && !latestInterim) {
+                        latestInterim = event.results[i][0].transcript.trim();
                     }
-                    updateTextSpeakButton();
-                }, 100);
-            }
-            
-            console.log('Successfully navigated to:', pageId);
-        } else {
-            console.error('Target page not found:', pageId + 'Page');
-        }
-    }
+                    if (latestFinal || latestInterim) break;
+                }
 
-    function startTalkingFromHome() {
-        console.log('Starting speech recognition...');
-        showPage('speech');
-        // Give page time to load, then start listening
-        setTimeout(() => { 
-            if (!isListening && !isSpeaking) {
+                if (latestFinal && latestFinal.length > 3) {
+                    if (latestFinal.toLowerCase().includes('leslie')) {
+                        console.log('Filtered Leslie command:', latestFinal);
+                        return;
+                    }
+                    
+                    const isDuplicate = phraseHistory.includes(latestFinal) || 
+                                      finalPhraseSpoken === latestFinal ||
+                                      (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === latestFinal);
+                    
+                    if (!isDuplicate) {
+                        console.log('New complete phrase detected:', latestFinal);
+                        currentInterimTranscript = '';
+                        phraseHistory.push(latestFinal);
+                        if (phraseHistory.length > 5) phraseHistory.shift();
+                        updateSpeechDisplay();
+                        finalPhraseSpoken = latestFinal;
+                        updateStatus('✅ Complete: ' + latestFinal);
+                        
+                        if (!isSpeaking) {
+                            isSpeaking = true;
+                            console.log('Speaking complete phrase:', latestFinal);
+                            
+                            if (speechSynth.speaking) {
+                                speechSynth.cancel();
+                            }
+                            
+                            setTimeout(() => {
+                                const utterance = new SpeechSynthesisUtterance(latestFinal);
+                                utterance.rate = 0.9;
+                                utterance.pitch = 1;
+                                utterance.volume = 1.0;
+                                
+                                utterance.onend = function() {
+                                    console.log('Finished speaking complete phrase');
+                                    isSpeaking = false;
+                                };
+                                
+                                utterance.onerror = function(event) {
+                                    console.error('Speech synthesis error:', event);
+                                    isSpeaking = false;
+                                };
+                                
+                                speechSynth.speak(utterance);
+                            }, 100);
+                        }
+                    }
+                } else if (latestInterim && !isSpeaking && !latestFinal) {
+                    if (!latestInterim.toLowerCase().includes('leslie')) {
+                        if (currentInterimTranscript !== latestInterim) {
+                            currentInterimTranscript = latestInterim;
+                            updateSpeechDisplay();
+                            updateStatus('🔄 Listening: ' + latestInterim);
+                        }
+                    }
+                }
+            };
+        }
+
+        function updateSpeechDisplay() {
+            const recognizedTextEl = document.getElementById('recognizedText');
+            if (recognizedTextEl) {
+                let html = '';
+                
+                if (phraseHistory.length > 0) {
+                    const lastPhrase = phraseHistory[phraseHistory.length - 1];
+                    html += `<div class="final-phrase">✅ ${lastPhrase}</div>`;
+                    
+                    if (phraseHistory.length > 1) {
+                        html += `<div style="color: #999; font-size: 12px; margin-top: 8px;">Previous phrases: ${phraseHistory.length - 1}</div>`;
+                    }
+                }
+                
+                if (currentInterimTranscript.trim() && !isSpeaking) {
+                    const lastFinal = phraseHistory.length > 0 ? phraseHistory[phraseHistory.length - 1] : '';
+                    if (currentInterimTranscript !== lastFinal) {
+                        html += `<div class="interim-phrase">🔄 ${currentInterimTranscript}</div>`;
+                    }
+                }
+                
+                if (html) {
+                    recognizedTextEl.innerHTML = html;
+                } else {
+                    recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic;">Say something and your complete phrase will appear here...</div>';
+                }
+                
+                const speechContent = document.querySelector('.speech-content');
+                if (speechContent) {
+                    speechContent.scrollTop = speechContent.scrollHeight;
+                }
+            }
+        }
+
+        function startTalkingFromHome() {
+            showPage('speech');
+            setTimeout(() => { 
+                if (!isListening && !isSpeaking) {
+                    startListening();
+                }
+            }, 1500);
+        }
+
+        function toggleListening() {
+            if (isListening) {
+                stopListening();
+            } else {
                 startListening();
             }
-        }, 1500);
-    }
-
-    function toggleListening() {
-        if (isListening) {
-            stopListening();
-        } else {
-            startListening();
         }
-    }
 
-    function startListening() {
-        console.log('Starting speech recognition...');
-        if (recognition && !isListening && !isSpeaking) {
-            try { 
-                recognition.start(); 
-            } catch (error) {
-                console.log('Error starting recognition:', error);
-                updateStatus('Error starting recognition. Please try again.');
+        function startListening() {
+            if (recognition && !isListening && !isSpeaking) {
+                try { 
+                    recognition.start(); 
+                } catch (error) {
+                    console.log('Error starting recognition:', error);
+                    updateStatus('Error starting recognition. Please try again.');
+                }
             }
         }
-    }
 
-    function stopListening() {
-        console.log('=== MANUALLY STOPPING SPEECH RECOGNITION ===');
-        if (recognition && isListening) {
-            isListening = false; // Set this BEFORE stopping to prevent restart
+        function stopListening() {
+            if (recognition && isListening) {
+                isListening = false;
+                try {
+                    recognition.stop();
+                } catch (error) {
+                    console.log('Error stopping recognition:', error);
+                }
+                
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+                
+                updateStatus('Stopped listening');
+                updateListenButton();
+            }
+        }
+
+        function updateListenButton() {
+            const listenButton = document.getElementById('listenButton');
+            if (listenButton) {
+                if (isListening) {
+                    listenButton.textContent = 'STOP LISTENING';
+                    listenButton.className = 'control-btn btn-stop';
+                } else {
+                    listenButton.textContent = 'START TALKING';
+                    listenButton.className = 'control-btn btn-listen';
+                }
+            }
+        }
+
+        function updateStatus(message) {
+            const statusText = document.getElementById('statusText');
+            if (statusText) statusText.textContent = message;
+        }
+
+        function speakTextInput() {
+            const textInput = document.getElementById('largeTextInputField');
+            const text = textInput.value.trim();
+            if (text) {
+                if (speechSynth.speaking) {
+                    speechSynth.cancel();
+                }
+                
+                setTimeout(() => {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.rate = 0.9;
+                    utterance.pitch = 1;
+                    utterance.volume = 1.0;
+                    speechSynth.speak(utterance);
+                }, 100);
+            }
+        }
+
+        function updateTextSpeakButton() {
+            const speakBtn = document.getElementById('speakTextBtn');
+            if (speakBtn) {
+                speakBtn.disabled = false;
+                speakBtn.style.opacity = '1';
+                speakBtn.style.background = '#9933cc';
+            }
+        }
+
+        // Contacts functions
+        function initializeContacts() {
+            contacts = [];
+            filteredContacts = [];
+        }
+
+        async function loadRealContacts() {
+            const contactsList = document.getElementById('contactsList');
+            
+            if (currentPage !== 'phone') {
+                showPage('phone');
+                return;
+            }
+            
             try {
-                recognition.stop();
-                console.log('Speech recognition stopped');
+                if ('contacts' in navigator && 'ContactsManager' in window) {
+                    contactsList.innerHTML = `
+                        <div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;">
+                            <p><strong>📱 Loading your contacts...</strong></p>
+                            <p>Please select contacts to import when the browser asks</p>
+                        </div>
+                    `;
+                    
+                    const props = ['name', 'tel'];
+                    const opts = {multiple: true};
+                    
+                    const contactList = await navigator.contacts.select(props, opts);
+                    
+                    if (contactList.length > 0) {
+                        contacts = contactList.map(contact => ({
+                            name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
+                            phone: contact.tel && contact.tel[0] ? contact.tel[0] : 'No phone'
+                        }));
+                        contacts.sort((a, b) => a.name.localeCompare(b.name));
+                        filteredContacts = [...contacts];
+                        displayContactsOnPhonePage();
+                    } else {
+                        displayNoContactsMessage();
+                    }
+                } else {
+                    contactsList.innerHTML = `
+                        <div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;">
+                            <p><strong>📱 Contacts Not Available</strong></p>
+                            <p>Your browser doesn't support the Contacts API</p>
+                            <p><strong>This works on:</strong></p>
+                            <p>• Chrome on Android</p>
+                            <p>• Safari on iOS</p>
+                            <p>• Make sure you're using HTTPS</p>
+                        </div>
+                    `;
+                }
             } catch (error) {
-                console.log('Error stopping recognition:', error);
-            }
-            
-            if (silenceTimer) {
-                clearTimeout(silenceTimer);
-                silenceTimer = null;
-            }
-            
-            updateStatus('Stopped listening');
-            updateListenButton();
-            
-            console.log('=== SPEECH RECOGNITION FULLY STOPPED ===');
-        }
-    }
-
-    function updateListenButton() {
-        const listenButton = document.getElementById('listenButton');
-        if (listenButton) {
-            if (isListening) {
-                listenButton.textContent = 'STOP LISTENING';
-                listenButton.className = 'control-btn btn-stop'; // RED when listening
-            } else {
-                listenButton.textContent = 'START TALKING';
-                listenButton.className = 'control-btn btn-listen'; // BLUE when not listening
-            }
-        }
-    }
-
-    function updateStatus(message) {
-        const statusText = document.getElementById('statusText');
-        if (statusText) statusText.textContent = message;
-    }
-
-    // --- TEXT INPUT ---
-    function speakTextInput() {
-        const textInput = document.getElementById('largeTextInputField');
-        const text = textInput.value.trim();
-        if (text) {
-            console.log('=== SPEAKING TEXT INPUT ===');
-            console.log('Full text to speak:', text);
-            
-            // Cancel any existing speech first
-            if (speechSynth.speaking) {
-                speechSynth.cancel();
-            }
-            
-            // Wait a moment for cancel to complete, then speak
-            setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = 0.9; // Slightly slower for clarity
-                utterance.pitch = 1;
-                utterance.volume = 1.0;
-                
-                utterance.onstart = function() {
-                    console.log('Started speaking text:', text);
-                };
-                
-                utterance.onend = function() {
-                    console.log('=== FINISHED SPEAKING COMPLETE TEXT ===');
-                };
-                
-                utterance.onerror = function(event) {
-                    console.error('Speech synthesis error:', event);
-                };
-                
-                console.log('About to speak text utterance...');
-                speechSynth.speak(utterance);
-            }, 100);
-        }
-    }
-
-    function updateTextSpeakButton() {
-        const textInput = document.getElementById('largeTextInputField');
-        const speakBtn = document.getElementById('speakTextBtn');
-        if (speakBtn && textInput) {
-            speakBtn.disabled = false;
-            speakBtn.style.opacity = '1';
-            speakBtn.style.background = '#9933cc';
-        }
-    }
-
-    // --- WEATHER ---
-    async function showCurrentWeather() {
-        console.log('Showing current weather...');
-        const weatherDisplay = document.getElementById('weatherDisplay');
-        const weatherTitle = document.getElementById('weatherTitle');
-        const weatherContent = document.getElementById('weatherContent');
-        
-        weatherTitle.textContent = 'Current Weather';
-        weatherContent.innerHTML = `
-            <div style="text-align: center; padding: 20px;">
-                <div style="font-size: 18px; color: #0099cc; margin-bottom: 16px;">
-                    <div style="display: inline-block; width: 20px; height: 20px; border: 3px solid #0099cc; border-top: 3px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-                    Loading weather data...
-                </div>
-            </div>
-            <style>
-                @keyframes spin {
-                    0% { transform: rotate(0deg); }
-                    100% { transform: rotate(360deg); }
-                }
-            </style>
-        `;
-        weatherDisplay.classList.remove('hidden');
-        
-        try {
-            let lat, lon;
-            if (userLocation) {
-                lat = userLocation.lat;
-                lon = userLocation.lon;
-            } else {
-                lat = 40.7128;
-                lon = -74.0060;
-            }
-            
-            const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`);
-            const data = await response.json();
-            
-            const currentTime = new Date();
-            const dateString = currentTime.toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            });
-            
-            const temperature = Math.round(data.current.temperature_2m * 9/5 + 32);
-            const humidity = data.current.relative_humidity_2m;
-            const windSpeed = Math.round(data.current.wind_speed_10m * 0.621371);
-            const conditions = getWeatherDescription(data.current.weather_code);
-            
-            weatherContent.innerHTML = `
-                <div style="text-align: center; padding: 10px;">
-                    <div style="font-size: 16px; color: #666; margin-bottom: 12px; font-weight: bold;">${dateString}</div>
-                    <div style="font-size: 28px; font-weight: bold; color: #0099cc; margin-bottom: 8px;">${temperature}°F</div>
-                    <div style="font-size: 18px; font-weight: bold; margin-bottom: 16px; color: #333;">${conditions}</div>
-                    <div style="font-size: 14px; line-height: 1.6;">
-                        <div><strong>Humidity:</strong> ${humidity}%</div>
-                        <div><strong>Wind:</strong> ${windSpeed} mph</div>
-                        <div><strong>Time:</strong> ${currentTime.toLocaleTimeString()}</div>
-                        <div><strong>Location:</strong> Current Location</div>
+                console.error('Error loading contacts:', error);
+                contactsList.innerHTML = `
+                    <div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px; background: #ffebee;">
+                        <p><strong>📱 Contact Access Error</strong></p>
+                        <p>Error: ${error.message || 'Unknown error'}</p>
+                        <p>Please try again or check browser permissions</p>
                     </div>
+                `;
+            }
+        }
+
+        function displayContactsOnPhonePage() {
+            const contactsList = document.getElementById('contactsList');
+            
+            if (!contactsList) return;
+            
+            contactsList.innerHTML = '';
+            
+            if (filteredContacts.length === 0) {
+                displayNoContactsMessage();
+                return;
+            }
+
+            const headerDiv = document.createElement('div');
+            headerDiv.style.padding = '12px';
+            headerDiv.style.textAlign = 'center';
+            headerDiv.style.fontWeight = 'bold';
+            headerDiv.style.color = '#669900';
+            headerDiv.style.background = '#f0f8ff';
+            headerDiv.style.borderRadius = '8px';
+            headerDiv.style.marginBottom = '8px';
+            headerDiv.textContent = `📱 ${filteredContacts.length} contacts loaded - Tap any contact to call`;
+            contactsList.appendChild(headerDiv);
+
+            const contactsToShow = filteredContacts.slice(0, 100);
+            contactsToShow.forEach((contact) => {
+                const contactEl = document.createElement('div');
+                contactEl.className = 'contact-item';
+                contactEl.innerHTML = `
+                    <div class="contact-name">${contact.name}</div>
+                    <div class="contact-phone">${contact.phone}</div>
+                `;
+                contactEl.onclick = () => callContact(contact);
+                contactsList.appendChild(contactEl);
+            });
+
+            if (filteredContacts.length > 100) {
+                const moreDiv = document.createElement('div');
+                moreDiv.style.padding = '16px';
+                moreDiv.style.textAlign = 'center';
+                moreDiv.style.color = '#666';
+                moreDiv.textContent = `... and ${filteredContacts.length - 100} more contacts. Use search above to find specific contacts.`;
+                contactsList.appendChild(moreDiv);
+            }
+        }
+
+        function displayNoContactsMessage() {
+            const contactsList = document.getElementById('contactsList');
+            contactsList.innerHTML = `
+                <div style="padding: 20px; text-align: center; color: #666; border: 2px solid #669900; border-radius: 8px; background: #f8f9fa;">
+                    <p><strong>📱 No Contacts Loaded</strong></p>
+                    <p>You can try loading contacts again</p>
                 </div>
             `;
-        } catch (error) {
-            console.error('Weather fetch error:', error);
-            weatherContent.innerHTML = `
-                <div style="text-align: center; padding: 20px;">
-                    <div style="color: #cc0000; font-size: 16px;">Unable to load weather data.<br>Please check your internet connection.</div>
-                </div>
-            `;
         }
-    }
 
-    async function showHourlyWeather() {
-        console.log('Showing hourly weather...');
-        const weatherDisplay = document.getElementById('weatherDisplay');
-        const weatherTitle = document.getElementById('weatherTitle');
-        const weatherContent = document.getElementById('weatherContent');
-        
-        weatherTitle.textContent = '24-Hour Forecast';
-        weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Loading hourly forecast...</div>';
-        weatherDisplay.classList.remove('hidden');
-        
-        try {
-            let lat, lon;
-            if (userLocation) {
-                lat = userLocation.lat;
-                lon = userLocation.lon;
+        function filterContacts(searchTerm) {
+            if (!searchTerm.trim()) {
+                filteredContacts = [...contacts];
             } else {
-                lat = 40.7128;
-                lon = -74.0060;
+                const searchLower = searchTerm.toLowerCase().trim();
+                filteredContacts = contacts.filter(contact => {
+                    const nameLower = contact.name.toLowerCase();
+                    const phoneNumbers = contact.phone.replace(/[^0-9]/g, '');
+                    const searchNumbers = searchTerm.replace(/[^0-9]/g, '');
+                    return nameLower.includes(searchLower) ||
+                        nameLower.startsWith(searchLower) ||
+                        phoneNumbers.includes(searchNumbers) ||
+                        contact.name.toLowerCase().split(' ').some(word => word.startsWith(searchLower));
+                });
             }
+            displayContactsOnPhonePage();
+        }
+
+        function callContact(contact) {
+            window.location.href = `tel:${contact.phone.replace(/[^0-9]/g, '')}`;
+        }
+
+        // Page navigation
+        function showPage(pageId, addToHistory = true) {
+            const pages = document.querySelectorAll('.page');
+            pages.forEach(page => page.classList.remove('active'));
             
-            const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=1`);
-            const data = await response.json();
-            
-            let hourlyData = '<div class="hourly-forecast" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 6px; padding: 10px;">';
-            
-            for (let i = 0; i < 24; i++) {
-                if (i < data.hourly.time.length) {
-                    const time = new Date(data.hourly.time[i]);
-                    const hour = time.getHours();
-                    const temp = Math.round(data.hourly.temperature_2m[i] * 9/5 + 32);
-                    const conditions = getWeatherDescription(data.hourly.weather_code[i]);
-                    const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-                    const ampm = hour >= 12 ? 'PM' : 'AM';
-                    
-                    hourlyData += `
-                        <div class="hourly-item">
-                            <strong>${displayHour} ${ampm}</strong><br>
-                            ${temp}°F<br>
-                            <small>${conditions}</small>
-                        </div>
-                    `;
+            const targetPage = document.getElementById(pageId + 'Page');
+            if (targetPage) {
+                targetPage.classList.add('active');
+                currentPage = pageId;
+                
+                if (addToHistory) {
+                    pageHistory.push(pageId);
+                    history.pushState({page: pageId}, '', '');
+                }
+                
+                if (pageId !== 'speech' && isListening) {
+                    stopListening();
+                }
+                
+                if (pageId === 'textInput') {
+                    setTimeout(() => {
+                        const textInput = document.getElementById('largeTextInputField');
+                        if (textInput) {
+                            textInput.focus();
+                        }
+                        updateTextSpeakButton();
+                    }, 100);
+                }
+                
+                if (pageId === 'phone') {
+                    setTimeout(() => {
+                        const contactsList = document.getElementById('contactsList');
+                        if (contactsList) {
+                            contactsList.innerHTML = `
+                                <div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;">
+                                    <p><strong>📱 Auto-loading your contacts...</strong></p>
+                                    <p>Please allow contact access when your browser asks</p>
+                                </div>
+                            `;
+                            loadRealContacts();
+                        }
+                    }, 200);
                 }
             }
-            hourlyData += '</div>';
-            weatherContent.innerHTML = hourlyData;
-        } catch (error) {
-            console.error('Hourly weather fetch error:', error);
-            weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load hourly forecast. Please check your internet connection.</div>';
         }
-    }
 
-    async function showWeeklyWeather() {
-        console.log('Showing weekly weather...');
-        const weatherDisplay = document.getElementById('weatherDisplay');
-        const weatherTitle = document.getElementById('weatherTitle');
-        const weatherContent = document.getElementById('weatherContent');
-        
-        weatherTitle.textContent = '7-Day Forecast';
-        weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Loading 7-day forecast...</div>';
-        weatherDisplay.classList.remove('hidden');
-        
-        try {
-            let lat, lon;
-            if (userLocation) {
-                lat = userLocation.lat;
-                lon = userLocation.lon;
+        function navigateBack() {
+            if (pageHistory.length > 1) {
+                pageHistory.pop();
+                const previousPage = pageHistory[pageHistory.length - 1];
+                showPage(previousPage, false);
             } else {
-                lat = 40.7128;
-                lon = -74.0060;
+                showPage('home', false);
             }
+        }
+
+        function setupBackButtonHandling() {
+            window.addEventListener('popstate', function(event) {
+                event.preventDefault();
+                navigateBack();
+            });
+            history.pushState({page: 'home'}, '', '');
+        }
+
+        // Location and weather functions
+        function getUserLocation() {
+            if (navigator.geolocation) {
+                const options = {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 300000
+                };
+                
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        userLocation = {
+                            lat: position.coords.latitude,
+                            lon: position.coords.longitude
+                        };
+                        console.log('Location obtained:', userLocation);
+                    },
+                    function(error) {
+                        console.error('Geolocation error:', error);
+                        fetch('https://ipapi.co/json/')
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.latitude && data.longitude) {
+                                    userLocation = { 
+                                        lat: data.latitude, 
+                                        lon: data.longitude 
+                                    };
+                                    console.log('IP-based location obtained:', userLocation);
+                                } else {
+                                    throw new Error('IP location failed');
+                                }
+                            })
+                            .catch(() => {
+                                userLocation = { lat: 40.7128, lon: -74.0060 };
+                                console.log('Using fallback location (New York):', userLocation);
+                            });
+                    },
+                    options
+                );
+            } else {
+                userLocation = { lat: 40.7128, lon: -74.0060 };
+                console.log('Geolocation not supported, using fallback location');
+            }
+        }
+
+        async function showCurrentWeather() {
+            const weatherDisplay = document.getElementById('weatherDisplay');
+            const weatherTitle = document.getElementById('weatherTitle');
+            const weatherContent = document.getElementById('weatherContent');
             
-            const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto&forecast_days=7`);
-            const data = await response.json();
+            weatherTitle.textContent = 'Current Weather';
+            weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Loading weather data...</div>';
+            weatherDisplay.classList.remove('hidden');
             
-            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            let weeklyData = '<div class="weekly-forecast" style="display: grid; gap: 6px; padding: 10px;">';
-            
-            for (let i = 0; i < 7; i++) {
-                if (i < data.daily.time.length) {
-                    const date = new Date(data.daily.time[i]);
-                    const dayName = days[date.getDay()];
-                    const high = Math.round(data.daily.temperature_2m_max[i] * 9/5 + 32);
-                    const low = Math.round(data.daily.temperature_2m_min[i] * 9/5 + 32);
-                    const conditions = getWeatherDescription(data.daily.weather_code[i]);
-                    
-                    weeklyData += `
-                        <div class="weekly-item">
-                            <div class="day-name">${dayName}</div>
-                            <div class="day-temps">${high}°/${low}°</div>
-                            <div class="day-condition">${conditions}</div>
+            try {
+                let lat, lon;
+                if (userLocation) {
+                    lat = userLocation.lat;
+                    lon = userLocation.lon;
+                } else {
+                    lat = 40.7128;
+                    lon = -74.0060;
+                }
+                
+                const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`);
+                const data = await response.json();
+                
+                const currentTime = new Date();
+                const dateString = currentTime.toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
+                
+                const temperature = Math.round(data.current.temperature_2m * 9/5 + 32);
+                const humidity = data.current.relative_humidity_2m;
+                const windSpeed = Math.round(data.current.wind_speed_10m * 0.621371);
+                const conditions = getWeatherDescription(data.current.weather_code);
+                
+                weatherContent.innerHTML = `
+                    <div style="text-align: center; padding: 10px;">
+                        <div style="font-size: 16px; color: #666; margin-bottom: 12px; font-weight: bold;">${dateString}</div>
+                        <div style="font-size: 28px; font-weight: bold; color: #0099cc; margin-bottom: 8px;">${temperature}°F</div>
+                        <div style="font-size: 18px; font-weight: bold; margin-bottom: 16px; color: #333;">${conditions}</div>
+                        <div style="font-size: 14px; line-height: 1.6;">
+                            <div><strong>Humidity:</strong> ${humidity}%</div>
+                            <div><strong>Wind:</strong> ${windSpeed} mph</div>
+                            <div><strong>Time:</strong> ${currentTime.toLocaleTimeString()}</div>
+                            <div><strong>Location:</strong> Current Location</div>
                         </div>
-                    `;
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Weather fetch error:', error);
+                weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load weather data.</div>';
+            }
+        }
+
+        async function showHourlyWeather() {
+            const weatherDisplay = document.getElementById('weatherDisplay');
+            const weatherTitle = document.getElementById('weatherTitle');
+            const weatherContent = document.getElementById('weatherContent');
+            
+            weatherTitle.textContent = '24-Hour Forecast';
+            weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Loading hourly forecast...</div>';
+            weatherDisplay.classList.remove('hidden');
+            
+            try {
+                let lat, lon;
+                if (userLocation) {
+                    lat = userLocation.lat;
+                    lon = userLocation.lon;
+                } else {
+                    lat = 40.7128;
+                    lon = -74.0060;
+                }
+                
+                const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=1`);
+                const data = await response.json();
+                
+                let hourlyData = '<div class="hourly-forecast" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 6px; padding: 10px;">';
+                
+                for (let i = 0; i < 24; i++) {
+                    if (i < data.hourly.time.length) {
+                        const time = new Date(data.hourly.time[i]);
+                        const hour = time.getHours();
+                        const temp = Math.round(data.hourly.temperature_2m[i] * 9/5 + 32);
+                        const conditions = getWeatherDescription(data.hourly.weather_code[i]);
+                        const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+                        const ampm = hour >= 12 ? 'PM' : 'AM';
+                        
+                        hourlyData += `
+                            <div class="hourly-item">
+                                <strong>${displayHour} ${ampm}</strong><br>
+                                ${temp}°F<br>
+                                <small>${conditions}</small>
+                            </div>
+                        `;
+                    }
+                }
+                hourlyData += '</div>';
+                weatherContent.innerHTML = hourlyData;
+            } catch (error) {
+                console.error('Hourly weather fetch error:', error);
+                weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load hourly forecast.</div>';
+            }
+        }
+
+        async function showWeeklyWeather() {
+            const weatherDisplay = document.getElementById('weatherDisplay');
+            const weatherTitle = document.getElementById('weatherTitle');
+            const weatherContent = document.getElementById('weatherContent');
+            
+            weatherTitle.textContent = '7-Day Forecast';
+            weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Loading 7-day forecast...</div>';
+            weatherDisplay.classList.remove('hidden');
+            
+            try {
+                let lat, lon;
+                if (userLocation) {
+                    lat = userLocation.lat;
+                    lon = userLocation.lon;
+                } else {
+                    lat = 40.7128;
+                    lon = -74.0060;
+                }
+                
+                const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto&forecast_days=7`);
+                const data = await response.json();
+                
+                const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                let weeklyData = '<div class="weekly-forecast" style="display: grid; gap: 6px; padding: 10px;">';
+                
+                for (let i = 0; i < 7; i++) {
+                    if (i < data.daily.time.length) {
+                        const date = new Date(data.daily.time[i]);
+                        const dayName = days[date.getDay()];
+                        const high = Math.round(data.daily.temperature_2m_max[i] * 9/5 + 32);
+                        const low = Math.round(data.daily.temperature_2m_min[i] * 9/5 + 32);
+                        const conditions = getWeatherDescription(data.daily.weather_code[i]);
+                        
+                        weeklyData += `
+                            <div class="weekly-item">
+                                <div class="day-name">${dayName}</div>
+                                <div class="day-temps">${high}°/${low}°</div>
+                                <div class="day-condition">${conditions}</div>
+                            </div>
+                        `;
+                    }
+                }
+                weeklyData += '</div>';
+                weatherContent.innerHTML = weeklyData;
+            } catch (error) {
+                console.error('Weekly weather fetch error:', error);
+                weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load 7-day forecast.</div>';
+            }
+        }
+
+        function getWeatherDescription(code) {
+            const weatherCodes = {
+                0: 'Clear sky',
+                1: 'Mainly clear',
+                2: 'Partly cloudy',
+                3: 'Overcast',
+                45: 'Fog',
+                48: 'Depositing rime fog',
+                51: 'Light drizzle',
+                53: 'Moderate drizzle',
+                55: 'Dense drizzle',
+                61: 'Slight rain',
+                63: 'Moderate rain',
+                65: 'Heavy rain',
+                71: 'Slight snow',
+                73: 'Moderate snow',
+                75: 'Heavy snow',
+                80: 'Slight rain showers',
+                81: 'Moderate rain showers',
+                82: 'Violent rain showers',
+                95: 'Thunderstorm',
+                96: 'Thunderstorm with hail',
+                99: 'Thunderstorm with heavy hail'
+            };
+            return weatherCodes[code] || 'Unknown';
+        }
+
+        function hideWeather() {
+            const weatherDisplay = document.getElementById('weatherDisplay');
+            weatherDisplay.classList.add('hidden');
+        }
+
+        // Swipe detection
+        function setupSwipeDetection() {
+            const swipeBottom = document.getElementById('swipeBottom');
+            const swipeLeft = document.getElementById('swipeLeft');
+            const swipeRight = document.getElementById('swipeRight');
+            
+            let touchStartX = 0;
+            let touchStartY = 0;
+            let touchEndX = 0;
+            let touchEndY = 0;
+            let minSwipeDistance = 50;
+
+            swipeBottom.addEventListener('touchstart', function(e) {
+                touchStartY = e.changedTouches[0].clientY;
+                e.preventDefault();
+                e.stopPropagation();
+            }, { passive: false });
+
+            swipeBottom.addEventListener('touchend', function(e) {
+                touchEndY = e.changedTouches[0].clientY;
+                const swipeDistance = touchStartY - touchEndY;
+                if (swipeDistance > minSwipeDistance) {
+                    showCurrentWeather();
+                }
+                e.preventDefault();
+                e.stopPropagation();
+            }, { passive: false });
+
+            swipeLeft.addEventListener('touchstart', function(e) {
+                touchStartX = e.changedTouches[0].clientX;
+                e.preventDefault();
+                e.stopPropagation();
+            }, { passive: false });
+
+            swipeLeft.addEventListener('touchend', function(e) {
+                touchEndX = e.changedTouches[0].clientX;
+                const swipeDistance = touchEndX - touchStartX;
+                if (swipeDistance > minSwipeDistance) {
+                    showHourlyWeather();
+                }
+                e.preventDefault();
+                e.stopPropagation();
+            }, { passive: false });
+
+            swipeRight.addEventListener('touchstart', function(e) {
+                touchStartX = e.changedTouches[0].clientX;
+                e.preventDefault();
+                e.stopPropagation();
+            }, { passive: false });
+
+            swipeRight.addEventListener('touchend', function(e) {
+                touchEndX = e.changedTouches[0].clientX;
+                const swipeDistance = touchStartX - touchEndX;
+                if (swipeDistance > minSwipeDistance) {
+                    showWeeklyWeather();
+                }
+                e.preventDefault();
+                e.stopPropagation();
+            }, { passive: false });
+        }
+
+        // Settings functions
+        function loadSettings() {
+            try {
+                const savedSettings = localStorage.getItem('leslieSettings');
+                if (savedSettings) {
+                    settings = {...settings, ...JSON.parse(savedSettings)};
+                }
+            } catch (error) {
+                console.error('Error loading settings:', error);
+            }
+            updateSettingsUI();
+        }
+
+        function saveSettings() {
+            try {
+                localStorage.setItem('leslieSettings', JSON.stringify(settings));
+            } catch (error) {
+                console.error('Error saving settings:', error);
+            }
+        }
+
+        function updateSettingsUI() {
+            const speedSlider = document.getElementById('speechSpeedSlider');
+            const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
+            const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
+            const enhancedSwitch = document.getElementById('autoEnhancedSwitch');
+            const enhancedModeSwitch = document.getElementById('enhancedModeSwitch');
+            const apiKeyInput = document.getElementById('apiKeyInput');
+
+            if (speedSlider) speedSlider.value = settings.speechSpeed;
+            if (pauseSlider) pauseSlider.value = settings.pauseBetweenWords;
+            if (voiceSwitch) voiceSwitch.checked = settings.speakVoiceCommands;
+            if (enhancedSwitch) enhancedSwitch.checked = settings.autoEnhanced;
+            if (enhancedModeSwitch) enhancedModeSwitch.checked = settings.enhancedMode;
+            if (apiKeyInput) apiKeyInput.value = settings.apiKey;
+
+            updateSpeechSpeed(settings.speechSpeed);
+            updatePauseBetweenWords(settings.pauseBetweenWords);
+            updateVoiceCommandSetting(settings.speakVoiceCommands);
+            updateAutoEnhanced(settings.autoEnhanced);
+            updateEnhancedMode(settings.enhancedMode);
+        }
+
+        function updateSpeechSpeed(value) {
+            settings.speechSpeed = parseFloat(value);
+            const label = document.getElementById('speechSpeedValue');
+            if (label) {
+                if (value == 1.0) {
+                    label.textContent = 'Normal (1.0x)';
+                } else {
+                    label.textContent = `${value}x`;
                 }
             }
-            weeklyData += '</div>';
-            weatherContent.innerHTML = weeklyData;
-        } catch (error) {
-            console.error('Weekly weather fetch error:', error);
-            weatherContent.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load 7-day forecast. Please check your internet connection.</div>';
+            saveSettings();
         }
-    }
 
-    function getWeatherDescription(code) {
-        const weatherCodes = {
-            0: 'Clear sky',
-            1: 'Mainly clear',
-            2: 'Partly cloudy',
-            3: 'Overcast',
-            45: 'Fog',
-            48: 'Depositing rime fog',
-            51: 'Light drizzle',
-            53: 'Moderate drizzle',
-            55: 'Dense drizzle',
-            61: 'Slight rain',
-            63: 'Moderate rain',
-            65: 'Heavy rain',
-            71: 'Slight snow',
-            73: 'Moderate snow',
-            75: 'Heavy snow',
-            80: 'Slight rain showers',
-            81: 'Moderate rain showers',
-            82: 'Violent rain showers',
-            95: 'Thunderstorm',
-            96: 'Thunderstorm with hail',
-            99: 'Thunderstorm with heavy hail'
-        };
-        return weatherCodes[code] || 'Unknown';
-    }
-
-    function hideWeather() {
-        const weatherDisplay = document.getElementById('weatherDisplay');
-        weatherDisplay.classList.add('hidden');
-    }
-
-    // --- SWIPE DETECTION ---
-    function setupSwipeDetection() {
-        console.log('Setting up swipe detection...');
-        const swipeBottom = document.getElementById('swipeBottom');
-        const swipeLeft = document.getElementById('swipeLeft');
-        const swipeRight = document.getElementById('swipeRight');
-        
-        let touchStartX = 0;
-        let touchStartY = 0;
-        let touchEndX = 0;
-        let touchEndY = 0;
-        let minSwipeDistance = 50;
-
-        // Bottom swipe for current weather
-        swipeBottom.addEventListener('touchstart', function(e) {
-            touchStartY = e.changedTouches[0].clientY;
-            console.log('Bottom swipe started at:', touchStartY);
-            e.preventDefault();
-            e.stopPropagation();
-        }, { passive: false });
-
-        swipeBottom.addEventListener('touchend', function(e) {
-            touchEndY = e.changedTouches[0].clientY;
-            const swipeDistance = touchStartY - touchEndY;
-            console.log('Bottom swipe distance:', swipeDistance);
-            if (swipeDistance > minSwipeDistance) {
-                console.log('Triggering current weather');
-                showCurrentWeather();
+        function updatePauseBetweenWords(value) {
+            settings.pauseBetweenWords = parseFloat(value);
+            const label = document.getElementById('pauseBetweenWordsValue');
+            if (label) {
+                label.textContent = `${value} seconds`;
             }
-            e.preventDefault();
-            e.stopPropagation();
-        }, { passive: false });
-
-        // Left swipe for hourly weather
-        swipeLeft.addEventListener('touchstart', function(e) {
-            touchStartX = e.changedTouches[0].clientX;
-            console.log('Left swipe started at:', touchStartX);
-            e.preventDefault();
-            e.stopPropagation();
-        }, { passive: false });
-
-        swipeLeft.addEventListener('touchend', function(e) {
-            touchEndX = e.changedTouches[0].clientX;
-            const swipeDistance = touchEndX - touchStartX;
-            console.log('Left swipe distance:', swipeDistance);
-            if (swipeDistance > minSwipeDistance) {
-                console.log('Triggering hourly weather');
-                showHourlyWeather();
-            }
-            e.preventDefault();
-            e.stopPropagation();
-        }, { passive: false });
-
-        // Right swipe for weekly weather
-        swipeRight.addEventListener('touchstart', function(e) {
-            touchStartX = e.changedTouches[0].clientX;
-            console.log('Right swipe started at:', touchStartX);
-            e.preventDefault();
-            e.stopPropagation();
-        }, { passive: false });
-
-        swipeRight.addEventListener('touchend', function(e) {
-            touchEndX = e.changedTouches[0].clientX;
-            const swipeDistance = touchStartX - touchEndX;
-            console.log('Right swipe distance:', swipeDistance);
-            if (swipeDistance > minSwipeDistance) {
-                console.log('Triggering weekly weather');
-                showWeeklyWeather();
-            }
-            e.preventDefault();
-            e.stopPropagation();
-        }, { passive: false });
-        
-        console.log('Swipe detection set up successfully!');
-    }
-
-    // --- SETTINGS ---
-    function loadSettings() {
-        try {
-            const savedSettings = localStorage.getItem('leslieSettings');
-            if (savedSettings) {
-                settings = {...settings, ...JSON.parse(savedSettings)};
-            }
-        } catch (error) {
-            console.error('Error loading settings:', error);
+            saveSettings();
         }
-        updateSettingsUI();
-    }
 
-    function saveSettings() {
-        try {
-            localStorage.setItem('leslieSettings', JSON.stringify(settings));
-        } catch (error) {
-            console.error('Error saving settings:', error);
+        function updateVoiceCommandSetting(checked) {
+            settings.speakVoiceCommands = checked;
+            const label = document.getElementById('speakVoiceCommandsLabel');
+            if (label) {
+                label.textContent = `Voice Command Speech: ${checked ? 'ON' : 'OFF'}`;
+            }
+            
+            const switchElement = document.getElementById('speakVoiceCommandsSwitch');
+            if (switchElement) {
+                switchElement.checked = checked;
+            }
+            
+            saveSettings();
         }
-    }
 
-    function updateSettingsUI() {
-        const speedSlider = document.getElementById('speechSpeedSlider');
-        const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
-        const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
-        const enhancedSwitch = document.getElementById('autoEnhancedSwitch');
-        const enhancedModeSwitch = document.getElementById('enhancedModeSwitch');
-        const apiKeyInput = document.getElementById('apiKeyInput');
+        function updateAutoEnhanced(checked) {
+            settings.autoEnhanced = checked;
+            saveSettings();
+        }
 
-        if (speedSlider) speedSlider.value = settings.speechSpeed;
-        if (pauseSlider) pauseSlider.value = settings.pauseBetweenWords;
-        if (voiceSwitch) voiceSwitch.checked = settings.speakVoiceCommands;
-        if (enhancedSwitch) enhancedSwitch.checked = settings.autoEnhanced;
-        if (enhancedModeSwitch) enhancedModeSwitch.checked = settings.enhancedMode;
-        if (apiKeyInput) apiKeyInput.value = settings.apiKey;
+        function updateEnhancedMode(checked) {
+            settings.enhancedMode = checked;
+            const label = document.getElementById('enhancedModeLabel');
+            if (label) {
+                label.textContent = `Enhanced Mode: ${checked ? 'ON' : 'OFF'}`;
+            }
+            
+            const switchElement = document.getElementById('enhancedModeSwitch');
+            if (switchElement) {
+                switchElement.checked = checked;
+            }
+            
+            saveSettings();
+        }
 
-        updateSpeechSpeed(settings.speechSpeed);
-        updatePauseBetweenWords(settings.pauseBetweenWords);
-        updateVoiceCommandSetting(settings.speakVoiceCommands);
-        updateAutoEnhanced(settings.autoEnhanced);
-        updateEnhancedMode(settings.enhancedMode);
-    }
+        function saveApiKey(value) {
+            settings.apiKey = value;
+            saveSettings();
+            updateEnhancedSectionVisibility();
+        }
 
-    function updateSpeechSpeed(value) {
-        settings.speechSpeed = parseFloat(value);
-        const label = document.getElementById('speechSpeedValue');
-        if (label) {
-            if (value == 1.0) {
-                label.textContent = 'Normal (1.0x)';
-            } else {
-                label.textContent = `${value}x`;
+        function updateEnhancedSectionVisibility() {
+            const enhancedSection = document.getElementById('enhancedSection');
+            if (enhancedSection && settings.apiKey) {
+                enhancedSection.classList.add('show');
+            } else if (enhancedSection) {
+                enhancedSection.classList.remove('show');
             }
         }
-        saveSettings();
-    }
 
-    function updatePauseBetweenWords(value) {
-        settings.pauseBetweenWords = parseFloat(value);
-        const label = document.getElementById('pauseBetweenWordsValue');
-        if (label) {
-            label.textContent = `${value} seconds`;
+        function startEnhancedRecognition() {
+            if (!settings.apiKey) {
+                alert('Please enter your OpenAI API key in Settings to use Enhanced Recognition.');
+                showPage('settings');
+                return;
+            }
+            alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
-        saveSettings();
-    }
 
-    function updateVoiceCommandSetting(checked) {
-        settings.speakVoiceCommands = checked;
-        const label = document.getElementById('speakVoiceCommandsLabel');
-        if (label) {
-            label.textContent = `Voice Command Speech: ${checked ? 'ON' : 'OFF'}`;
-        }
-        
-        const switchElement = document.getElementById('speakVoiceCommandsSwitch');
-        if (switchElement) {
-            switchElement.checked = checked;
-        }
-        
-        saveSettings();
-    }
-
-    function updateAutoEnhanced(checked) {
-        settings.autoEnhanced = checked;
-        saveSettings();
-    }
-
-    function updateEnhancedMode(checked) {
-        settings.enhancedMode = checked;
-        const label = document.getElementById('enhancedModeLabel');
-        if (label) {
-            label.textContent = `Enhanced Mode: ${checked ? 'ON' : 'OFF'}`;
-        }
-        
-        const switchElement = document.getElementById('enhancedModeSwitch');
-        if (switchElement) {
-            switchElement.checked = checked;
-        }
-        
-        saveSettings();
-    }
-
-    function saveApiKey(value) {
-        settings.apiKey = value;
-        saveSettings();
-        updateEnhancedSectionVisibility();
-    }
-
-    function updateEnhancedSectionVisibility() {
-        const enhancedSection = document.getElementById('enhancedSection');
-        if (enhancedSection && settings.apiKey) {
-            enhancedSection.classList.add('show');
-        } else if (enhancedSection) {
-            enhancedSection.classList.remove('show');
-        }
-    }
-
-    // --- ENHANCED RECOGNITION PLACEHOLDER ---
-    function startEnhancedRecognition() {
-        if (!settings.apiKey) {
-            alert('Please enter your OpenAI API key in Settings to use Enhanced Recognition.');
-            showPage('settings');
-            return;
-        }
-        alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
-    }
-
-    function showEnhancedSuggestion() {
-        const enhancedSection = document.getElementById('enhancedSection');
-        if (enhancedSection && settings.apiKey) {
-            enhancedSection.classList.add('show');
-            const enhancedStatus = document.getElementById('enhancedStatus');
-            if (enhancedStatus) {
-                enhancedStatus.textContent = 'Low confidence detected. Try Enhanced Recognition for better accuracy.';
-                enhancedStatus.style.color = '#ff6600';
-                enhancedStatus.style.fontWeight = 'bold';
+        function showEnhancedSuggestion() {
+            const enhancedSection = document.getElementById('enhancedSection');
+            if (enhancedSection && settings.apiKey) {
+                enhancedSection.classList.add('show');
+                const enhancedStatus = document.getElementById('enhancedStatus');
+                if (enhancedStatus) {
+                    enhancedStatus.textContent = 'Low confidence detected. Try Enhanced Recognition for better accuracy.';
+                    enhancedStatus.style.color = '#ff6600';
+                    enhancedStatus.style.fontWeight = 'bold';
+                }
             }
         }
-    }
 
-    // --- DOM READY ---
-    document.addEventListener('DOMContentLoaded', function() {
-        console.log('DOM loaded, initializing Leslie Speech Assistant...');
-        initApp();
-    });
+        // Initialize when DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing Leslie Speech Assistant...');
+            initApp();
+        });
 
-    document.addEventListener('visibilitychange', function() {
-        console.log('Tab visibility changed - maintaining current state');
-    });
+        document.addEventListener('visibilitychange', function() {
+            console.log('Tab visibility changed - maintaining current state');
+        });
     </script>
 </body>
 </html>
