@@ -636,21 +636,17 @@
                 </div>
                 <input type="text" id="contactSearch" class="contact-search-input"
                        placeholder="Type contact name or phone..." oninput="filterContacts(this.value)">
-                <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                    Click "Load Your Contacts" to access your real device contacts.
-                </div>
             </div>
             <div class="contact-list-container">
-                <div style="font-size: 12px; color: #669900; margin-bottom: 8px;">
-                    📱 Tap contact to call directly:
+                <div style="font-size: 12px; color: #669900; margin-bottom: 8px; text-align: center;">
+                    📱 Your contacts will appear here - Tap any contact to call
                 </div>
                 <div class="contacts-list" id="contactsList">
-                    <div style="padding: 16px; text-align: center; color: #666;">
-                        <p><strong>📱 Access Your Real Contacts</strong></p>
-                        <p>Your contacts are accessed locally on your device only.</p>
-                        <p>No contact data is sent to servers or made public.</p>
+                    <div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;">
+                        <p><strong>📱 Click to Load Your Contacts</strong></p>
+                        <p>Your contacts will be displayed right here on this page</p>
                         <br>
-                        <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                        <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 14px 24px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
                             📞 Load Your Contacts
                         </button>
                     </div>
@@ -671,12 +667,12 @@
                     <button class="close-btn" id="btnCloseText">&times;</button>
                 </div>
                 <div class="text-input-content">
-                    <div class="speak-text-container" style="margin-top: 24px;">
+                    <div class="speak-text-container" style="margin-top: 50px;">
                         <button class="speak-phrase-btn" id="speakTextBtn">
                             🔊 SPEAK TEXT
                         </button>
                         <textarea class="text-input large-text-input" id="largeTextInputField"
-                                  placeholder="Type your message here..." style="margin-top: 24px;"></textarea>
+                                  placeholder="Type your message here..." style="margin-top: 8px; padding-top: 50px;"></textarea>
                     </div>
                     <div style="padding: 16px; text-align: center; background-color: #f0f0f0; margin-top: 8px; position: fixed; bottom: 0; left: 0; right: 0; z-index: 999;">
                         <button class="btn-home" id="btnTextHome">
@@ -923,12 +919,95 @@
         }
     }
 
-    // COMPLETELY DISABLE VOICE COMMANDS TO STOP PINGING
+    // RE-ENABLE VOICE COMMANDS WITH PROPER ISOLATION
     function setupVoiceCommandListener() {
-        console.log('Voice command listener DISABLED to stop pinging issues');
-        return; // Completely disable voice commands for now
+        // ONLY set up voice commands if NOT on speech page AND microphone is available
+        if (currentPage === 'speech' || isListening) {
+            console.log('Not starting voice commands - speech recognition is active');
+            return;
+        }
         
-        // TODO: Re-enable voice commands after fixing pinging issue
+        if (!microphonePermissionGranted) {
+            console.log('No microphone permission - voice commands disabled');
+            return;
+        }
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            console.log('Speech recognition not supported');
+            return;
+        }
+
+        // Clean up any existing recognition
+        if (voiceCommandRecognition) {
+            try { 
+                voiceCommandRecognition.stop();
+                voiceCommandRecognition.abort(); 
+            } catch (e) {}
+            voiceCommandRecognition = null;
+        }
+
+        voiceCommandRecognition = new SpeechRecognition();
+        voiceCommandRecognition.continuous = false; // Single shot to avoid pinging
+        voiceCommandRecognition.interimResults = false;
+        voiceCommandRecognition.lang = 'en-US';
+        voiceCommandRecognition.maxAlternatives = 3;
+
+        voiceCommandRecognition.onstart = function() {
+            voiceCommandActive = true;
+            console.log('Voice command listening started');
+        };
+
+        voiceCommandRecognition.onresult = function(event) {
+            voiceCommandActive = false;
+            for (let i = 0; i < event.results.length; i++) {
+                if (event.results[i].isFinal) {
+                    const transcript = event.results[i][0].transcript.toLowerCase().trim();
+                    console.log('Voice command heard:', transcript);
+                    if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
+                        console.log('Processing Leslie command:', transcript);
+                        processVoiceCommand(transcript);
+                        // Restart listening after a delay
+                        setTimeout(() => {
+                            if (currentPage !== 'speech' && !isListening) {
+                                setupVoiceCommandListener();
+                            }
+                        }, 2000);
+                        return;
+                    }
+                }
+            }
+            // Restart if no command found
+            setTimeout(() => {
+                if (currentPage !== 'speech' && !isListening) {
+                    setupVoiceCommandListener();
+                }
+            }, 2000);
+        };
+
+        voiceCommandRecognition.onerror = function(event) {
+            voiceCommandActive = false;
+            console.log('Voice command error:', event.error);
+            if (event.error !== 'not-allowed' && event.error !== 'aborted') {
+                setTimeout(() => {
+                    if (currentPage !== 'speech' && !isListening) {
+                        setupVoiceCommandListener();
+                    }
+                }, 3000);
+            }
+        };
+
+        voiceCommandRecognition.onend = function() {
+            voiceCommandActive = false;
+            console.log('Voice command listening ended');
+        };
+
+        // Start voice command listening
+        try { 
+            voiceCommandRecognition.start(); 
+        } catch (error) {
+            console.log('Voice command start error:', error);
+        }
     }
 
     function processVoiceCommand(transcript) {
@@ -1539,28 +1618,17 @@
                 }, 100);
             }
             
-            // Auto-load contacts when visiting phone page and STOP pinging
+            // Auto-load contacts when visiting phone page
             if (pageId === 'phone') {
-                // Completely stop voice command listener to prevent pinging
-                if (voiceCommandRecognition) {
-                    try {
-                        voiceCommandRecognition.stop();
-                        voiceCommandRecognition.abort();
-                    } catch (e) {}
-                    voiceCommandActive = false;
-                }
-                
                 setTimeout(() => {
-                    console.log('Phone page loaded, loading contacts directly...');
+                    console.log('Phone page loaded, auto-loading contacts...');
                     loadRealContacts();
                 }, 500);
-            } else {
-                // Only start voice commands if NOT on phone or speech page
-                if (pageId !== 'speech') {
-                    setTimeout(() => {
-                        setupVoiceCommandListener();
-                    }, 1000);
-                }
+            } else if (pageId !== 'speech') {
+                // Only start voice commands if NOT on speech page
+                setTimeout(() => {
+                    setupVoiceCommandListener();
+                }, 1000);
             }
         }
     }
