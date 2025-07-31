@@ -1034,7 +1034,7 @@
             updateStatus('🎤 Listening... Say something!');
             console.log('=== SPEECH RECOGNITION STARTED ===');
             
-            // FIXED: Only clear our specific timers, not ALL browser timers
+            // Clear only our specific timers, not ALL browser timers
             if (silenceTimer) {
                 clearTimeout(silenceTimer);
                 silenceTimer = null;
@@ -1043,6 +1043,10 @@
                 clearTimeout(voiceCommandReconnectTimer);
                 voiceCommandReconnectTimer = null;
             }
+            
+            // COMPLETELY DISABLE voice command recognition to stop pinging
+            voiceCommandRecognition = null;
+            voiceCommandActive = false;
             
             // Start silence timer
             silenceTimer = setTimeout(function() {
@@ -1162,15 +1166,29 @@
                     finalPhraseSpoken = latestFinal;
                     updateStatus('✅ Complete: ' + latestFinal);
                     
-                    // FIXED: Speak complete phrase using existing speak function
+                    // FIXED: Speak complete phrase directly with speechSynth
                     if (!isSpeaking) {
                         isSpeaking = true;
                         console.log('Speaking complete phrase:', latestFinal);
-                        speak(latestFinal, true); // This will use the full phrase
                         
-                        setTimeout(() => { 
+                        // Use speechSynth directly to ensure complete phrase is spoken
+                        speechSynth.cancel(); // Stop any current speech
+                        const utterance = new SpeechSynthesisUtterance(latestFinal);
+                        utterance.rate = settings.speechSpeed;
+                        utterance.pitch = 1;
+                        utterance.volume = 0.8;
+                        
+                        utterance.onend = function() {
+                            console.log('=== FINISHED SPEAKING COMPLETE PHRASE ===');
                             isSpeaking = false;
-                        }, latestFinal.length * 120 + 2000);
+                        };
+                        
+                        utterance.onerror = function(e) {
+                            console.error('Speech error:', e);
+                            isSpeaking = false;
+                        };
+                        
+                        speechSynth.speak(utterance);
                     }
                 }
             }
@@ -1248,8 +1266,6 @@
         if (currentPage !== 'phone') {
             console.log('Not on phone page, switching to phone page first');
             showPage('phone');
-            // Wait for page to load then try again
-            setTimeout(() => loadRealContacts(), 500);
             return;
         }
         
@@ -1258,7 +1274,7 @@
                 contactsList.innerHTML = `
                     <div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;">
                         <p><strong>📱 Loading your contacts...</strong></p>
-                        <p>Please select contacts to import</p>
+                        <p>Please select contacts to import when the browser asks</p>
                     </div>
                 `;
                 
@@ -1285,11 +1301,37 @@
                 }
             } else {
                 console.log('Contacts API not supported');
-                displayContactsNotSupported();
+                contactsList.innerHTML = `
+                    <div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;">
+                        <p><strong>📱 Contacts Not Available</strong></p>
+                        <p>Your browser doesn't support the Contacts API</p>
+                        <p><strong>This works on:</strong></p>
+                        <p>• Chrome on Android</p>
+                        <p>• Safari on iOS</p>
+                        <p>• Make sure you're using HTTPS</p>
+                        <br>
+                        <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 14px 24px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                            📞 Try Again
+                        </button>
+                    </div>
+                `;
             }
         } catch (error) {
             console.error('Error loading contacts:', error);
-            displayContactAccessError();
+            contactsList.innerHTML = `
+                <div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px; background: #ffebee;">
+                    <p><strong>📱 Contact Access Error</strong></p>
+                    <p>Error: ${error.message || 'Unknown error'}</p>
+                    <p>This could be due to:</p>
+                    <p>• Permission denied</p>
+                    <p>• Browser security settings</p>
+                    <p>• Device restrictions</p>
+                    <br>
+                    <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                        📞 Try Again
+                    </button>
+                </div>
+            `;
         }
     }
 
@@ -1540,7 +1582,23 @@
         const text = textInput.value.trim();
         if (text) {
             console.log('Speaking text from input field:', text);
-            speak(text); // FIXED: This will now speak the complete text
+            
+            // FIXED: Use speechSynth directly to ensure complete text is spoken
+            speechSynth.cancel(); // Stop any current speech
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = settings.speechSpeed;
+            utterance.pitch = 1;
+            utterance.volume = 0.8;
+            
+            utterance.onend = function() {
+                console.log('=== FINISHED SPEAKING COMPLETE TEXT ===');
+            };
+            
+            utterance.onerror = function(e) {
+                console.error('Speech error:', e);
+            };
+            
+            speechSynth.speak(utterance);
         }
     }
 
