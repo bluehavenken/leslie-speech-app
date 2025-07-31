@@ -931,11 +931,11 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // Set up main speech recognition
+        // Set up main speech recognition - COMPLETELY REWRITTEN to fix cascading
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
-            recognition.continuous = true;
+            recognition.continuous = false; // CHANGED to false to prevent cascading
             recognition.interimResults = true;
             recognition.lang = 'en-US';
 
@@ -943,137 +943,97 @@
                 isListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening... Say something!');
-                addDebugMessage('✅ SPEECH STARTED - Ready to listen');
+                addDebugMessage('✅ LISTENING STARTED');
                 
-                // Clear previous data to prevent duplicates
+                // Clear previous data completely
                 lastFinalTranscript = '';
                 interimTranscript = '';
                 
                 // Stop any playing audio
                 if (speechSynth.speaking) {
                     speechSynth.cancel();
-                    addDebugMessage('🔇 Stopped previous speech');
                 }
-                
-                // Set 3 minute silence timer
-                if (silenceTimer) clearTimeout(silenceTimer);
-                silenceTimer = setTimeout(() => {
-                    if (isListening) {
-                        stopListening();
-                        updateStatus('Stopped listening due to silence');
-                        addDebugMessage('⏰ Auto-stopped due to 3min silence');
-                    }
-                }, 180000);
             };
 
             recognition.onend = function() {
-                addDebugMessage('Recognition ended. isListening: ' + isListening + ', currentPage: ' + currentPage);
+                addDebugMessage('🛑 Recognition ENDED');
+                isListening = false;
+                updateListenButton();
+                updateStatus('Click "START TALKING" to listen again');
                 
-                if (isListening && currentPage === 'speech') {
-                    // Only auto-restart if we're on the speech page and supposed to be listening
-                    setTimeout(() => {
-                        if (isListening && currentPage === 'speech') {
-                            try {
-                                addDebugMessage('Attempting to restart recognition...');
-                                recognition.start();
-                            } catch (error) {
-                                addDebugMessage('RESTART FAILED: ' + error.message);
-                                isListening = false;
-                                updateListenButton();
-                                updateStatus('Recognition stopped - ' + error.message);
-                            }
-                        } else {
-                            addDebugMessage('Not restarting - conditions not met');
-                        }
-                    }, 1000); // Longer delay
-                } else {
-                    isListening = false;
-                    updateStatus('Ready to listen - Click "START TALKING" below');
-                    updateListenButton();
-                    addDebugMessage('Recognition properly stopped');
-                }
-                
-                if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = null;
-                }
+                // Don't auto-restart - let user control it
             };
 
             recognition.onerror = function(event) {
-                console.log('Recognition error:', event.error);
+                addDebugMessage('❌ ERROR: ' + event.error);
                 isListening = false;
                 updateListenButton();
                 
                 if (event.error === 'not-allowed') {
-                    updateStatus('⚠️ Microphone permission denied! Please allow microphone access and try again.');
+                    updateStatus('⚠️ Microphone permission denied! Please allow microphone access.');
                 } else if (event.error === 'no-speech') {
-                    updateStatus('No speech detected. Click START TALKING to try again.');
+                    updateStatus('No speech detected. Try again.');
                 } else {
-                    updateStatus('Recognition error: ' + event.error + '. Please try again.');
-                }
-                
-                if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = null;
+                    updateStatus('Error: ' + event.error);
                 }
             };
 
             recognition.onresult = function(event) {
-                // Process all results to get the most recent final and interim
-                let latestFinal = '';
-                let latestInterim = '';
-                
-                for (let i = event.results.length - 1; i >= 0; i--) {
-                    if (event.results[i].isFinal && !latestFinal) {
-                        latestFinal = event.results[i][0].transcript.trim();
-                    } else if (!event.results[i].isFinal && !latestInterim) {
-                        latestInterim = event.results[i][0].transcript.trim();
+                let finalResult = '';
+                let interimResult = '';
+
+                // Get the MOST RECENT result only
+                if (event.results.length > 0) {
+                    const lastResult = event.results[event.results.length - 1];
+                    const transcript = lastResult[0].transcript.trim();
+                    
+                    if (lastResult.isFinal) {
+                        finalResult = transcript;
+                    } else {
+                        interimResult = transcript;
                     }
-                    if (latestFinal && latestInterim) break;
                 }
 
-                // Handle NEW final results only
-                if (latestFinal && latestFinal !== lastFinalTranscript && latestFinal.length > 2) {
-                    addDebugMessage('🎯 NEW FINAL: "' + latestFinal + '"');
+                addDebugMessage('📝 Result: Final="' + finalResult + '" Interim="' + interimResult + '"');
+
+                // Handle FINAL result - only process if it's new and different
+                if (finalResult && finalResult !== lastFinalTranscript && finalResult.length > 1) {
                     
                     // Skip Leslie commands
-                    if (latestFinal.toLowerCase().includes('leslie')) {
+                    if (finalResult.toLowerCase().includes('leslie')) {
                         addDebugMessage('⏭️ Skipped Leslie command');
                         return;
                     }
                     
-                    // Check for duplicates
-                    if (spokenPhrases.has(latestFinal)) {
-                        addDebugMessage('🔄 DUPLICATE IGNORED: "' + latestFinal + '"');
-                        return;
+                    // This is genuinely new
+                    lastFinalTranscript = finalResult;
+                    
+                    // Only add if not duplicate
+                    if (!spokenPhrases.has(finalResult)) {
+                        spokenPhrases.add(finalResult);
+                        allTranscripts.push({
+                            text: finalResult,
+                            type: 'final',
+                            timestamp: Date.now()
+                        });
+                        
+                        // Keep only last 5
+                        if (allTranscripts.length > 5) {
+                            allTranscripts.shift();
+                        }
+                        
+                        updateSpeechDisplay();
+                        updateStatus('✅ Heard: ' + finalResult);
+                        addDebugMessage('✅ NEW PHRASE ADDED: ' + finalResult);
+                        speakPhrase(finalResult);
+                    } else {
+                        addDebugMessage('🔄 DUPLICATE IGNORED');
                     }
-                    
-                    // This is a new, unique phrase
-                    lastFinalTranscript = latestFinal;
-                    spokenPhrases.add(latestFinal);
-                    allTranscripts.push({
-                        text: latestFinal,
-                        type: 'final',
-                        timestamp: Date.now()
-                    });
-                    
-                    // Keep only last 10 transcripts
-                    if (allTranscripts.length > 10) {
-                        allTranscripts.shift();
-                    }
-                    
-                    updateSpeechDisplay();
-                    updateStatus('✅ Complete: ' + latestFinal);
-                    addDebugMessage('✅ ADDED & SPEAKING: "' + latestFinal + '"');
-                    speakPhrase(latestFinal);
                 }
-                // Handle interim results
-                else if (latestInterim && !isSpeaking && latestInterim !== interimTranscript) {
-                    interimTranscript = latestInterim;
-                    if (!latestInterim.toLowerCase().includes('leslie')) {
-                        updateStatus('🔄 Listening: ' + latestInterim);
-                        updateSpeechDisplay(latestInterim);
-                    }
+                // Handle INTERIM result
+                else if (interimResult && !isSpeaking) {
+                    updateStatus('🔄 Listening: ' + interimResult);
+                    updateSpeechDisplay(interimResult);
                 }
             };
         }
@@ -1365,17 +1325,12 @@
             filteredContacts = contacts.slice();
         }
 
-        // Load real contacts
+        // Load real contacts and REPLACE demo contacts on same page
         async function loadRealContacts() {
             console.log('Loading real device contacts...');
             const contactsList = document.getElementById('contactsList');
             
-            if (currentPage !== 'phone') {
-                showPage('phone');
-                setTimeout(() => loadRealContacts(), 300);
-                return;
-            }
-            
+            // Show loading message
             contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>📱 Loading your device contacts...</strong></p><p>Please select contacts when prompted</p></div>';
             
             try {
@@ -1388,7 +1343,7 @@
                     console.log('Retrieved contacts:', contactList.length);
                     
                     if (contactList.length > 0) {
-                        // Replace demo contacts with real contacts
+                        // COMPLETELY REPLACE demo contacts with real ones
                         contacts = contactList.map(contact => ({
                             name: contact.name && contact.name[0] ? contact.name[0] : 'Unknown',
                             phone: contact.tel && contact.tel[0] ? contact.tel[0] : 'No phone'
@@ -1402,56 +1357,75 @@
                         contacts = uniqueContacts.sort((a, b) => a.name.localeCompare(b.name));
                         filteredContacts = contacts.slice();
                         
-                        console.log('Loaded', contacts.length, 'real contacts');
-                        displayContactsOnPhonePage();
+                        console.log('SUCCESS: Replaced demo contacts with', contacts.length, 'real contacts');
                         
-                        // Show success message
-                        setTimeout(() => {
-                            if (contactsList) {
-                                const successDiv = document.createElement('div');
-                                successDiv.style.cssText = 'padding: 12px; margin-top: 8px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; font-size: 12px; color: #155724;';
-                                successDiv.innerHTML = `<strong>✅ Success:</strong> Loaded ${contacts.length} contacts from your device.`;
-                                contactsList.appendChild(successDiv);
-                            }
-                        }, 500);
+                        // Display the real contacts on THIS page
+                        displayRealContactsOnPhonePage();
                         
                         return;
                     } else {
                         console.log('No contacts selected by user');
-                        contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;"><p><strong>📱 No contacts selected</strong></p><p>You can try loading contacts again or use the demo contacts below</p></div>';
+                        contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;"><p><strong>📱 No contacts selected</strong></p><p>You didn\'t select any contacts</p><p>The demo contacts will remain</p></div>';
                         
-                        // Show demo contacts as fallback
+                        // Keep demo contacts
                         setTimeout(() => {
-                            initializeContacts();
                             displayContactsOnPhonePage();
-                        }, 2000);
+                        }, 3000);
                     }
                 } else {
                     console.log('Contacts API not supported');
-                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #ff6600; border: 2px solid #ff6600; border-radius: 8px;"><p><strong>📱 Contacts API Not Supported</strong></p><p>Your browser doesn\'t support the Contacts API</p><p><strong>This feature works on:</strong></p><p>• Chrome on Android</p><p>• Safari on iOS</p><p>Using demo contacts instead...</p></div>';
+                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #ff6600; border: 2px solid #ff6600; border-radius: 8px;"><p><strong>📱 Contacts API Not Supported</strong></p><p>Your browser doesn\'t support the Contacts API</p><p><strong>This feature works on:</strong></p><p>• Chrome on Android</p><p>• Safari on iOS</p><p>Keeping demo contacts...</p></div>';
                     
-                    // Show demo contacts
+                    // Keep demo contacts
                     setTimeout(() => {
-                        initializeContacts();
                         displayContactsOnPhonePage();
-                    }, 3000);
+                    }, 4000);
                 }
                 
             } catch (error) {
                 console.error('Error loading contacts:', error);
                 
                 if (error.name === 'NotAllowedError') {
-                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;"><p><strong>📱 Permission Denied</strong></p><p>Contact access was denied.</p><p>To use your real contacts:</p><p>1. Refresh the page</p><p>2. Allow contact permission when prompted</p><p>Using demo contacts for now...</p></div>';
+                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;"><p><strong>📱 Permission Denied</strong></p><p>Contact access was denied.</p><p>To use your real contacts:</p><p>1. Refresh the page</p><p>2. Allow contact permission when prompted</p><p>Keeping demo contacts for now...</p></div>';
                 } else {
-                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;"><p><strong>📱 Error Loading Contacts</strong></p><p>Error: ' + (error.message || 'Unknown error') + '</p><p>Using demo contacts instead...</p></div>';
+                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;"><p><strong>📱 Error Loading Contacts</strong></p><p>Error: ' + (error.message || 'Unknown error') + '</p><p>Keeping demo contacts...</p></div>';
                 }
                 
-                // Show demo contacts as fallback
+                // Keep demo contacts on error
                 setTimeout(() => {
-                    initializeContacts();
                     displayContactsOnPhonePage();
-                }, 3000);
+                }, 4000);
             }
+        }
+
+        // Display REAL contacts (different styling to show they're real)
+        function displayRealContactsOnPhonePage() {
+            const contactsList = document.getElementById('contactsList');
+            if (!contactsList) return;
+            
+            contactsList.innerHTML = '';
+
+            // Success header showing real contacts loaded
+            const successHeader = document.createElement('div');
+            successHeader.style.cssText = 'padding: 12px; text-align: center; font-weight: bold; color: white; background: #28a745; border-radius: 8px; margin-bottom: 8px;';
+            successHeader.innerHTML = `✅ SUCCESS: ${filteredContacts.length} REAL contacts loaded from your device!`;
+            contactsList.appendChild(successHeader);
+
+            // Contact list
+            filteredContacts.forEach((contact) => {
+                const contactEl = document.createElement('div');
+                contactEl.className = 'contact-item';
+                contactEl.style.backgroundColor = '#e8f5e8'; // Light green to show these are real
+                contactEl.innerHTML = `<div class="contact-name">${contact.name}</div><div class="contact-phone">${contact.phone}</div>`;
+                contactEl.addEventListener('click', () => callContact(contact));
+                contactsList.appendChild(contactEl);
+            });
+
+            // Footer note
+            const footerNote = document.createElement('div');
+            footerNote.style.cssText = 'padding: 8px; text-align: center; font-size: 12px; color: #28a745; font-weight: bold; margin-top: 8px;';
+            footerNote.textContent = '📱 These are YOUR real contacts - searchable and callable!';
+            contactsList.appendChild(footerNote);
         }
 
         // Display contacts on phone page
