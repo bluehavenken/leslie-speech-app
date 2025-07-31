@@ -596,9 +596,9 @@
                 </div>
                 
                 <!-- Debug Messages -->
-                <div id="debugMessages" style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 8px; margin-bottom: 16px; font-size: 12px; max-height: 100px; overflow-y: auto;">
-                    <strong>🔍 Debug Info:</strong><br>
-                    <div id="debugContent">Ready to start debugging...</div>
+                <div id="debugMessages" style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 8px; margin-bottom: 16px; font-size: 14px; max-height: 150px; overflow-y: auto;">
+                    <strong>🔍 Debug Info:</strong> <button onclick="clearDebugMessages()" style="float: right; font-size: 10px; padding: 2px 6px;">Clear</button><br>
+                    <div id="debugContent" style="line-height: 1.4; font-family: monospace;">Ready to start debugging...</div>
                 </div>
                 
                 <div class="status-text" id="statusText">
@@ -845,7 +845,7 @@
         function addDebugMessage(message) {
             const timestamp = new Date().toLocaleTimeString();
             debugLog.push(`${timestamp}: ${message}`);
-            if (debugLog.length > 10) debugLog.shift();
+            if (debugLog.length > 8) debugLog.shift(); // Keep fewer messages
             
             const debugContent = document.getElementById('debugContent');
             if (debugContent) {
@@ -853,6 +853,14 @@
                 debugContent.scrollTop = debugContent.scrollHeight;
             }
             console.log('DEBUG:', message);
+        }
+
+        function clearDebugMessages() {
+            debugLog = [];
+            const debugContent = document.getElementById('debugContent');
+            if (debugContent) {
+                debugContent.innerHTML = 'Debug cleared...';
+            }
         }
 
         // Initialize the app
@@ -867,7 +875,7 @@
             }
             
             setupSpeechRecognition();
-            // Don't start voice commands automatically - wait for user interaction
+            // COMPLETELY DISABLE voice commands to stop pinging
             initializeContacts();
             setupSwipeGestures();
             setupBackButtonHandling();
@@ -928,20 +936,16 @@
                 isListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening... Say something!');
-                addDebugMessage('Main speech recognition STARTED');
+                addDebugMessage('✅ SPEECH STARTED - Ready to listen');
+                
+                // Clear previous data to prevent duplicates
+                lastFinalTranscript = '';
+                interimTranscript = '';
                 
                 // Stop any playing audio
-                if (speechSynth.speaking) speechSynth.cancel();
-                
-                // STOP voice commands to prevent pinging
-                if (isVoiceCommandListening && voiceCommandRecognition) {
-                    try {
-                        voiceCommandRecognition.stop();
-                        isVoiceCommandListening = false;
-                        addDebugMessage('Voice commands STOPPED to prevent conflicts');
-                    } catch (e) {
-                        addDebugMessage('Error stopping voice commands: ' + e.message);
-                    }
+                if (speechSynth.speaking) {
+                    speechSynth.cancel();
+                    addDebugMessage('🔇 Stopped previous speech');
                 }
                 
                 // Set 3 minute silence timer
@@ -950,7 +954,7 @@
                     if (isListening) {
                         stopListening();
                         updateStatus('Stopped listening due to silence');
-                        addDebugMessage('Auto-stopped due to 3min silence');
+                        addDebugMessage('⏰ Auto-stopped due to 3min silence');
                     }
                 }, 180000);
             };
@@ -1008,77 +1012,60 @@
             };
 
             recognition.onresult = function(event) {
-                addDebugMessage('Recognition result received. Results length: ' + event.results.length);
+                // Process all results to get the most recent final and interim
+                let latestFinal = '';
+                let latestInterim = '';
                 
-                // Reset silence timer on any speech detected
-                if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = setTimeout(() => {
-                        if (isListening) {
-                            stopListening();
-                            updateStatus('Stopped listening due to silence');
-                            addDebugMessage('Auto-stopped due to silence');
-                        }
-                    }, 180000);
-                }
-
-                let newFinalTranscript = '';
-                let newInterimTranscript = '';
-
-                // Process all results
-                for (let i = 0; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript;
-                    if (event.results[i].isFinal) {
-                        newFinalTranscript += transcript;
-                    } else {
-                        newInterimTranscript += transcript;
+                for (let i = event.results.length - 1; i >= 0; i--) {
+                    if (event.results[i].isFinal && !latestFinal) {
+                        latestFinal = event.results[i][0].transcript.trim();
+                    } else if (!event.results[i].isFinal && !latestInterim) {
+                        latestInterim = event.results[i][0].transcript.trim();
                     }
+                    if (latestFinal && latestInterim) break;
                 }
 
-                addDebugMessage('Final: "' + newFinalTranscript + '" | Interim: "' + newInterimTranscript + '"');
-
-                // Handle final results - complete sentences
-                if (newFinalTranscript.trim() && newFinalTranscript.trim() !== lastFinalTranscript) {
-                    const cleanFinal = newFinalTranscript.trim();
-                    lastFinalTranscript = cleanFinal;
+                // Handle NEW final results only
+                if (latestFinal && latestFinal !== lastFinalTranscript && latestFinal.length > 2) {
+                    addDebugMessage('🎯 NEW FINAL: "' + latestFinal + '"');
                     
                     // Skip Leslie commands
-                    if (cleanFinal.toLowerCase().includes('leslie')) {
-                        addDebugMessage('Skipping Leslie command: ' + cleanFinal);
+                    if (latestFinal.toLowerCase().includes('leslie')) {
+                        addDebugMessage('⏭️ Skipped Leslie command');
                         return;
                     }
                     
-                    // Check if we've already processed this exact phrase
-                    if (!spokenPhrases.has(cleanFinal)) {
-                        addDebugMessage('NEW PHRASE: ' + cleanFinal);
-                        spokenPhrases.add(cleanFinal);
-                        allTranscripts.push({
-                            text: cleanFinal,
-                            type: 'final',
-                            timestamp: Date.now()
-                        });
-                        
-                        // Keep only last 10 transcripts
-                        if (allTranscripts.length > 10) {
-                            allTranscripts.shift();
-                        }
-                        
-                        updateSpeechDisplay();
-                        updateStatus('✅ Complete: ' + cleanFinal);
-                        speakPhrase(cleanFinal);
-                    } else {
-                        addDebugMessage('DUPLICATE PHRASE IGNORED: ' + cleanFinal);
+                    // Check for duplicates
+                    if (spokenPhrases.has(latestFinal)) {
+                        addDebugMessage('🔄 DUPLICATE IGNORED: "' + latestFinal + '"');
+                        return;
                     }
-                }
-                // Handle interim results - partial speech
-                else if (newInterimTranscript.trim() && !isSpeaking && newInterimTranscript.trim() !== interimTranscript) {
-                    const cleanInterim = newInterimTranscript.trim();
-                    interimTranscript = cleanInterim;
                     
-                    if (!cleanInterim.toLowerCase().includes('leslie')) {
-                        updateStatus('🔄 Listening: ' + cleanInterim);
-                        updateSpeechDisplay(cleanInterim);
-                        addDebugMessage('Interim updated: ' + cleanInterim);
+                    // This is a new, unique phrase
+                    lastFinalTranscript = latestFinal;
+                    spokenPhrases.add(latestFinal);
+                    allTranscripts.push({
+                        text: latestFinal,
+                        type: 'final',
+                        timestamp: Date.now()
+                    });
+                    
+                    // Keep only last 10 transcripts
+                    if (allTranscripts.length > 10) {
+                        allTranscripts.shift();
+                    }
+                    
+                    updateSpeechDisplay();
+                    updateStatus('✅ Complete: ' + latestFinal);
+                    addDebugMessage('✅ ADDED & SPEAKING: "' + latestFinal + '"');
+                    speakPhrase(latestFinal);
+                }
+                // Handle interim results
+                else if (latestInterim && !isSpeaking && latestInterim !== interimTranscript) {
+                    interimTranscript = latestInterim;
+                    if (!latestInterim.toLowerCase().includes('leslie')) {
+                        updateStatus('🔄 Listening: ' + latestInterim);
+                        updateSpeechDisplay(latestInterim);
                     }
                 }
             };
@@ -1192,16 +1179,15 @@
         // Speak a phrase back to the user
         function speakPhrase(text) {
             if (isSpeaking) {
-                addDebugMessage('Already speaking, skipping: ' + text);
+                addDebugMessage('❌ SKIP SPEAK: Already speaking');
                 return;
             }
             
             isSpeaking = true;
-            addDebugMessage('Starting to speak: ' + text);
+            addDebugMessage('🔊 SPEAKING: "' + text + '"');
             
             if (speechSynth.speaking) {
                 speechSynth.cancel();
-                addDebugMessage('Cancelled previous speech');
             }
             
             setTimeout(() => {
@@ -1210,22 +1196,18 @@
                 utterance.pitch = 1.0;
                 utterance.volume = 1.0;
                 
-                utterance.onstart = function() {
-                    addDebugMessage('Speech started: ' + text);
-                };
-                
                 utterance.onend = function() {
-                    addDebugMessage('Speech finished: ' + text);
+                    addDebugMessage('✅ SPEECH DONE: "' + text + '"');
                     isSpeaking = false;
                 };
                 
                 utterance.onerror = function(event) {
-                    addDebugMessage('Speech error: ' + event.error);
+                    addDebugMessage('❌ SPEECH ERROR: ' + event.error);
                     isSpeaking = false;
                 };
                 
                 speechSynth.speak(utterance);
-            }, 500);
+            }, 300);
         }
 
         // Update the speech display
@@ -1530,22 +1512,40 @@
                 // Stop listening when leaving speech page
                 if (pageId !== 'speech' && isListening) {
                     stopListening();
+                    addDebugMessage('🛑 Stopped listening - left speech page');
                 }
                 
-                // Stop voice commands when on speech page to avoid conflicts
-                if (pageId === 'speech' && isVoiceCommandListening && voiceCommandRecognition) {
-                    try {
-                        voiceCommandRecognition.stop();
-                        isVoiceCommandListening = false;
-                    } catch (e) {
-                        console.log('Error stopping voice commands:', e);
-                    }
-                }
-                
-                // Auto-load contacts when entering phone page
+                // Auto-load contacts when entering phone page with clear instructions
                 if (pageId === 'phone') {
                     setTimeout(() => {
-                        displayContactsOnPhonePage();
+                        // Show the contact loading interface immediately
+                        const contactsList = document.getElementById('contactsList');
+                        if (contactsList) {
+                            contactsList.innerHTML = `
+                                <div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;">
+                                    <p><strong>📱 GET YOUR REAL CONTACTS</strong></p>
+                                    <p style="color: #333; margin: 10px 0; font-size: 16px;">Currently showing: <span style="color: #cc0000;">Demo Contacts Only</span></p>
+                                    <p style="color: #666; font-size: 14px; margin-bottom: 15px;">
+                                        To load YOUR real contacts from your phone:
+                                    </p>
+                                    <button onclick="loadRealContacts()" style="margin: 10px; padding: 16px 28px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 18px; font-weight: bold;">
+                                        📞 LOAD MY REAL CONTACTS
+                                    </button>
+                                    <p style="margin-top: 12px; font-size: 12px; color: #666;">
+                                        <strong>📋 Steps:</strong><br>
+                                        1. Click button above<br>
+                                        2. Allow contacts permission<br>
+                                        3. Select your contacts<br>
+                                        <strong>⚠️ Works on Chrome Android & Safari iOS only</strong>
+                                    </p>
+                                </div>
+                            `;
+                        }
+                        
+                        // Also display current demo contacts below
+                        setTimeout(() => {
+                            displayContactsOnPhonePage();
+                        }, 500);
                     }, 100);
                 }
                 
