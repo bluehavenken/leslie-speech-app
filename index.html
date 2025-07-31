@@ -1216,18 +1216,38 @@
         };
 
         recognition.onend = function() {
-            isListening = false;
-            updateListenButton();
-            updateStatus('Ready to listen - Click "START TALKING" below');
+            console.log('=== RECOGNITION ENDED ===');
+            console.log('isListening before end:', isListening);
+            
+            // CRITICAL: Only change state if we're manually stopping or timing out
+            // Do NOT change state just because recognition ended after speaking
+            if (isListening) {
+                console.log('Recognition ended but we should still be listening - restarting...');
+                // Restart recognition to keep listening
+                setTimeout(() => {
+                    if (isListening) {
+                        try {
+                            recognition.start();
+                            console.log('Recognition restarted to continue listening');
+                        } catch (error) {
+                            console.log('Error restarting recognition:', error);
+                            // Only now change the button state if we can't restart
+                            isListening = false;
+                            updateListenButton();
+                            updateStatus('Recognition stopped - click START TALKING to resume');
+                        }
+                    }
+                }, 100);
+            } else {
+                // We're intentionally stopping
+                updateListenButton();
+                updateStatus('Ready to listen - Click "START TALKING" below');
+            }
             
             if (silenceTimer) {
                 clearTimeout(silenceTimer);
                 silenceTimer = null;
             }
-            
-            setTimeout(() => {
-                if (!voiceCommandActive) setupVoiceCommandListener();
-            }, 1000);
         };
 
         recognition.onerror = function(event) {
@@ -1486,6 +1506,8 @@
     }
 
     function filterContacts(searchTerm) {
+        console.log('=== FILTERING CONTACTS ===', searchTerm);
+        
         if (!searchTerm.trim()) {
             filteredContacts = [...contacts];
         } else {
@@ -1501,8 +1523,10 @@
             });
         }
         
-        // Use the new display function
-        displayContactsOnPhonePage();
+        console.log('Filtered contacts:', filteredContacts.length);
+        
+        // Use the standard display function to show results on phone page
+        displayContacts();
     }
 
     function callContact(contact) {
@@ -1592,8 +1616,9 @@
     }
 
     function stopListening() {
+        console.log('=== MANUALLY STOPPING LISTENING ===');
         if (recognition && isListening) {
-            isListening = false;
+            isListening = false; // Set this BEFORE stopping to prevent restart
             recognition.stop();
             
             if (silenceTimer) {
@@ -1603,6 +1628,7 @@
             
             updateStatus('Stopped listening');
             updateListenButton();
+            console.log('Listening manually stopped');
         }
     }
 
