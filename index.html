@@ -1090,20 +1090,36 @@
             updateListenButton();
             updateStatus('🎤 Listening... Say something!');
             
-            // COMPLETELY STOP ANY AUDIO PROCESSING TO ELIMINATE PINGING
+            console.log('=== SPEECH RECOGNITION STARTED ===');
+            console.log('STOPPING ALL BACKGROUND AUDIO TO ELIMINATE PINGING');
+            
+            // NUCLEAR OPTION: Destroy ALL audio recognition objects
             if (voiceCommandRecognition) {
                 try { 
                     voiceCommandRecognition.stop();
                     voiceCommandRecognition.abort();
+                    voiceCommandRecognition.onstart = null;
+                    voiceCommandRecognition.onend = null;
+                    voiceCommandRecognition.onerror = null;
+                    voiceCommandRecognition.onresult = null;
                 } catch (e) {}
                 voiceCommandRecognition = null;
+                console.log('Voice command recognition DESTROYED');
             }
+            
             voiceCommandActive = false;
             
-            // Clear any timers
+            // Clear ALL timers that could restart audio
             if (voiceCommandReconnectTimer) {
                 clearTimeout(voiceCommandReconnectTimer);
                 voiceCommandReconnectTimer = null;
+                console.log('Voice command timers CLEARED');
+            }
+            
+            // Clear any other potential audio timers
+            if (window.audioTimer) {
+                clearTimeout(window.audioTimer);
+                window.audioTimer = null;
             }
             
             // Start silence timer
@@ -1114,7 +1130,7 @@
                 }
             }, 3 * 60 * 1000);
             
-            console.log('Speech recognition started - all other audio processing stopped');
+            console.log('=== ALL BACKGROUND AUDIO ELIMINATED ===');
         };
 
         recognition.onend = function() {
@@ -1183,79 +1199,71 @@
                 }, 3 * 60 * 1000);
             }
             
-            let completeTranscript = '';
-            let hasNewFinal = false;
+            let latestInterim = '';
+            let latestFinal = '';
             
-            // Get the MOST RECENT final result only - no accumulation
+            // CRITICAL FIX: Process results in REVERSE to get only the LATEST
             for (let i = event.results.length - 1; i >= 0; i--) {
-                if (event.results[i].isFinal) {
-                    completeTranscript = event.results[i][0].transcript.trim();
-                    hasNewFinal = true;
-                    break;
+                if (event.results[i].isFinal && !latestFinal) {
+                    latestFinal = event.results[i][0].transcript.trim();
+                } else if (!event.results[i].isFinal && !latestInterim) {
+                    latestInterim = event.results[i][0].transcript.trim();
                 }
-            }
-            
-            // If no final result, get the most recent interim
-            if (!hasNewFinal) {
-                for (let i = event.results.length - 1; i >= 0; i--) {
-                    if (!event.results[i].isFinal) {
-                        const interimText = event.results[i][0].transcript.trim();
-                        if (interimText && !interimText.toLowerCase().includes('leslie')) {
-                            if (currentInterimTranscript !== interimText) {
-                                currentInterimTranscript = interimText;
-                                updateSpeechDisplay();
-                                updateStatus('🔄 Listening: ' + interimText);
-                            }
-                        }
-                        break;
-                    }
-                }
-                return; // Don't process final results
+                
+                // Break once we have what we need
+                if (latestFinal || latestInterim) break;
             }
 
-            // Process ONLY complete final results - NO PARTIAL PHRASES
-            if (completeTranscript && completeTranscript.length > 3) {
+            // Handle ONLY final results - NO interim processing to prevent cascading
+            if (latestFinal && latestFinal.length > 3) {
                 
                 // Filter out Leslie commands
-                if (completeTranscript.toLowerCase().includes('leslie')) {
-                    console.log('Filtered out Leslie command:', completeTranscript);
+                if (latestFinal.toLowerCase().includes('leslie')) {
+                    console.log('Filtered Leslie command:', latestFinal);
                     return;
                 }
                 
-                // CRITICAL: Only process if this is a NEW complete phrase
-                const isNewPhrase = !phraseHistory.includes(completeTranscript) && finalPhraseSpoken !== completeTranscript;
+                // ONLY add if it's truly NEW and DIFFERENT
+                const isDuplicate = phraseHistory.includes(latestFinal) || 
+                                  finalPhraseSpoken === latestFinal ||
+                                  (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === latestFinal);
                 
-                if (isNewPhrase) {
-                    // Clear interim display
+                if (!isDuplicate) {
+                    console.log('New complete phrase detected:', latestFinal);
+                    
+                    // Clear interim completely
                     currentInterimTranscript = '';
                     
                     // Add to history
-                    phraseHistory.push(completeTranscript);
-                    if (phraseHistory.length > 8) phraseHistory.shift();
+                    phraseHistory.push(latestFinal);
+                    if (phraseHistory.length > 5) phraseHistory.shift(); // Keep only 5 phrases
                     
                     // Update display
                     updateSpeechDisplay();
                     
-                    finalPhraseSpoken = completeTranscript;
-                    updateStatus('✅ Complete: ' + completeTranscript);
+                    finalPhraseSpoken = latestFinal;
+                    updateStatus('✅ Complete: ' + latestFinal);
                     
-                    // Speak ONLY complete phrases
+                    // Speak complete phrase
                     if (!isSpeaking) {
                         isSpeaking = true;
-                        console.log('Speaking complete phrase:', completeTranscript);
-                        speak(completeTranscript, true);
-                        
-                        // Calculate total speaking time
-                        const words = completeTranscript.split(' ');
-                        const speakTime = words.length * 800 + (settings.pauseBetweenWords * words.length * 1000);
+                        console.log('Speaking complete phrase:', latestFinal);
+                        speak(latestFinal, true);
                         
                         setTimeout(() => { 
                             isSpeaking = false;
-                            console.log('Finished speaking');
-                        }, speakTime);
+                        }, latestFinal.length * 120 + 2000);
                     }
-                } else {
-                    console.log('Duplicate phrase ignored:', completeTranscript);
+                }
+            }
+            // Show interim ONLY if no final result and not currently speaking
+            else if (latestInterim && !isSpeaking && !latestFinal) {
+                if (!latestInterim.toLowerCase().includes('leslie')) {
+                    if (currentInterimTranscript !== latestInterim) {
+                        currentInterimTranscript = latestInterim;
+                        updateSpeechDisplay();
+                        updateStatus('🔄 Listening: ' + latestInterim);
+                    }
                 }
             }
         };
@@ -1266,23 +1274,30 @@
         if (recognizedTextEl) {
             let html = '';
             
-            // Show ONLY final phrases in separate blue boxes - NO CASCADING
+            // Show ONLY final phrases - NO interim results to prevent cascading
             if (phraseHistory.length > 0) {
-                // Show each phrase as a separate complete phrase
-                phraseHistory.forEach((phrase, idx) => {
-                    html += `<div class="final-phrase">Complete: ${phrase}</div>`;
-                });
+                // Only show the LAST phrase to prevent cascading
+                const lastPhrase = phraseHistory[phraseHistory.length - 1];
+                html += `<div class="final-phrase">✅ ${lastPhrase}</div>`;
+                
+                // Optionally show previous phrases in a collapsed way
+                if (phraseHistory.length > 1) {
+                    html += `<div style="color: #999; font-size: 12px; margin-top: 8px;">Previous phrases: ${phraseHistory.length - 1}</div>`;
+                }
             }
             
-            // Show ONLY ONE interim result in yellow - NO CASCADING
+            // Show interim ONLY if we have one and it's different from last final
             if (currentInterimTranscript.trim() && !isSpeaking) {
-                html += `<div class="interim-phrase">Interim: ${currentInterimTranscript}</div>`;
+                const lastFinal = phraseHistory.length > 0 ? phraseHistory[phraseHistory.length - 1] : '';
+                if (currentInterimTranscript !== lastFinal) {
+                    html += `<div class="interim-phrase">🔄 ${currentInterimTranscript}</div>`;
+                }
             }
             
             if (html) {
                 recognizedTextEl.innerHTML = html;
             } else {
-                recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic;">Your complete phrases will appear here...</div>';
+                recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic;">Say something and your complete phrase will appear here...</div>';
             }
             
             // Auto-scroll to bottom
@@ -1586,11 +1601,12 @@
     }
 
     function stopListening() {
-        console.log('Stopping speech recognition...');
+        console.log('=== MANUALLY STOPPING SPEECH RECOGNITION ===');
         if (recognition && isListening) {
             isListening = false; // Set this BEFORE stopping to prevent restart
             try {
                 recognition.stop();
+                console.log('Speech recognition stopped');
             } catch (error) {
                 console.log('Error stopping recognition:', error);
             }
@@ -1602,6 +1618,8 @@
             
             updateStatus('Stopped listening');
             updateListenButton();
+            
+            console.log('=== SPEECH RECOGNITION FULLY STOPPED ===');
         }
     }
 
