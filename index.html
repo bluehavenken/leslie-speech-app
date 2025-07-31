@@ -923,91 +923,12 @@
         }
     }
 
-    // --- VOICE COMMAND LISTENER - STOP THE PINGING ---
+    // COMPLETELY DISABLE VOICE COMMANDS TO STOP PINGING
     function setupVoiceCommandListener() {
-        // ONLY set up voice commands if NOT on speech page
-        if (currentPage === 'speech') {
-            console.log('On speech page - NOT starting voice command listener');
-            return;
-        }
+        console.log('Voice command listener DISABLED to stop pinging issues');
+        return; // Completely disable voice commands for now
         
-        if (!microphonePermissionGranted) return;
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return;
-
-        // Stop any existing recognition completely
-        if (voiceCommandRecognition) {
-            try { 
-                voiceCommandRecognition.stop();
-                voiceCommandRecognition.abort(); 
-            } catch (e) {}
-            voiceCommandRecognition = null;
-        }
-
-        voiceCommandRecognition = new SpeechRecognition();
-        voiceCommandRecognition.continuous = false; // Changed to false to stop pinging
-        voiceCommandRecognition.interimResults = false;
-        voiceCommandRecognition.lang = 'en-US';
-        voiceCommandRecognition.maxAlternatives = 3;
-
-        voiceCommandRecognition.onstart = function() {
-            voiceCommandActive = true;
-            console.log('Voice command recognition started');
-        };
-
-        voiceCommandRecognition.onresult = function(event) {
-            for (let i = 0; i < event.results.length; i++) {
-                if (event.results[i].isFinal) {
-                    // Try all alternatives for better command recognition
-                    for (let j = 0; j < Math.min(event.results[i].length, 3); j++) {
-                        const transcript = event.results[i][j].transcript.toLowerCase().trim();
-                        console.log(`Voice command detected:`, transcript);
-                        if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
-                            processVoiceCommand(transcript);
-                            // Restart after processing command
-                            setTimeout(startVoiceCommandListening, 1000);
-                            return;
-                        }
-                    }
-                }
-            }
-            // Restart if no command found
-            setTimeout(startVoiceCommandListening, 1000);
-        };
-
-        voiceCommandRecognition.onerror = function(event) {
-            console.log('Voice command error:', event.error);
-            voiceCommandActive = false;
-            if (event.error !== 'not-allowed' && event.error !== 'aborted') {
-                setTimeout(startVoiceCommandListening, 2000);
-            }
-        };
-
-        voiceCommandRecognition.onend = function() {
-            voiceCommandActive = false;
-            console.log('Voice command recognition ended');
-            // Only restart if not on speech page
-            if (currentPage !== 'speech' && !isListening) {
-                setTimeout(startVoiceCommandListening, 2000);
-            }
-        };
-
-        function startVoiceCommandListening() {
-            // NEVER start if on speech page or if speech recognition is active
-            if (currentPage === 'speech' || isListening || !microphonePermissionGranted || voiceCommandActive) {
-                return;
-            }
-            
-            try { 
-                voiceCommandRecognition.start(); 
-            } catch (error) {
-                console.log('Voice command start error:', error);
-                setTimeout(startVoiceCommandListening, 3000);
-            }
-        }
-
-        // Start initial listening
-        setTimeout(startVoiceCommandListening, 1000);
+        // TODO: Re-enable voice commands after fixing pinging issue
     }
 
     function processVoiceCommand(transcript) {
@@ -1101,38 +1022,26 @@
             enhancedMode = false;
             speak('Enhanced mode disabled');
         }
-        // Speech settings commands - FIXED with proper function calls
+        // Speech settings commands - SIMPLIFIED AND FIXED
         else if (transcript.includes('speak faster')) {
-            console.log('SPEAK FASTER command detected');
-            const oldSpeed = settings.speechSpeed;
-            settings.speechSpeed = Math.min(2.0, settings.speechSpeed + 0.5);
-            updateSpeechSpeed(settings.speechSpeed);
-            console.log(`Speed changed from ${oldSpeed} to ${settings.speechSpeed}`);
-            speak(`Speech speed increased to ${settings.speechSpeed}`);
+            console.log('=== SPEAK FASTER COMMAND ===');
+            adjustSpeechSpeed(0.1);
+            speak(`Speech speed increased to ${settings.speechSpeed.toFixed(1)}`);
         }
         else if (transcript.includes('talk slower') || transcript.includes('speak slower')) {
-            console.log('SPEAK SLOWER command detected');
-            const oldSpeed = settings.speechSpeed;
-            settings.speechSpeed = Math.max(0.5, settings.speechSpeed - 0.5);
-            updateSpeechSpeed(settings.speechSpeed);
-            console.log(`Speed changed from ${oldSpeed} to ${settings.speechSpeed}`);
-            speak(`Speech speed decreased to ${settings.speechSpeed}`);
+            console.log('=== SPEAK SLOWER COMMAND ===');
+            adjustSpeechSpeed(-0.1);
+            speak(`Speech speed decreased to ${settings.speechSpeed.toFixed(1)}`);
         }
         else if (transcript.includes('pause more')) {
-            console.log('PAUSE MORE command detected');
-            const oldPause = settings.pauseBetweenWords;
-            settings.pauseBetweenWords = Math.min(2.0, settings.pauseBetweenWords + 0.5);
-            updatePauseBetweenWords(settings.pauseBetweenWords);
-            console.log(`Pause changed from ${oldPause} to ${settings.pauseBetweenWords}`);
-            speak(`Pause between words increased to ${settings.pauseBetweenWords} seconds`);
+            console.log('=== PAUSE MORE COMMAND ===');
+            adjustPauseBetweenWords(0.5);
+            speak(`Pause increased to ${settings.pauseBetweenWords} seconds`);
         }
         else if (transcript.includes('pause less')) {
-            console.log('PAUSE LESS command detected');
-            const oldPause = settings.pauseBetweenWords;
-            settings.pauseBetweenWords = Math.max(0, settings.pauseBetweenWords - 0.5);
-            updatePauseBetweenWords(settings.pauseBetweenWords);
-            console.log(`Pause changed from ${oldPause} to ${settings.pauseBetweenWords}`);
-            speak(`Pause between words decreased to ${settings.pauseBetweenWords} seconds`);
+            console.log('=== PAUSE LESS COMMAND ===');
+            adjustPauseBetweenWords(-0.5);
+            speak(`Pause decreased to ${settings.pauseBetweenWords} seconds`);
         }
         else if (transcript.includes('turn off voice command speech')) {
             settings.speakVoiceCommands = false;
@@ -1172,28 +1081,43 @@
     }
 
     function adjustSpeechSpeed(change) {
+        console.log('Adjusting speech speed by:', change);
+        console.log('Current speed:', settings.speechSpeed);
+        
+        const oldValue = settings.speechSpeed;
         settings.speechSpeed = Math.max(0.5, Math.min(2.0, settings.speechSpeed + change));
-        updateSpeechSpeed(settings.speechSpeed);
+        
+        console.log('New speed:', settings.speechSpeed);
+        
+        // Force update the UI slider
+        const speedSlider = document.getElementById('speechSpeedSlider');
+        if (speedSlider) {
+            speedSlider.value = settings.speechSpeed;
+            updateSpeechSpeed(settings.speechSpeed);
+        }
+        
+        console.log('Speech speed changed from', oldValue, 'to', settings.speechSpeed);
+        saveSettings();
     }
 
     function adjustPauseBetweenWords(change) {
         console.log('Adjusting pause between words by:', change);
-        console.log('Current value:', settings.pauseBetweenWords);
+        console.log('Current pause:', settings.pauseBetweenWords);
         
         const oldValue = settings.pauseBetweenWords;
-        settings.pauseBetweenWords = Math.max(0, Math.min(2.0, settings.pauseBetweenWords + change));
+        settings.pauseBetweenWords = Math.max(0, Math.min(5.0, settings.pauseBetweenWords + change));
         
-        console.log('New value:', settings.pauseBetweenWords);
+        console.log('New pause:', settings.pauseBetweenWords);
         
-        // Force update the UI
+        // Force update the UI slider
         const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
         if (pauseSlider) {
             pauseSlider.value = settings.pauseBetweenWords;
+            updatePauseBetweenWords(settings.pauseBetweenWords);
         }
         
-        updatePauseBetweenWords(settings.pauseBetweenWords);
-        
         console.log('Pause between words changed from', oldValue, 'to', settings.pauseBetweenWords);
+        saveSettings();
     }
 
     function speak(text, useWordPauses = false) {
