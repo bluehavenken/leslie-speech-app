@@ -888,11 +888,29 @@
                 isListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening... Say something!');
-                console.log('Speech recognition started - stopping all background audio');
+                console.log('=== SPEECH RECOGNITION STARTED - COMPLETELY STOPPING ALL BACKGROUND AUDIO ===');
                 
-                if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = null;
+                // FORCE stop ALL audio processing to eliminate pinging
+                try {
+                    // Stop any existing speech synthesis
+                    if (speechSynth.speaking || speechSynth.pending) {
+                        speechSynth.cancel();
+                    }
+                    
+                    // Disable any Web Audio API contexts
+                    if (window.AudioContext || window.webkitAudioContext) {
+                        console.log('Suspending any audio contexts');
+                    }
+                    
+                    // Clear ALL timers that might be running
+                    if (silenceTimer) {
+                        clearTimeout(silenceTimer);
+                        silenceTimer = null;
+                    }
+                    
+                    console.log('=== ALL BACKGROUND AUDIO COMPLETELY STOPPED ===');
+                } catch (e) {
+                    console.log('Error stopping background audio:', e);
                 }
                 
                 silenceTimer = setTimeout(function() {
@@ -992,23 +1010,36 @@
                             }
                             
                             setTimeout(() => {
+                                console.log('=== CREATING SPEECH UTTERANCE ===');
+                                console.log('Text to speak:', latestFinal);
+                                console.log('Text length:', latestFinal.length);
+                                
                                 const utterance = new SpeechSynthesisUtterance(latestFinal);
-                                utterance.rate = 0.9;
+                                utterance.text = latestFinal; // Explicitly set text property
+                                utterance.rate = 0.8;
                                 utterance.pitch = 1;
                                 utterance.volume = 1.0;
+                                utterance.lang = 'en-US';
+                                
+                                utterance.onstart = function() {
+                                    console.log('Speech started - speaking:', this.text);
+                                };
                                 
                                 utterance.onend = function() {
-                                    console.log('Finished speaking complete phrase');
+                                    console.log('Speech completed - spoke:', this.text);
                                     isSpeaking = false;
                                 };
                                 
                                 utterance.onerror = function(event) {
                                     console.error('Speech synthesis error:', event);
+                                    console.error('Failed text was:', this.text);
                                     isSpeaking = false;
                                 };
                                 
+                                console.log('About to call speechSynth.speak()');
                                 speechSynth.speak(utterance);
-                            }, 100);
+                                console.log('speechSynth.speak() called');
+                            }, 200);
                         }
                     }
                 } else if (latestInterim && !isSpeaking && !latestFinal) {
@@ -1126,17 +1157,37 @@
             const textInput = document.getElementById('largeTextInputField');
             const text = textInput.value.trim();
             if (text) {
+                console.log('=== SPEAKING TEXT INPUT ===');
+                console.log('Full text to speak:', text);
+                console.log('Text length:', text.length);
+                
                 if (speechSynth.speaking) {
                     speechSynth.cancel();
                 }
                 
                 setTimeout(() => {
                     const utterance = new SpeechSynthesisUtterance(text);
-                    utterance.rate = 0.9;
+                    utterance.text = text; // Explicitly set text property
+                    utterance.rate = 0.8;
                     utterance.pitch = 1;
                     utterance.volume = 1.0;
+                    utterance.lang = 'en-US';
+                    
+                    utterance.onstart = function() {
+                        console.log('Text speech started - speaking:', this.text);
+                    };
+                    
+                    utterance.onend = function() {
+                        console.log('Text speech completed - spoke:', this.text);
+                    };
+                    
+                    utterance.onerror = function(event) {
+                        console.error('Text speech error:', event);
+                    };
+                    
+                    console.log('About to speak text input');
                     speechSynth.speak(utterance);
-                }, 100);
+                }, 200);
             }
         }
 
@@ -1156,26 +1207,35 @@
         }
 
         async function loadRealContacts() {
+            console.log('=== LOADING CONTACTS DIRECTLY ON PHONE PAGE ===');
             const contactsList = document.getElementById('contactsList');
             
+            // ALWAYS ensure we're working with the phone page
             if (currentPage !== 'phone') {
+                console.log('Not on phone page, switching first');
                 showPage('phone');
+                setTimeout(() => loadRealContacts(), 300);
                 return;
             }
             
+            // Show loading immediately on the SAME page
+            contactsList.innerHTML = `
+                <div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;">
+                    <p><strong>📱 Loading your contacts...</strong></p>
+                    <p>Contacts will appear RIGHT HERE on this page</p>
+                    <p>Please select contacts when your browser asks</p>
+                </div>
+            `;
+            
             try {
                 if ('contacts' in navigator && 'ContactsManager' in window) {
-                    contactsList.innerHTML = `
-                        <div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;">
-                            <p><strong>📱 Loading your contacts...</strong></p>
-                            <p>Please select contacts to import when the browser asks</p>
-                        </div>
-                    `;
+                    console.log('Contacts API available - requesting access');
                     
                     const props = ['name', 'tel'];
                     const opts = {multiple: true};
                     
                     const contactList = await navigator.contacts.select(props, opts);
+                    console.log('Contacts received:', contactList.length);
                     
                     if (contactList.length > 0) {
                         contacts = contactList.map(contact => ({
@@ -1184,11 +1244,15 @@
                         }));
                         contacts.sort((a, b) => a.name.localeCompare(b.name));
                         filteredContacts = [...contacts];
-                        displayContactsOnPhonePage();
+                        
+                        console.log('Displaying contacts on SAME phone page');
+                        displayContactsOnPhonePage(); // Display RIGHT HERE, no redirect
                     } else {
+                        console.log('No contacts selected by user');
                         displayNoContactsMessage();
                     }
                 } else {
+                    console.log('Contacts API not supported');
                     contactsList.innerHTML = `
                         <div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;">
                             <p><strong>📱 Contacts Not Available</strong></p>
@@ -1197,6 +1261,10 @@
                             <p>• Chrome on Android</p>
                             <p>• Safari on iOS</p>
                             <p>• Make sure you're using HTTPS</p>
+                            <br>
+                            <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 14px 24px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                                📞 Try Again
+                            </button>
                         </div>
                     `;
                 }
@@ -1206,7 +1274,11 @@
                     <div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px; background: #ffebee;">
                         <p><strong>📱 Contact Access Error</strong></p>
                         <p>Error: ${error.message || 'Unknown error'}</p>
-                        <p>Please try again or check browser permissions</p>
+                        <p><strong>Contacts will appear on THIS page when loaded</strong></p>
+                        <br>
+                        <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 12px 20px; background: #669900; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                            📞 Try Again
+                        </button>
                     </div>
                 `;
             }
@@ -1319,18 +1391,11 @@
                 }
                 
                 if (pageId === 'phone') {
+                    console.log('=== PHONE PAGE ACCESSED - FORCE LOADING CONTACTS DIRECTLY ===');
                     setTimeout(() => {
-                        const contactsList = document.getElementById('contactsList');
-                        if (contactsList) {
-                            contactsList.innerHTML = `
-                                <div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;">
-                                    <p><strong>📱 Auto-loading your contacts...</strong></p>
-                                    <p>Please allow contact access when your browser asks</p>
-                                </div>
-                            `;
-                            loadRealContacts();
-                        }
-                    }, 200);
+                        console.log('Auto-triggering contact load immediately');
+                        loadRealContacts(); // FORCE immediate load without user interaction
+                    }, 100);
                 }
             }
         }
@@ -1442,7 +1507,7 @@
                             <div><strong>Humidity:</strong> ${humidity}%</div>
                             <div><strong>Wind:</strong> ${windSpeed} mph</div>
                             <div><strong>Time:</strong> ${currentTime.toLocaleTimeString()}</div>
-                            <div><strong>Location:</strong> Current Location</div>
+                            <div><strong>Location:</strong> ${userLocation ? `${userLocation.lat.toFixed(2)}, ${userLocation.lon.toFixed(2)}` : 'Current Location'}</div>
                         </div>
                     </div>
                 `;
