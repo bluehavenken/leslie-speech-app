@@ -853,7 +853,35 @@
         console.log('Leslie Speech Assistant initialized successfully!');
     }
 
-    let micPermissionRequested = false;
+    // FORCE CONTACTS TO LOAD DIRECTLY ON PHONE PAGE
+    function autoLoadContactsOnPhonePage() {
+        console.log('Auto-loading contacts directly on phone page');
+        const contactsList = document.getElementById('contactsList');
+        
+        if (!contactsList) {
+            console.error('Contacts list not found on phone page!');
+            return;
+        }
+        
+        // Show immediate loading message
+        contactsList.innerHTML = `
+            <div style="padding: 20px; text-align: center; color: #669900; border: 2px solid #669900; border-radius: 8px; background-color: #f8f9fa;">
+                <p><strong>📱 Ready to Load Your Contacts</strong></p>
+                <p>Your contacts will be displayed right here on this page for easy searching</p>
+                <br>
+                <button onclick="loadRealContacts()" style="margin-top: 10px; padding: 14px 24px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                    📞 Load Your Contacts Here
+                </button>
+                <p style="margin-top: 12px; font-size: 12px; color: #666;">
+                    Contacts will appear directly on this page for searching
+                </p>
+            </div>
+        `;
+        
+        console.log('Phone page contact loading area set up');
+    }
+
+    // Disable all microphone permission requests and voice command setup
     function requestMicrophonePermissionOnce() {
         if (!micPermissionRequested && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             micPermissionRequested = true;
@@ -861,8 +889,8 @@
                 .then(function(stream) {
                     microphonePermissionGranted = true;
                     stream.getTracks().forEach(track => track.stop());
-                    console.log('Microphone permission granted - NO voice commands to prevent pinging');
-                    // DO NOT START VOICE COMMANDS - ELIMINATES ALL PINGING
+                    console.log('Microphone permission granted - NO voice commands (prevents pinging)');
+                    // NEVER START VOICE COMMANDS - ELIMINATES ALL PINGING
                 })
                 .catch(function(error) {
                     microphonePermissionGranted = false;
@@ -934,66 +962,17 @@
         }
     }
 
-    // --- VOICE COMMANDS COMPLETELY DISABLED TO ELIMINATE ALL PINGING ---
+    // --- COMPLETELY ELIMINATE ALL VOICE COMMANDS AND BACKGROUND AUDIO ---
     function setupVoiceCommandListener() {
-        // COMPLETELY DISABLED TO STOP ALL PINGING
-        console.log('Voice commands disabled to prevent pinging');
+        // PERMANENTLY DISABLED - NO VOICE COMMANDS AT ALL
+        console.log('Voice commands PERMANENTLY DISABLED to eliminate all pinging');
         return;
     }
 
     function processVoiceCommand(transcript) {
-        console.log('Processing voice command:', transcript);
-        
-        // Navigation commands
-        if (transcript.includes('start talking')) {
-            startTalkingFromHome();
-            speak('Starting speech recognition');
-        }
-        else if (transcript.includes('start texting')) {
-            showPage('textInput');
-            speak('Opening text input page');
-        }
-        else if (transcript.includes('home')) {
-            showPage('home');
-            speak('Going to home page');
-        }
-        else if (transcript.includes('help')) {
-            showPage('commands');
-            speak('Showing Leslie commands');
-        }
-        // Weather commands
-        else if (transcript.includes('current weather') || (transcript.includes('weather') && !transcript.includes('forecast'))) {
-            showCurrentWeather();
-            speak('Showing current weather');
-        }
-        else if (transcript.includes('7 day') || transcript.includes('seven day') || transcript.includes('weekly')) {
-            showWeeklyWeather();
-            speak('Showing 7 day forecast');
-        }
-        else if (transcript.includes('hourly')) {
-            showHourlyWeather();
-            speak('Showing hourly forecast');
-        }
-        else if (transcript.includes('close weather') || transcript.includes('close')) {
-            hideWeather();
-            speak('Closing weather display');
-        }
-        // Phone commands
-        else if (transcript.includes('call ')) {
-            const callMatch = transcript.match(/call\s+(.+)/);
-            if (callMatch) {
-                const nameOrNumber = callMatch[1].trim();
-                handleCallCommand(nameOrNumber);
-            }
-        }
-        // Recognition commands
-        else if (transcript.includes('clear text')) {
-            clearSpeechText();
-            speak('Text cleared');
-        }
-        else {
-            speak('I heard you, but didn\'t understand the command. Say Hey Leslie help for available commands.');
-        }
+        // PERMANENTLY DISABLED
+        console.log('Voice commands disabled');
+        return;
     }
 
     function handleCallCommand(nameOrNumber) {
@@ -1018,14 +997,21 @@
 
     function speak(text, useWordPauses = false) {
         if (settings.speakVoiceCommands && text.trim()) {
-            speechSynth.cancel();
+            console.log('=== SPEAKING COMPLETE PHRASE ===');
+            console.log('Full text to speak:', text);
+            console.log('Use word pauses:', useWordPauses);
+            
+            speechSynth.cancel(); // Stop any current speech
             
             if (useWordPauses && settings.pauseBetweenWords > 0) {
+                console.log('Speaking with word pauses...');
                 const words = text.split(' ');
+                console.log('Words to speak:', words);
                 let wordIndex = 0;
                 
                 function speakNextWord() {
                     if (wordIndex < words.length) {
+                        console.log(`Speaking word ${wordIndex + 1}/${words.length}: "${words[wordIndex]}"`);
                         const utterance = new SpeechSynthesisUtterance(words[wordIndex]);
                         utterance.rate = settings.speechSpeed;
                         utterance.pitch = 1;
@@ -1034,8 +1020,15 @@
                         utterance.onend = function() {
                             wordIndex++;
                             if (wordIndex < words.length) {
+                                console.log(`Pausing ${settings.pauseBetweenWords} seconds before next word`);
                                 setTimeout(speakNextWord, settings.pauseBetweenWords * 1000);
+                            } else {
+                                console.log('=== FINISHED SPEAKING ALL WORDS ===');
                             }
+                        };
+                        
+                        utterance.onerror = function(e) {
+                            console.error('Speech error:', e);
                         };
                         
                         speechSynth.speak(utterance);
@@ -1044,12 +1037,24 @@
                 
                 speakNextWord();
             } else {
+                console.log('Speaking without word pauses...');
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.rate = settings.speechSpeed;
                 utterance.pitch = 1;
                 utterance.volume = 0.8;
+                
+                utterance.onend = function() {
+                    console.log('=== FINISHED SPEAKING COMPLETE PHRASE ===');
+                };
+                
+                utterance.onerror = function(e) {
+                    console.error('Speech error:', e);
+                };
+                
                 speechSynth.speak(utterance);
             }
+        } else {
+            console.log('Speech disabled or empty text');
         }
     }
 
@@ -1090,37 +1095,19 @@
             updateListenButton();
             updateStatus('🎤 Listening... Say something!');
             
-            console.log('=== SPEECH RECOGNITION STARTED ===');
-            console.log('STOPPING ALL BACKGROUND AUDIO TO ELIMINATE PINGING');
+            console.log('=== SPEECH RECOGNITION STARTED - ELIMINATING ALL PINGING ===');
             
-            // NUCLEAR OPTION: Destroy ALL audio recognition objects
-            if (voiceCommandRecognition) {
-                try { 
-                    voiceCommandRecognition.stop();
-                    voiceCommandRecognition.abort();
-                    voiceCommandRecognition.onstart = null;
-                    voiceCommandRecognition.onend = null;
-                    voiceCommandRecognition.onerror = null;
-                    voiceCommandRecognition.onresult = null;
-                } catch (e) {}
-                voiceCommandRecognition = null;
-                console.log('Voice command recognition DESTROYED');
-            }
-            
+            // DESTROY ALL VOICE COMMAND OBJECTS AND TIMERS
+            voiceCommandRecognition = null;
             voiceCommandActive = false;
+            voiceCommandReconnectTimer = null;
             
-            // Clear ALL timers that could restart audio
-            if (voiceCommandReconnectTimer) {
-                clearTimeout(voiceCommandReconnectTimer);
-                voiceCommandReconnectTimer = null;
-                console.log('Voice command timers CLEARED');
+            // Clear ALL possible timers
+            for (let i = 1; i < 99999; i++) {
+                window.clearTimeout(i);
             }
             
-            // Clear any other potential audio timers
-            if (window.audioTimer) {
-                clearTimeout(window.audioTimer);
-                window.audioTimer = null;
-            }
+            console.log('ALL TIMERS AND VOICE COMMANDS DESTROYED');
             
             // Start silence timer
             silenceTimer = setTimeout(function() {
@@ -1129,8 +1116,6 @@
                     updateStatus('Stopped listening due to 3 minutes of silence');
                 }
             }, 3 * 60 * 1000);
-            
-            console.log('=== ALL BACKGROUND AUDIO ELIMINATED ===');
         };
 
         recognition.onend = function() {
