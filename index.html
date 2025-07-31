@@ -938,7 +938,7 @@
         voiceCommandRecognition.continuous = true;
         voiceCommandRecognition.interimResults = false;
         voiceCommandRecognition.lang = 'en-US';
-        voiceCommandRecognition.maxAlternatives = 3; // Increase alternatives for better recognition
+        voiceCommandRecognition.maxAlternatives = 5; // More alternatives for better recognition
 
         voiceCommandRecognition.onstart = function() {
             voiceCommandActive = true;
@@ -948,10 +948,11 @@
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 if (event.results[i].isFinal) {
                     // Try all alternatives for better command recognition
-                    for (let j = 0; j < event.results[i].length; j++) {
+                    for (let j = 0; j < Math.min(event.results[i].length, 3); j++) {
                         const transcript = event.results[i][j].transcript.toLowerCase().trim();
-                        console.log(`Voice command heard (alt ${j}):`, transcript);
+                        console.log(`Voice command attempt ${j + 1}:`, transcript);
                         if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
+                            console.log('Processing voice command:', transcript);
                             processVoiceCommand(transcript);
                             return; // Stop after first successful match
                         }
@@ -964,14 +965,14 @@
             console.log('Voice command error:', event.error);
             voiceCommandActive = false;
             if (event.error !== 'not-allowed' && event.error !== 'aborted') {
-                setTimeout(startVoiceCommandListening, 1000); // Faster restart
+                setTimeout(startVoiceCommandListening, 500); // Very fast restart
             }
         };
 
         voiceCommandRecognition.onend = function() {
             voiceCommandActive = false;
             if (currentPage !== 'speech' || !isListening) {
-                setTimeout(startVoiceCommandListening, 500); // Even faster restart
+                setTimeout(startVoiceCommandListening, 200); // Very fast restart
             }
         };
 
@@ -982,19 +983,19 @@
                     console.log('Voice command listener started');
                 } catch (error) {
                     console.log('Voice command start error:', error);
-                    setTimeout(startVoiceCommandListening, 2000);
+                    setTimeout(startVoiceCommandListening, 1000);
                 }
             }
         }
 
         startVoiceCommandListening();
         
-        // More frequent restart attempts
+        // More frequent restart attempts to prevent the 5-second pinging
         setInterval(() => {
             if (!voiceCommandActive && (currentPage !== 'speech' || !isListening)) {
                 startVoiceCommandListening();
             }
-        }, 10000); // Every 10 seconds for better reliability
+        }, 5000); // Every 5 seconds but with faster individual restarts
     }
 
     function processVoiceCommand(transcript) {
@@ -1710,12 +1711,26 @@
         const weatherTitle = document.getElementById('weatherTitle');
         const weatherContent = document.getElementById('weatherContent');
         
-        // Set up display immediately with proper size
+        // Set up display immediately at full size to prevent small box
+        weatherDisplay.style.width = 'auto';
+        weatherDisplay.style.height = 'auto';
+        weatherDisplay.style.minWidth = '500px';
+        weatherDisplay.style.minHeight = '300px';
+        
         weatherTitle.textContent = 'Current Weather';
         weatherContent.innerHTML = `
-            <div style="text-align: center; margin: 0 auto 16px auto; max-width: 600px; min-width: 400px; padding: 20px;">
-                <div style="font-size: 18px; color: #0099cc; margin-bottom: 16px;">Loading weather data...</div>
+            <div style="text-align: center; margin: 0 auto; padding: 40px; min-width: 450px; min-height: 200px;">
+                <div style="font-size: 20px; color: #0099cc; margin-bottom: 16px;">
+                    <div style="display: inline-block; width: 20px; height: 20px; border: 3px solid #0099cc; border-top: 3px solid transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                    Loading weather data...
+                </div>
             </div>
+            <style>
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
         `;
         weatherDisplay.classList.remove('hidden');
         
@@ -1725,7 +1740,6 @@
                 lat = userLocation.lat;
                 lon = userLocation.lon;
             } else {
-                // Default to user's approximate location
                 lat = 40.7128;
                 lon = -74.0060;
             }
@@ -1741,29 +1755,31 @@
                 day: 'numeric'
             });
             
-            const temperature = Math.round(data.current.temperature_2m * 9/5 + 32); // Convert C to F
+            const temperature = Math.round(data.current.temperature_2m * 9/5 + 32);
             const humidity = data.current.relative_humidity_2m;
-            const windSpeed = Math.round(data.current.wind_speed_10m * 0.621371); // Convert km/h to mph
+            const windSpeed = Math.round(data.current.wind_speed_10m * 0.621371);
             const conditions = getWeatherDescription(data.current.weather_code);
             
             weatherContent.innerHTML = `
-                <div style="text-align: center; margin: 0 auto 16px auto; max-width: 600px; min-width: 400px;">
-                    <div style="font-size: 16px; color: #666; margin-bottom: 12px; text-align: center;">${dateString}</div>
-                    <div style="font-size: 32px; font-weight: bold; color: #0099cc; text-align: center;">${temperature}°F</div>
-                    <div style="font-size: 20px; font-weight: bold; margin: 8px 0; text-align: center;">${conditions}</div>
-                </div>
-                <div style="line-height: 1.8; max-width: 600px; min-width: 400px; margin: 0 auto;">
-                    <strong>Humidity:</strong> ${humidity}%<br>
-                    <strong>Wind:</strong> ${windSpeed} mph<br>
-                    <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
-                    <strong>Location:</strong> Current Location (${lat.toFixed(2)}, ${lon.toFixed(2)})<br>
+                <div style="min-width: 450px; min-height: 200px; padding: 20px;">
+                    <div style="text-align: center; margin: 0 auto 20px auto;">
+                        <div style="font-size: 18px; color: #666; margin-bottom: 16px; text-align: center; font-weight: bold;">${dateString}</div>
+                        <div style="font-size: 36px; font-weight: bold; color: #0099cc; text-align: center; margin-bottom: 8px;">${temperature}°F</div>
+                        <div style="font-size: 22px; font-weight: bold; margin: 12px 0; text-align: center; color: #333;">${conditions}</div>
+                    </div>
+                    <div style="line-height: 2; font-size: 16px; text-align: left; max-width: 400px; margin: 0 auto;">
+                        <strong>Humidity:</strong> ${humidity}%<br>
+                        <strong>Wind:</strong> ${windSpeed} mph<br>
+                        <strong>Time:</strong> ${currentTime.toLocaleTimeString()}<br>
+                        <strong>Location:</strong> Current Location<br>
+                    </div>
                 </div>
             `;
         } catch (error) {
             console.error('Weather fetch error:', error);
             weatherContent.innerHTML = `
-                <div style="text-align: center; margin: 0 auto; max-width: 600px; min-width: 400px; padding: 20px;">
-                    <div style="color: #cc0000;">Unable to load weather data. Please check your internet connection.</div>
+                <div style="text-align: center; margin: 0 auto; padding: 40px; min-width: 450px; min-height: 200px;">
+                    <div style="color: #cc0000; font-size: 18px;">Unable to load weather data. Please check your internet connection.</div>
                 </div>
             `;
         }
