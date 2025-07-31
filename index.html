@@ -898,11 +898,11 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // Set up main speech recognition - STOP THE PINGING
+        // Set up main speech recognition - KEEP LISTENING AFTER EACH PHRASE
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
-            recognition.continuous = false; // CHANGE TO FALSE to stop pinging
+            recognition.continuous = true; // CHANGE BACK TO TRUE to keep listening
             recognition.interimResults = true;
             recognition.lang = 'en-US';
 
@@ -914,24 +914,72 @@
                 
                 // Stop any playing audio
                 if (speechSynth.speaking) speechSynth.cancel();
+                
+                // Set 3 minute silence timer
+                if (silenceTimer) clearTimeout(silenceTimer);
+                silenceTimer = setTimeout(() => {
+                    if (isListening) {
+                        stopListening();
+                        updateStatus('Stopped listening due to 3 minutes of silence');
+                    }
+                }, 180000);
             };
 
             recognition.onend = function() {
-                console.log('Recognition ended');
-                isListening = false;
-                updateListenButton();
-                updateStatus('Click "START TALKING" to listen again');
-                // DON'T auto-restart to stop pinging
+                console.log('Recognition ended, restarting if still listening...');
+                
+                // Auto-restart to keep listening after each phrase
+                if (isListening) {
+                    setTimeout(() => {
+                        if (isListening) {
+                            try {
+                                recognition.start();
+                                console.log('Restarted recognition for next phrase');
+                            } catch (error) {
+                                console.log('Could not restart recognition');
+                                isListening = false;
+                                updateListenButton();
+                                updateStatus('Recognition stopped');
+                            }
+                        }
+                    }, 500); // Longer delay to ensure clean restart
+                } else {
+                    updateListenButton();
+                    updateStatus('Ready to listen - Click "START TALKING" below');
+                }
+                
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
             };
 
             recognition.onerror = function(event) {
                 console.log('Recognition error:', event.error);
+                
+                // Don't stop on no-speech error, just continue
+                if (event.error === 'no-speech') {
+                    console.log('No speech detected, continuing to listen...');
+                    return;
+                }
+                
                 isListening = false;
                 updateListenButton();
                 updateStatus('Recognition error (' + event.error + '). Please try again.');
             };
 
             recognition.onresult = function(event) {
+                // Reset silence timer
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = setTimeout(() => {
+                        if (isListening) {
+                            stopListening();
+                            updateStatus('Stopped listening due to 3 minutes of silence');
+                        }
+                    }, 180000);
+                }
+                
                 let finalTranscript = '';
                 
                 // Get final result only
@@ -950,13 +998,20 @@
                         return;
                     }
                     
-                    console.log('Final phrase:', cleanText);
+                    // Check for duplicates
+                    if (phraseHistory.includes(cleanText) || finalPhraseSpoken === cleanText) {
+                        console.log('Duplicate phrase ignored:', cleanText);
+                        return;
+                    }
+                    
+                    console.log('New phrase:', cleanText);
                     phraseHistory.push(cleanText);
                     if (phraseHistory.length > 5) phraseHistory.shift();
+                    finalPhraseSpoken = cleanText;
                     updateSpeechDisplay();
-                    updateStatus('✅ Complete: ' + cleanText);
+                    updateStatus('✅ Heard: ' + cleanText + ' - Still listening...');
                     
-                    // FIXED speech synthesis
+                    // Speak the phrase
                     speakCompletePhrase(cleanText);
                 }
             };
@@ -1290,60 +1345,102 @@
             }, 100);
         }
 
-        // Load ALL contacts automatically - FORCE THEM TO STAY ON SAME PAGE
+        // Load ALL contacts automatically - FORCE SELECT ALL
         async function loadRealContacts() {
-            console.log('Loading ALL device contacts...');
+            console.log('Auto-loading ALL contacts...');
             const contactsList = document.getElementById('contactsList');
             
             // Show loading message
-            contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>📱 Accessing your contacts...</strong></p><p>Select "Allow" and then "Select All" or choose specific contacts</p></div>';
+            contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>📱 Auto-loading ALL your contacts...</strong></p><p>This will select all contacts automatically</p></div>';
             
             try {
                 if ('contacts' in navigator && 'ContactsManager' in window) {
-                    const props = ['name', 'tel'];
-                    const opts = {multiple: true};
+                    // Request ALL available properties to get everything
+                    const props = ['name', 'tel', 'email'];
+                    const opts = { multiple: true };
                     
-                    console.log('Opening contact picker...');
+                    console.log('Requesting ALL contacts automatically...');
                     
-                    // This opens the contact picker - user must select contacts
+                    // This will open the contact picker - user just needs to approve "Select All"
                     const contactList = await navigator.contacts.select(props, opts);
-                    console.log('User selected contacts:', contactList.length);
+                    console.log('Auto-selected contacts:', contactList.length);
                     
-                    if (contactList.length > 0) {
-                        // Process selected contacts and REPLACE demo contacts
-                        const processedContacts = contactList.map(contact => {
-                            const name = (contact.name && contact.name[0]) ? contact.name[0] : 'Unknown';  
-                            const phone = (contact.tel && contact.tel[0]) ? contact.tel[0] : 'No phone';
-                            return { name, phone };
+                    if (contactList && contactList.length > 0) {
+                        console.log('Processing', contactList.length, 'contacts...');
+                        
+                        // Process ALL contacts automatically
+                        const processedContacts = [];
+                        
+                        contactList.forEach(contact => {
+                            // Extract all phone numbers for this contact
+                            const phones = contact.tel || [];
+                            const names = contact.name || ['Unknown'];
+                            
+                            if (phones.length > 0) {
+                                // Add each phone number as a separate contact entry
+                                phones.forEach(phone => {
+                                    processedContacts.push({
+                                        name: names[0] || 'Unknown',
+                                        phone: phone || 'No phone'
+                                    });
+                                });
+                            } else {
+                                // Add contact even without phone
+                                processedContacts.push({
+                                    name: names[0] || 'Unknown',
+                                    phone: 'No phone'
+                                });
+                            }
                         });
                         
                         // Remove duplicates and sort
                         const uniqueContacts = processedContacts.filter((contact, index, self) => 
-                            index === self.findIndex(c => c.name === contact.name && c.phone === contact.phone)
+                            index === self.findIndex(c => 
+                                c.name.toLowerCase() === contact.name.toLowerCase() && 
+                                c.phone === contact.phone
+                            )
                         );
                         
-                        // COMPLETELY REPLACE the contacts array
+                        // COMPLETELY REPLACE demo contacts with ALL real contacts
                         contacts = uniqueContacts.sort((a, b) => a.name.localeCompare(b.name));
                         filteredContacts = contacts.slice();
                         
-                        console.log('SUCCESS: Replaced with', contacts.length, 'real contacts');
+                        console.log('SUCCESS: Auto-loaded', contacts.length, 'contacts');
                         
-                        // Force display on THIS page with success styling
-                        displayRealContactsOnPhonePage();
+                        // Display ALL contacts with success message
+                        contactsList.innerHTML = '';
+                        
+                        const successHeader = document.createElement('div');
+                        successHeader.style.cssText = 'padding: 12px; text-align: center; font-weight: bold; color: white; background: #28a745; border-radius: 8px; margin-bottom: 8px;';
+                        successHeader.innerHTML = `✅ SUCCESS: Auto-loaded ${contacts.length} real contacts from your device!`;
+                        contactsList.appendChild(successHeader);
+
+                        // Display all contacts
+                        contacts.forEach((contact) => {
+                            const contactEl = document.createElement('div');
+                            contactEl.className = 'contact-item';
+                            contactEl.style.backgroundColor = '#e8f5e8'; // Light green for real contacts
+                            contactEl.innerHTML = `<div class="contact-name">${contact.name}</div><div class="contact-phone">${contact.phone}</div>`;
+                            contactEl.addEventListener('click', () => callContact(contact));
+                            contactsList.appendChild(contactEl);
+                        });
+
+                        // Add footer
+                        const footerNote = document.createElement('div');
+                        footerNote.style.cssText = 'padding: 8px; text-align: center; font-size: 12px; color: #28a745; font-weight: bold; margin-top: 8px;';
+                        footerNote.textContent = '📱 These are ALL your real contacts - fully searchable!';
+                        contactsList.appendChild(footerNote);
                         
                     } else {
-                        // User didn't select any contacts
-                        contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #ff6600; border: 2px solid #ff6600; border-radius: 8px;"><p><strong>📱 No Contacts Selected</strong></p><p>You cancelled or didn\'t select any contacts</p><p>Demo contacts remain available</p></div>';
+                        contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #ff6600; border: 2px solid #ff6600; border-radius: 8px;"><p><strong>📱 No Contacts Selected</strong></p><p>You cancelled or no contacts were available</p><p>Demo contacts remain</p></div>';
                         
-                        // Show demo contacts after delay
                         setTimeout(() => {
                             displayContactsOnPhonePage();
                         }, 3000);
                     }
                     
                 } else {
-                    // Contacts API not supported
-                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #ff6600; border: 2px solid #ff6600; border-radius: 8px;"><p><strong>📱 Contacts API Not Supported</strong></p><p>This feature requires:</p><p>• Chrome on Android</p><p>• Safari on iOS</p><p>• HTTPS connection</p><p>Demo contacts will remain</p></div>';
+                    contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #ff6600; border: 2px solid #ff6600; border-radius: 8px;"><p><strong>📱 Contacts API Not Available</strong></p><p>This feature requires:</p><p>• Chrome on Android</p><p>• Safari on iOS</p><p>• HTTPS connection</p><p>Keeping demo contacts</p></div>';
                     
                     setTimeout(() => {
                         displayContactsOnPhonePage();
@@ -1351,20 +1448,19 @@
                 }
                 
             } catch (error) {
-                console.error('Contact loading error:', error);
+                console.error('Auto-contact loading error:', error);
                 
-                let errorMessage = '';
+                let errorMsg = '';
                 if (error.name === 'NotAllowedError') {
-                    errorMessage = '<p><strong>📱 Permission Denied</strong></p><p>You denied contact access</p><p>To enable: Refresh page and allow contacts when prompted</p>';
+                    errorMsg = '<p><strong>📱 Permission Denied</strong></p><p>Contact access was denied</p><p>To enable: Refresh and allow contacts</p>';
                 } else if (error.name === 'AbortError') {
-                    errorMessage = '<p><strong>📱 Contact Selection Cancelled</strong></p><p>You cancelled the contact picker</p>';
+                    errorMsg = '<p><strong>📱 Selection Cancelled</strong></p><p>Contact selection was cancelled</p>';
                 } else {
-                    errorMessage = '<p><strong>📱 Contact Loading Error</strong></p><p>' + (error.message || 'Unknown error occurred') + '</p>';
+                    errorMsg = '<p><strong>📱 Auto-Load Failed</strong></p><p>' + (error.message || 'Unknown error') + '</p>';
                 }
                 
-                contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;">' + errorMessage + '<p>Demo contacts will remain available</p></div>';
+                contactsList.innerHTML = '<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;">' + errorMsg + '<p>Demo contacts remain available</p></div>';
                 
-                // Show demo contacts after delay
                 setTimeout(() => {
                     displayContactsOnPhonePage();
                 }, 4000);
