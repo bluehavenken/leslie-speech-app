@@ -847,7 +847,7 @@
         updateEnhancedSectionVisibility();
         updateTextSpeakButton();
         
-        // Request microphone permission on first interaction - but don't start voice commands automatically
+        // Request microphone permission on first interaction - NO VOICE COMMANDS
         document.addEventListener('click', requestMicrophonePermissionOnce, { once: true });
         
         console.log('Leslie Speech Assistant initialized successfully!');
@@ -861,17 +861,12 @@
                 .then(function(stream) {
                     microphonePermissionGranted = true;
                     stream.getTracks().forEach(track => track.stop());
-                    console.log('Microphone permission granted - Voice commands available');
-                    // Start voice commands with delay and only if not on speech page
-                    setTimeout(() => {
-                        if (currentPage !== 'speech' && !isListening) {
-                            setupVoiceCommandListener();
-                        }
-                    }, 2000);
+                    console.log('Microphone permission granted - NO voice commands to prevent pinging');
+                    // DO NOT START VOICE COMMANDS - ELIMINATES ALL PINGING
                 })
                 .catch(function(error) {
                     microphonePermissionGranted = false;
-                    console.log('Microphone permission not granted - Voice commands disabled');
+                    console.log('Microphone permission not granted');
                 });
         }
     }
@@ -939,86 +934,11 @@
         }
     }
 
-    // --- VOICE COMMAND SETUP WITH SMART PINGING REDUCTION ---
+    // --- VOICE COMMANDS COMPLETELY DISABLED TO ELIMINATE ALL PINGING ---
     function setupVoiceCommandListener() {
-        // Only start if we have permission and we're not already active
-        if (!microphonePermissionGranted || voiceCommandActive || currentPage === 'speech' || isListening) {
-            return;
-        }
-        
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return;
-
-        try {
-            // Clean up existing recognition
-            if (voiceCommandRecognition) {
-                try {
-                    voiceCommandRecognition.stop();
-                    voiceCommandRecognition.abort();
-                } catch (e) {}
-                voiceCommandRecognition = null;
-            }
-
-            voiceCommandRecognition = new SpeechRecognition();
-            voiceCommandRecognition.continuous = false; // Changed to false to reduce pinging
-            voiceCommandRecognition.interimResults = false;
-            voiceCommandRecognition.lang = 'en-US';
-
-            voiceCommandRecognition.onstart = function() {
-                voiceCommandActive = true;
-                console.log('Voice commands listening...');
-            };
-
-            voiceCommandRecognition.onend = function() {
-                voiceCommandActive = false;
-                console.log('Voice commands stopped');
-                
-                // Much longer delay to reduce pinging - only restart if conditions are perfect
-                if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
-                    if (voiceCommandReconnectTimer) clearTimeout(voiceCommandReconnectTimer);
-                    voiceCommandReconnectTimer = setTimeout(() => {
-                        if (!voiceCommandActive && currentPage !== 'speech' && !isListening) {
-                            setupVoiceCommandListener();
-                        }
-                    }, 5000); // 5 second delay to reduce pinging
-                }
-            };
-
-            voiceCommandRecognition.onerror = function(event) {
-                voiceCommandActive = false;
-                console.log('Voice command error:', event.error);
-                
-                // Don't restart on certain errors
-                if (event.error === 'no-speech' || event.error === 'aborted' || event.error === 'audio-capture') {
-                    return;
-                }
-                
-                // Even longer delay on error to reduce pinging
-                if (voiceCommandReconnectTimer) clearTimeout(voiceCommandReconnectTimer);
-                voiceCommandReconnectTimer = setTimeout(() => {
-                    if (!voiceCommandActive && currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
-                        setupVoiceCommandListener();
-                    }
-                }, 10000); // 10 second delay on error
-            };
-
-            voiceCommandRecognition.onresult = function(event) {
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    if (event.results[i].isFinal) {
-                        const transcript = event.results[i][0].transcript.toLowerCase().trim();
-                        console.log('Voice command detected:', transcript);
-                        if (transcript.includes('hey leslie') || transcript.includes('leslie')) {
-                            processVoiceCommand(transcript);
-                        }
-                    }
-                }
-            };
-
-            voiceCommandRecognition.start();
-        } catch (error) {
-            console.log('Could not start voice command recognition:', error);
-            voiceCommandActive = false;
-        }
+        // COMPLETELY DISABLED TO STOP ALL PINGING
+        console.log('Voice commands disabled to prevent pinging');
+        return;
     }
 
     function processVoiceCommand(transcript) {
@@ -1213,12 +1133,7 @@
                 updateListenButton();
                 updateStatus('Ready to listen - Click "START TALKING" below');
                 
-                // Restart voice command listener after stopping speech recognition (with longer delay)
-                setTimeout(() => {
-                    if (!voiceCommandActive && microphonePermissionGranted && currentPage !== 'speech') {
-                        setupVoiceCommandListener();
-                    }
-                }, 3000);
+                // NO voice command restart to prevent pinging
             }
             
             if (silenceTimer) {
@@ -1277,7 +1192,7 @@
                 }
             }
 
-            // Handle final results - NO CASCADING
+            // Handle final results - ONLY COMPLETE PHRASES, NO CASCADING
             if (finalText.trim()) {
                 const cleanText = finalText.trim();
                 
@@ -1287,45 +1202,60 @@
                     return;
                 }
                 
-                // Check if this is a duplicate to prevent speaking same phrase twice
-                if (finalPhraseSpoken === cleanText) {
-                    console.log('Duplicate final phrase filtered out:', cleanText);
+                // COMPLETELY PREVENT DUPLICATE PHRASES - CHECK AGAINST LAST PHRASE
+                if (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === cleanText) {
+                    console.log('Duplicate final phrase prevented:', cleanText);
                     return;
                 }
                 
-                // Clear interim display first
+                // ALSO CHECK AGAINST CURRENTLY SPOKEN PHRASE
+                if (finalPhraseSpoken === cleanText) {
+                    console.log('Currently speaking this phrase, skipping:', cleanText);
+                    return;
+                }
+                
+                // Clear interim display BEFORE adding to history
                 currentInterimTranscript = '';
                 
-                // Add to phrase history
+                // Add ONLY to phrase history (no cascading)
                 phraseHistory.push(cleanText);
-                if (phraseHistory.length > 20) phraseHistory.shift();
+                if (phraseHistory.length > 10) phraseHistory.shift(); // Reduced history size
                 
-                // Update display
+                // Update display - this should show ONLY final phrases
                 updateSpeechDisplay();
                 
                 finalPhraseSpoken = cleanText;
-                updateStatus('✅ Heard: ' + cleanText);
+                updateStatus('✅ Complete phrase: ' + cleanText);
                 
-                // Speak the COMPLETE recognized text - NO PARTIAL SPEAKING
-                if (!isSpeaking) {
+                // Speak the COMPLETE phrase ONLY ONCE
+                if (!isSpeaking && cleanText.length > 2) { // Don't speak very short phrases
                     isSpeaking = true;
-                    speak(cleanText, true); // Speak the full phrase with word pauses
+                    console.log('Speaking complete phrase:', cleanText);
+                    speak(cleanText, true); // Speak the FULL phrase with word pauses
                     
-                    // Calculate speaking duration and reset flag
-                    const speakingDuration = (cleanText.length * 150) + (settings.pauseBetweenWords * cleanText.split(' ').length * 1000);
+                    // Calculate total speaking duration
+                    const words = cleanText.split(' ');
+                    const baseTime = words.length * 600; // 600ms per word
+                    const pauseTime = settings.pauseBetweenWords * words.length * 1000;
+                    const totalTime = baseTime + pauseTime;
+                    
                     setTimeout(() => { 
                         isSpeaking = false;
-                    }, speakingDuration);
+                        console.log('Finished speaking phrase');
+                    }, totalTime);
                 }
             } 
-            // Handle interim results - SHOW BUT DON'T SPEAK
-            else if (interimTranscript.trim()) {
+            // Handle interim results - SHOW AS SINGLE INTERIM, DON'T SPEAK
+            else if (interimTranscript.trim() && !isSpeaking) {
                 const cleanInterim = interimTranscript.trim();
                 // Don't show Leslie commands in interim either
                 if (!cleanInterim.toLowerCase().includes('hey leslie') && !cleanInterim.toLowerCase().includes('leslie')) {
-                    currentInterimTranscript = cleanInterim;
-                    updateSpeechDisplay();
-                    updateStatus('🔄 Listening: ' + cleanInterim);
+                    // ONLY UPDATE if it's different from current interim
+                    if (currentInterimTranscript !== cleanInterim) {
+                        currentInterimTranscript = cleanInterim;
+                        updateSpeechDisplay();
+                        updateStatus('🔄 Listening: ' + cleanInterim);
+                    }
                 }
             }
         };
@@ -1336,22 +1266,23 @@
         if (recognizedTextEl) {
             let html = '';
             
-            // Show phrase history as final phrases (blue boxes)
+            // Show ONLY final phrases in separate blue boxes - NO CASCADING
             if (phraseHistory.length > 0) {
+                // Show each phrase as a separate complete phrase
                 phraseHistory.forEach((phrase, idx) => {
-                    html += `<div class="final-phrase">${phrase}</div>`;
+                    html += `<div class="final-phrase">Complete: ${phrase}</div>`;
                 });
             }
             
-            // Show current interim results (yellow box) - ONLY ONE
-            if (currentInterimTranscript.trim()) {
-                html += `<div class="interim-phrase">${currentInterimTranscript}</div>`;
+            // Show ONLY ONE interim result in yellow - NO CASCADING
+            if (currentInterimTranscript.trim() && !isSpeaking) {
+                html += `<div class="interim-phrase">Interim: ${currentInterimTranscript}</div>`;
             }
             
             if (html) {
                 recognizedTextEl.innerHTML = html;
             } else {
-                recognizedTextEl.textContent = 'Your speech will appear here...';
+                recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic;">Your complete phrases will appear here...</div>';
             }
             
             // Auto-scroll to bottom
@@ -1562,12 +1493,8 @@
                 }, 500);
             }
             
-            // Setup voice command listener when not on speech page
-            if (pageId !== 'speech' && microphonePermissionGranted && !voiceCommandActive && !isListening) {
-                setTimeout(() => {
-                    setupVoiceCommandListener();
-                }, 3000);
-            }
+            // Setup voice command listener when not on speech page - DISABLED TO PREVENT PINGING
+            // Voice commands completely disabled to eliminate all pinging
             
             console.log('Successfully navigated to:', pageId);
         } else {
@@ -2091,20 +2018,8 @@
     });
 
     document.addEventListener('visibilitychange', function() {
-        if (document.hidden) {
-            // Clear reconnect timers when tab is hidden
-            if (voiceCommandReconnectTimer) {
-                clearTimeout(voiceCommandReconnectTimer);
-                voiceCommandReconnectTimer = null;
-            }
-        } else {
-            // Restart voice commands when tab becomes visible (if appropriate)
-            if (microphonePermissionGranted && !voiceCommandActive && currentPage !== 'speech' && !isListening) {
-                setTimeout(() => {
-                    setupVoiceCommandListener();
-                }, 3000);
-            }
-        }
+        // NO voice commands to prevent pinging
+        console.log('Tab visibility changed - voice commands remain disabled');
     });
     </script>
 </body>
