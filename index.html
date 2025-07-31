@@ -848,13 +848,12 @@
         updateEnhancedSectionVisibility();
         updateTextSpeakButton();
         
-        // Request microphone permission on first interaction - NO VOICE COMMANDS
+        // Request microphone permission on first interaction
         document.addEventListener('click', requestMicrophonePermissionOnce, { once: true });
         
         console.log('Leslie Speech Assistant initialized successfully!');
     }
 
-    // Disable all microphone permission requests and voice command setup
     function requestMicrophonePermissionOnce() {
         if (!micPermissionRequested && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             micPermissionRequested = true;
@@ -862,8 +861,7 @@
                 .then(function(stream) {
                     microphonePermissionGranted = true;
                     stream.getTracks().forEach(track => track.stop());
-                    console.log('Microphone permission granted - NO voice commands (prevents pinging)');
-                    // NEVER START VOICE COMMANDS - ELIMINATES ALL PINGING
+                    console.log('Microphone permission granted');
                 })
                 .catch(function(error) {
                     microphonePermissionGranted = false;
@@ -932,39 +930,6 @@
         } else {
             userLocation = { lat: 40.7128, lon: -74.0060 }; // New York
             console.log('Geolocation not supported, using default location');
-        }
-    }
-
-    // --- COMPLETELY ELIMINATE ALL VOICE COMMANDS AND BACKGROUND AUDIO ---
-    function setupVoiceCommandListener() {
-        // PERMANENTLY DISABLED - NO VOICE COMMANDS AT ALL
-        console.log('Voice commands PERMANENTLY DISABLED to eliminate all pinging');
-        return;
-    }
-
-    function processVoiceCommand(transcript) {
-        // PERMANENTLY DISABLED
-        console.log('Voice commands disabled');
-        return;
-    }
-
-    function handleCallCommand(nameOrNumber) {
-        const phoneRegex = /[\d\-\(\)\s]+/;
-        if (phoneRegex.test(nameOrNumber) && nameOrNumber.replace(/\D/g, '').length >= 10) {
-            const cleanedNumber = nameOrNumber.replace(/\D/g, '');
-            window.location.href = `tel:${cleanedNumber}`;
-            speak(`Calling ${nameOrNumber}`);
-        } else {
-            const contact = contacts.find(c => 
-                c.name.toLowerCase().includes(nameOrNumber.toLowerCase())
-            );
-            if (contact) {
-                window.location.href = `tel:${contact.phone.replace(/\D/g, '')}`;
-                speak(`Calling ${contact.name}`);
-            } else {
-                showPage('phone');
-                speak(`I couldn't find ${nameOrNumber} in your contacts. Opening phone page.`);
-            }
         }
     }
 
@@ -1067,20 +1032,17 @@
             isListening = true;
             updateListenButton();
             updateStatus('🎤 Listening... Say something!');
+            console.log('=== SPEECH RECOGNITION STARTED ===');
             
-            console.log('=== SPEECH RECOGNITION STARTED - ELIMINATING ALL PINGING ===');
-            
-            // DESTROY ALL VOICE COMMAND OBJECTS AND TIMERS
-            voiceCommandRecognition = null;
-            voiceCommandActive = false;
-            voiceCommandReconnectTimer = null;
-            
-            // Clear ALL possible timers
-            for (let i = 1; i < 99999; i++) {
-                window.clearTimeout(i);
+            // FIXED: Only clear our specific timers, not ALL browser timers
+            if (silenceTimer) {
+                clearTimeout(silenceTimer);
+                silenceTimer = null;
             }
-            
-            console.log('ALL TIMERS AND VOICE COMMANDS DESTROYED');
+            if (voiceCommandReconnectTimer) {
+                clearTimeout(voiceCommandReconnectTimer);
+                voiceCommandReconnectTimer = null;
+            }
             
             // Start silence timer
             silenceTimer = setTimeout(function() {
@@ -1109,8 +1071,6 @@
             } else {
                 updateListenButton();
                 updateStatus('Ready to listen - Click "START TALKING" below');
-                
-                // NO voice command restart to prevent pinging
             }
             
             if (silenceTimer) {
@@ -1160,7 +1120,7 @@
             let latestInterim = '';
             let latestFinal = '';
             
-            // CRITICAL FIX: Process results in REVERSE to get only the LATEST
+            // Process results in REVERSE to get only the LATEST
             for (let i = event.results.length - 1; i >= 0; i--) {
                 if (event.results[i].isFinal && !latestFinal) {
                     latestFinal = event.results[i][0].transcript.trim();
@@ -1172,7 +1132,7 @@
                 if (latestFinal || latestInterim) break;
             }
 
-            // Handle ONLY final results - NO interim processing to prevent cascading
+            // Handle ONLY final results
             if (latestFinal && latestFinal.length > 3) {
                 
                 // Filter out Leslie commands
@@ -1232,7 +1192,7 @@
         if (recognizedTextEl) {
             let html = '';
             
-            // Show ONLY final phrases - NO interim results to prevent cascading
+            // Show ONLY final phrases
             if (phraseHistory.length > 0) {
                 // Only show the LAST phrase to prevent cascading
                 const lastPhrase = phraseHistory[phraseHistory.length - 1];
@@ -1456,7 +1416,7 @@
         }
         
         console.log('Filtered contacts:', filteredContacts.length);
-        displayContactsOnPhonePage(); // Use the correct display function
+        displayContactsOnPhonePage();
     }
 
     function callContact(contact) {
@@ -1485,21 +1445,6 @@
                 stopListening();
             }
             
-            // Stop voice commands when entering speech page
-            if (pageId === 'speech') {
-                if (voiceCommandRecognition && voiceCommandActive) {
-                    try {
-                        voiceCommandRecognition.stop();
-                        voiceCommandRecognition.abort();
-                    } catch (e) {}
-                    voiceCommandActive = false;
-                }
-                if (voiceCommandReconnectTimer) {
-                    clearTimeout(voiceCommandReconnectTimer);
-                    voiceCommandReconnectTimer = null;
-                }
-            }
-            
             // Auto-focus text input
             if (pageId === 'textInput') {
                 setTimeout(() => {
@@ -1508,14 +1453,6 @@
                         textInput.focus();
                     }
                     updateTextSpeakButton();
-                }, 100);
-            }
-            
-            // FIXED: Auto-load contacts directly on phone page
-            if (pageId === 'phone') {
-                setTimeout(() => {
-                    console.log('Phone page loaded - contacts will display in the same page');
-                    // Contacts load when user clicks the button - no automatic redirect
                 }, 100);
             }
             
@@ -1617,7 +1554,7 @@
         }
     }
 
-    // --- WEATHER - ALL SAME SIZE ---
+    // --- WEATHER ---
     async function showCurrentWeather() {
         console.log('Showing current weather...');
         const weatherDisplay = document.getElementById('weatherDisplay');
@@ -2045,6 +1982,8 @@
     });
 
     document.addEventListener('visibilitychange', function() {
-        // NO voice commands to prevent pinging
-        console.log('Tab visibility changed - voice commands remain disabled');
+        console.log('Tab visibility changed - maintaining current state');
     });
+    </script>
+</body>
+</html>
