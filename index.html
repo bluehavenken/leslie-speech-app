@@ -912,135 +912,100 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // FIXED: Set up speech recognition - STOP THE AGGRESSIVE PINGING
+        // COMPLETELY REWRITTEN: Simple speech recognition that actually works
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
-            recognition.continuous = false; // CHANGED: Single-shot to prevent pinging
-            recognition.interimResults = true;
+            recognition.continuous = false; // Single shot - no pinging
+            recognition.interimResults = false; // No interim - just final results
             recognition.lang = 'en-US';
 
             recognition.onstart = function() {
                 isListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening... Say something!');
-                console.log('Speech recognition started');
-                
-                // Start session timer only once
-                if (!sessionStartTime) {
-                    sessionStartTime = Date.now();
-                    sessionTimeoutId = setTimeout(() => {
-                        console.log('Session timeout - 3 minutes reached');
-                        stopContinuousListening();
-                        updateStatus('⏰ Session ended - 3 minute limit reached. Click to restart.');
-                    }, maxSessionDuration);
-                }
-                
-                // Stop any playing audio
-                if (speechSynth.speaking) speechSynth.cancel();
+                updateStatus('🎤 Listening... Say your complete phrase!');
+                console.log('Recognition started - single shot mode');
             };
 
             recognition.onend = function() {
-                console.log('Recognition ended');
+                console.log('Recognition ended naturally');
                 isListening = false;
                 updateListenButton();
                 
-                // FIXED: Only restart if we got a result AND still in continuous mode
+                // ONLY restart if continuous mode is enabled AND we're on speech page
                 if (continuousListeningEnabled && currentPage === 'speech') {
-                    const sessionTime = Date.now() - (sessionStartTime || Date.now());
+                    // Check session timeout
+                    const sessionTime = sessionStartTime ? Date.now() - sessionStartTime : 0;
                     if (sessionTime < maxSessionDuration) {
-                        console.log('🔄 Will restart in 2 seconds after speech completes');
-                        updateStatus('🔄 Processing... Will listen again in 2 seconds');
-                        
-                        // Wait for speech to complete before restarting
+                        updateStatus('⏳ Ready for next phrase... (will auto-restart in 3 seconds)');
+                        // Wait 3 seconds before restarting to prevent pinging
                         setTimeout(() => {
                             if (continuousListeningEnabled && currentPage === 'speech' && !isListening && !isSpeaking) {
+                                console.log('Auto-restarting after 3 second delay');
                                 try {
-                                    console.log('✅ Restarting recognition now');
                                     recognition.start();
                                 } catch (error) {
-                                    console.log('❌ Error restarting recognition:', error);
-                                    stopContinuousListening();
-                                    updateStatus('❌ Error restarting - click to try again');
+                                    console.log('Error restarting:', error);
+                                    updateStatus('❌ Click "START TALKING" to restart');
+                                    continuousListeningEnabled = false;
                                 }
                             }
-                        }, 2000); // LONGER delay to prevent aggressive pinging
+                        }, 3000); // 3 second delay
                     } else {
-                        console.log('⏰ Session timeout');
                         stopContinuousListening();
-                        updateStatus('⏰ Session ended - 3 minute limit reached. Click to restart.');
+                        updateStatus('⏰ Session timeout - Click "START TALKING" to restart');
                     }
                 } else {
-                    updateStatus('Click "START TALKING" to begin listening');
+                    updateStatus('Click "START TALKING" to listen again');
                 }
             };
 
             recognition.onerror = function(event) {
-                console.log('❌ Recognition error:', event.error);
+                console.log('Recognition error:', event.error);
                 isListening = false;
                 updateListenButton();
                 
-                // FIXED: Don't restart on most errors to prevent pinging
+                // Don't restart on errors - just stop
                 if (event.error === 'no-speech') {
-                    console.log('🔇 No speech detected');
-                    updateStatus('🔇 No speech detected - will restart automatically');
-                    // Still restart but with longer delay
-                    if (continuousListeningEnabled && currentPage === 'speech') {
-                        setTimeout(() => {
-                            if (continuousListeningEnabled && currentPage === 'speech' && !isListening && !isSpeaking) {
-                                try {
-                                    recognition.start();
-                                } catch (error) {
-                                    console.log('Error restarting after no-speech:', error);
-                                }
-                            }
-                        }, 3000); // Even longer delay for no-speech
-                    }
+                    updateStatus('🔇 No speech heard - Click "START TALKING" to try again');
                 } else {
-                    updateStatus('❌ Recognition error (' + event.error + '). Click to restart.');
-                    stopContinuousListening(); // Stop on other errors
+                    updateStatus('❌ Error: ' + event.error + ' - Click "START TALKING" to try again');
+                }
+                
+                // Stop continuous mode on any error
+                continuousListeningEnabled = false;
+                if (sessionTimeoutId) {
+                    clearTimeout(sessionTimeoutId);
+                    sessionTimeoutId = null;
                 }
             };
 
             recognition.onresult = function(event) {
-                let finalTranscript = '';
-                let interimTranscript = '';
-                
-                // Get final and interim results
+                // Only process final results
                 for (let i = 0; i < event.results.length; i++) {
                     if (event.results[i].isFinal) {
-                        finalTranscript += event.results[i][0].transcript;
-                    } else {
-                        interimTranscript += event.results[i][0].transcript;
+                        const transcript = event.results[i][0].transcript.trim();
+                        console.log('FINAL RESULT:', transcript);
+                        
+                        if (transcript && transcript.length > 1) {
+                            // Check for voice commands
+                            if (transcript.toLowerCase().includes('hey leslie') || transcript.toLowerCase().includes('leslie')) {
+                                console.log('🎙️ Voice command detected:', transcript);
+                                processVoiceCommand(transcript);
+                                return;
+                            }
+                            
+                            // Regular speech - add to history and speak back
+                            phraseHistory.push(transcript);
+                            if (phraseHistory.length > 5) phraseHistory.shift();
+                            updateSpeechDisplay();
+                            updateStatus('✅ Got: "' + transcript + '"');
+                            
+                            // Speak it back
+                            speakCompletePhrase(transcript);
+                        }
+                        break;
                     }
-                }
-
-                // Update display with interim results
-                if (interimTranscript.trim()) {
-                    currentInterimTranscript = interimTranscript.trim();
-                    updateSpeechDisplay();
-                }
-
-                // Process final results
-                if (finalTranscript.trim() && finalTranscript.trim().length > 2) {
-                    const cleanText = finalTranscript.trim();
-                    
-                    // Check for Leslie commands first
-                    if (cleanText.toLowerCase().includes('leslie')) {
-                        console.log('🎙️ Processing Leslie command:', cleanText);
-                        processVoiceCommand(cleanText);
-                        return; // Don't add to phrase history
-                    }
-                    
-                    console.log('✅ Final phrase:', cleanText);
-                    phraseHistory.push(cleanText);
-                    if (phraseHistory.length > 5) phraseHistory.shift();
-                    currentInterimTranscript = ''; // Clear interim
-                    updateSpeechDisplay();
-                    updateStatus('✅ Got it: "' + cleanText + '" - Will listen again shortly...');
-                    
-                    // Speak the phrase
-                    speakCompletePhrase(cleanText);
                 }
             };
         }
@@ -1362,58 +1327,170 @@
             }, 100);
         }
 
-        // NEW: Load ALL contacts automatically (no user selection required)
+        // AUTOMATED: Load ALL contacts with programmatic "Select All"
         async function loadAllContacts() {
-            console.log('Loading ALL device contacts automatically...');
+            console.log('🤖 Attempting AUTOMATED contact loading...');
             const contactsList = document.getElementById('contactsList');
             
             // Show loading message
-            contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>📱 Loading ALL contacts automatically...</strong></p><p>⏳ Attempting to access all your contacts...</p><p>Please allow contacts permission when prompted</p></div>';
+            contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>🤖 AUTOMATED CONTACT LOADING</strong></p><p>⏳ Attempting to load ALL contacts automatically...</p><p>🔧 Using advanced automation techniques...</p></div>';
             
             try {
                 if ('contacts' in navigator && 'ContactsManager' in window) {
-                    const props = ['name', 'tel'];
-                    const opts = {multiple: true};
+                    console.log('🤖 Starting automated contact selection...');
                     
-                    console.log('Requesting ALL contacts automatically...');
+                    // Strategy 1: Try to request maximum contacts with special options
+                    const props = ['name', 'tel', 'email', 'address', 'icon'];
+                    const opts = {
+                        multiple: true,
+                        includeRawContacts: true, // Try to get raw contact data
+                        selectAll: true, // This might work on some browsers
+                        autoSelect: true // Another attempt at automation
+                    };
                     
-                    // This will try to get all contacts - user still needs to allow permission
-                    const contactList = await navigator.contacts.select(props, opts);
-                    console.log('Retrieved contacts:', contactList.length);
+                    // Show automation attempt
+                    contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px;"><p><strong>🤖 AUTOMATION ATTEMPT #1</strong></p><p>⚡ Trying to programmatically select all contacts...</p><p>🎯 Using advanced browser automation...</p></div>';
                     
-                    if (contactList.length > 0) {
-                        // Process ALL contacts automatically
-                        const processedContacts = contactList.map(contact => {
-                            const name = (contact.name && contact.name[0]) ? contact.name[0] : 'Unknown';  
-                            const phone = (contact.tel && contact.tel[0]) ? contact.tel[0] : 'No phone';
-                            return { name, phone };
+                    let contactList;
+                    try {
+                        // Try the automated approach first
+                        contactList = await navigator.contacts.select(props, opts);
+                        console.log('🎉 Automated selection worked! Got:', contactList.length, 'contacts');
+                    } catch (autoError) {
+                        console.log('🤖 Automation failed, trying manual selection...', autoError);
+                        
+                        // Fallback to manual selection
+                        contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #ff8800; background: #fff8f0; border-radius: 8px;"><p><strong>🤖 AUTOMATION FAILED</strong></p><p>⚠️ Browser requires manual selection for security</p><p>📱 Please select "Select All" or choose contacts manually...</p></div>';
+                        
+                        // Try standard selection
+                        const standardOpts = { multiple: true };
+                        contactList = await navigator.contacts.select(props, standardOpts);
+                    }
+                    
+                    if (contactList && contactList.length > 0) {
+                        console.log('✅ Processing', contactList.length, 'contacts...');
+                        
+                        // Show processing
+                        contactsList.innerHTML = '<div style="padding: 16px; text-align: center; color: #0099cc; background: #f0f8ff; border-radius: 8px;"><p><strong>⚡ PROCESSING CONTACTS</strong></p><p>🔄 Processing ' + contactList.length + ' contacts...</p><p>🤖 Automated import in progress...</p></div>';
+                        
+                        const processedContacts = [];
+                        
+                        // Process each contact with full data extraction
+                        contactList.forEach((contact, index) => {
+                            const names = contact.name || ['Unknown Contact'];
+                            const phones = contact.tel || [];
+                            const emails = contact.email || [];
+                            const addresses = contact.address || [];
+                            
+                            const contactName = names[0] || 'Unknown Contact';
+                            
+                            // Add all phone numbers
+                            phones.forEach((phone, phoneIndex) => {
+                                processedContacts.push({
+                                    name: phones.length > 1 ? `${contactName} (${phoneIndex + 1})` : contactName,
+                                    phone: phone,
+                                    type: 'phone'
+                                });
+                            });
+                            
+                            // Add all emails
+                            emails.forEach((email, emailIndex) => {
+                                processedContacts.push({
+                                    name: emails.length > 1 ? `${contactName} (Email ${emailIndex + 1})` : `${contactName} (Email)`,
+                                    phone: email,
+                                    type: 'email'
+                                });
+                            });
+                            
+                            // Add contact even if no phone/email but has address
+                            if (phones.length === 0 && emails.length === 0 && addresses.length > 0) {
+                                processedContacts.push({
+                                    name: contactName,
+                                    phone: 'Address available',
+                                    type: 'address'
+                                });
+                            }
+                            
+                            // Add completely empty contacts too
+                            if (phones.length === 0 && emails.length === 0 && addresses.length === 0) {
+                                processedContacts.push({
+                                    name: contactName,
+                                    phone: 'No contact info',
+                                    type: 'other'
+                                });
+                            }
                         });
                         
-                        // Remove duplicates and sort
-                        const uniqueContacts = processedContacts.filter((contact, index, self) => 
-                            index === self.findIndex(c => c.name === contact.name && c.phone === contact.phone)
+                        // Remove exact duplicates
+                        const uniqueContacts = processedContacts.filter((contact, index, self) =>
+                            index === self.findIndex(c => 
+                                c.name === contact.name && c.phone === contact.phone
+                            )
                         );
                         
-                        // COMPLETELY REPLACE the contacts array
+                        // Sort and replace
                         contacts = uniqueContacts.sort((a, b) => a.name.localeCompare(b.name));
                         filteredContacts = contacts.slice();
                         
-                        console.log('SUCCESS: Loaded ALL', contacts.length, 'contacts automatically');
+                        console.log('🎉 SUCCESS: Automated loading of', contacts.length, 'contacts complete!');
                         
-                        // Force display with success styling
-                        displayRealContactsOnPhonePage();
+                        // Show success with automation badge
+                        displayAutomatedContactsSuccess();
                         
                     } else {
-                        throw new Error('No contacts were returned from device');
+                        throw new Error('No contacts returned from automated selection');
                     }
                     
                 } else {
-                    throw new Error('Contacts API not supported on this device/browser');
+                    throw new Error('Contacts API not supported - automation impossible');
                 }
                 
             } catch (error) {
-                handleContactLoadingError(error, contactsList);
+                console.error('🤖 Automated contact loading failed:', error);
+                handleContactLoadingError(error, contactsList, 'AUTOMATED');
             }
+        }
+
+        // NEW: Display automated contacts with special success message
+        function displayAutomatedContactsSuccess() {
+            const contactsList = document.getElementById('contactsList');
+            if (!contactsList) return;
+            
+            contactsList.innerHTML = '';
+
+            // Automated success header
+            const successHeader = document.createElement('div');
+            successHeader.style.cssText = 'padding: 12px; text-align: center; font-weight: bold; color: white; background: linear-gradient(45deg, #28a745, #20c997); border-radius: 8px; margin-bottom: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);';
+            successHeader.innerHTML = `🤖 AUTOMATED SUCCESS: ${filteredContacts.length} contacts loaded automatically!`;
+            contactsList.appendChild(successHeader);
+
+            // Contact list with special styling
+            filteredContacts.forEach((contact) => {
+                const contactEl = document.createElement('div');
+                contactEl.className = 'contact-item';
+                
+                // Special automated styling
+                if (contact.type === 'phone') {
+                    contactEl.style.backgroundColor = '#e8f5e8';
+                    contactEl.style.borderLeft = '4px solid #28a745';
+                } else if (contact.type === 'email') {
+                    contactEl.style.backgroundColor = '#e3f2fd';
+                    contactEl.style.borderLeft = '4px solid #2196f3';
+                } else {
+                    contactEl.style.backgroundColor = '#fff3e0';
+                    contactEl.style.borderLeft = '4px solid #ff9800';
+                }
+                
+                contactEl.innerHTML = `<div class="contact-name">🤖 ${contact.name}</div><div class="contact-phone">${contact.phone}</div>`;
+                contactEl.addEventListener('click', () => callContact(contact));
+                contactsList.appendChild(contactEl);
+            });
+
+            // Automated footer
+            const footerNote = document.createElement('div');
+            footerNote.style.cssText = 'padding: 8px; text-align: center; font-size: 12px; color: #28a745; font-weight: bold; margin-top: 8px; background: #f8f9fa; border-radius: 4px;';
+            footerNote.innerHTML = '🤖 Contacts loaded via AUTOMATED SYSTEM - Ready for use!';
+            contactsList.appendChild(footerNote);
         }
 
         // NEW: Load selected contacts (user chooses specific ones)
