@@ -838,6 +838,12 @@
             enhancedMode: false
         };
 
+        // ADDED: Continuous listening variables
+        let continuousListeningEnabled = false;
+        let sessionStartTime = null;
+        let maxSessionDuration = 3 * 60 * 1000; // 3 minutes
+        let sessionTimeoutId = null;
+
         // Initialize the app - NO VOICE COMMANDS
         function initApp() {
             console.log('Initializing Leslie Speech Assistant...');
@@ -898,19 +904,27 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // Set up main speech recognition - STOP THE PINGING
+        // MODIFIED: Set up main speech recognition for continuous listening
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
-            recognition.continuous = false; // CHANGE TO FALSE to stop pinging
+            recognition.continuous = true; // CHANGED: Enable continuous listening
             recognition.interimResults = true;
             recognition.lang = 'en-US';
 
             recognition.onstart = function() {
                 isListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening... Say something!');
-                console.log('Speech recognition started');
+                updateStatus('🎤 Listening continuously... Speak anytime!');
+                console.log('Speech recognition started - continuous mode');
+                
+                // ADDED: Start session timer
+                sessionStartTime = Date.now();
+                sessionTimeoutId = setTimeout(() => {
+                    console.log('Session timeout - 3 minutes reached');
+                    stopContinuousListening();
+                    updateStatus('⏰ Session ended - 3 minute limit reached. Click to restart.');
+                }, maxSessionDuration);
                 
                 // Stop any playing audio
                 if (speechSynth.speaking) speechSynth.cancel();
@@ -918,17 +932,57 @@
 
             recognition.onend = function() {
                 console.log('Recognition ended');
-                isListening = false;
-                updateListenButton();
-                updateStatus('Click "START TALKING" to listen again');
-                // DON'T auto-restart to stop pinging
+                
+                // ADDED: Clear session timeout
+                if (sessionTimeoutId) {
+                    clearTimeout(sessionTimeoutId);
+                    sessionTimeoutId = null;
+                }
+                
+                // ADDED: Auto-restart if continuous listening is enabled
+                if (continuousListeningEnabled && currentPage === 'speech') {
+                    const sessionTime = Date.now() - sessionStartTime;
+                    if (sessionTime < maxSessionDuration) {
+                        console.log('Restarting recognition for continuous listening');
+                        setTimeout(() => {
+                            if (continuousListeningEnabled && currentPage === 'speech' && !isListening) {
+                                try {
+                                    recognition.start();
+                                } catch (error) {
+                                    console.log('Error restarting recognition:', error);
+                                    stopContinuousListening();
+                                    updateStatus('❌ Error restarting - click to try again');
+                                }
+                            }
+                        }, 1000);
+                    } else {
+                        console.log('Session timeout - stopping continuous listening');
+                        stopContinuousListening();
+                        updateStatus('⏰ Session ended - 3 minute limit reached. Click to restart.');
+                    }
+                } else {
+                    isListening = false;
+                    updateListenButton();
+                    updateStatus('Click "START TALKING" to begin listening');
+                }
             };
 
             recognition.onerror = function(event) {
                 console.log('Recognition error:', event.error);
-                isListening = false;
-                updateListenButton();
-                updateStatus('Recognition error (' + event.error + '). Please try again.');
+                
+                // ADDED: Handle errors gracefully in continuous mode
+                if (event.error === 'no-speech') {
+                    console.log('No speech detected - continuing if in continuous mode');
+                    if (!continuousListeningEnabled) {
+                        updateStatus('No speech detected - speak again or restart');
+                    }
+                } else if (event.error === 'network') {
+                    updateStatus('🌐 Network error - check connection');
+                    stopContinuousListening();
+                } else {
+                    updateStatus('❌ Recognition error (' + event.error + '). Click to restart.');
+                    stopContinuousListening();
+                }
             };
 
             recognition.onresult = function(event) {
@@ -954,12 +1008,36 @@
                     phraseHistory.push(cleanText);
                     if (phraseHistory.length > 5) phraseHistory.shift();
                     updateSpeechDisplay();
-                    updateStatus('✅ Complete: ' + cleanText);
+                    updateStatus('✅ Got it: "' + cleanText + '" - Still listening...');
                     
                     // FIXED speech synthesis
                     speakCompletePhrase(cleanText);
                 }
             };
+        }
+
+        // ADDED: Stop continuous listening function
+        function stopContinuousListening() {
+            console.log('Stopping continuous listening');
+            continuousListeningEnabled = false;
+            
+            if (sessionTimeoutId) {
+                clearTimeout(sessionTimeoutId);
+                sessionTimeoutId = null;
+            }
+            
+            sessionStartTime = null;
+            
+            if (recognition && isListening) {
+                try {
+                    recognition.stop();
+                } catch (e) {
+                    console.log('Error stopping recognition:', e);
+                }
+            }
+            
+            isListening = false;
+            updateListenButton();
         }
 
         // NEW function to speak complete phrase
@@ -1172,16 +1250,17 @@
 
         // Clear speech text
         function clearSpeechText() {
-            allTranscripts = [];
-            spokenPhrases.clear();
+            phraseHistory = [];
             updateSpeechDisplay();
         }
 
-        // Start talking from home page
+        // MODIFIED: Start talking from home page with auto-activation
         function startTalkingFromHome() {
             showPage('speech');
+            // ADDED: Auto-start listening when entering speech page
             setTimeout(() => {
                 if (!isListening && !isSpeaking) {
+                    continuousListeningEnabled = true;
                     startListening();
                 }
             }, 500);
@@ -1196,36 +1275,24 @@
             }
         }
 
-        // Start listening
+        // MODIFIED: Start listening with continuous mode
         function startListening() {
             if (recognition && !isListening && !isSpeaking) {
                 try {
+                    continuousListeningEnabled = true;
                     recognition.start();
                 } catch (error) {
                     console.log('Error starting recognition:', error);
                     updateStatus('Error starting recognition. Please try again.');
+                    continuousListeningEnabled = false;
                 }
             }
         }
 
-        // Stop listening
+        // MODIFIED: Stop listening
         function stopListening() {
-            if (recognition && isListening) {
-                isListening = false;
-                try {
-                    recognition.stop();
-                } catch (error) {
-                    console.log('Error stopping recognition:', error);
-                }
-                
-                if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                    silenceTimer = null;
-                }
-                
-                updateStatus('Stopped listening');
-                updateListenButton();
-            }
+            stopContinuousListening();
+            updateStatus('🛑 Stopped listening. Click "START TALKING" to restart.');
         }
 
         // Update listen button
@@ -1282,7 +1349,7 @@
             ];
             filteredContacts = contacts.slice();
             
-            // Force display immediately when app loads
+            // ADDED: Force display immediately when app loads
             setTimeout(() => {
                 if (currentPage === 'phone') {
                     displayContactsOnPhonePage();
@@ -1401,7 +1468,7 @@
             contactsList.appendChild(footerNote);
         }
 
-        // Display contacts on phone page
+        // MODIFIED: Display contacts on phone page - ALWAYS SHOW IMMEDIATELY
         function displayContactsOnPhonePage() {
             const contactsList = document.getElementById('contactsList');
             if (!contactsList) return;
@@ -1416,7 +1483,7 @@
             // Header
             const headerDiv = document.createElement('div');
             headerDiv.style.cssText = 'padding: 12px; text-align: center; font-weight: bold; color: #669900; background: #f0f8ff; border-radius: 8px; margin-bottom: 8px;';
-            headerDiv.textContent = `📱 ${filteredContacts.length} contacts - Tap any contact to call`;
+            headerDiv.textContent = `📱 ${filteredContacts.length} contacts available - Tap any contact to call`;
             contactsList.appendChild(headerDiv);
 
             // Contact list
@@ -1449,7 +1516,7 @@
             window.location.href = 'tel:' + contact.phone.replace(/[^0-9]/g, '');
         }
 
-        // Show page
+        // MODIFIED: Show page with auto-activation for speech page
         function showPage(pageId, addToHistory = true) {
             const pages = document.querySelectorAll('.page');
             pages.forEach(page => page.classList.remove('active'));
@@ -1464,13 +1531,25 @@
                     history.pushState({page: pageId}, '', '');
                 }
                 
-                // Stop listening when leaving speech page
+                // MODIFIED: Stop listening when leaving speech page
                 if (pageId !== 'speech' && isListening) {
-                    stopListening();
-                    addDebugMessage('🛑 Stopped listening - left speech page');
+                    stopContinuousListening();
+                    console.log('🛑 Stopped listening - left speech page');
                 }
                 
-                // Auto-load contacts when entering phone page
+                // ADDED: Auto-start listening when entering speech page
+                if (pageId === 'speech') {
+                    setTimeout(() => {
+                        if (!isListening && !isSpeaking) {
+                            console.log('🎤 Auto-starting speech recognition');
+                            updateStatus('🎤 Auto-starting continuous listening...');
+                            continuousListeningEnabled = true;
+                            startListening();
+                        }
+                    }, 800);
+                }
+                
+                // FIXED: Auto-load contacts when entering phone page
                 if (pageId === 'phone') {
                     setTimeout(() => {
                         displayContactsOnPhonePage();
