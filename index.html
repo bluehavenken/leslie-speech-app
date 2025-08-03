@@ -966,7 +966,7 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // FIXED: Speech recognition with proper warm-up to catch first words
+        // FIXED: Speech recognition that speaks phrases back
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
@@ -1091,7 +1091,7 @@
                                 return;
                             }
                             
-                            // Check for voice commands
+                            // Check for voice commands first
                             if (transcript.toLowerCase().includes('hey leslie') || transcript.toLowerCase().includes('leslie')) {
                                 console.log('🎙️ Voice command in speech mode:', transcript);
                                 processVoiceCommand(transcript);
@@ -1099,13 +1099,14 @@
                                 return;
                             }
                             
-                            // Regular speech processing
+                            // FIXED: Regular speech processing with speech playback
                             phraseHistory.push(transcript);
                             if (phraseHistory.length > 5) phraseHistory.shift();
                             updateSpeechDisplay();
                             updateStatus('✅ Got: "' + transcript + '" - Ready for next phrase...');
                             
-                            // Speak it back and clear text input
+                            // FIXED: Always speak the phrase back
+                            console.log('🔊 Speaking phrase back:', transcript);
                             speakCompletePhrase(transcript);
                             clearTextInput();
                         }
@@ -1170,6 +1171,7 @@
                 });
         }
         
+        // MUCH SIMPLER: Voice commands with less chance of conflicts
         function initializePersistentVoiceCommands() {
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 console.log('❌ Speech recognition not supported');
@@ -1179,45 +1181,43 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             voiceCommandRecognition = new SpeechRecognition();
             
-            // PERSISTENT settings for reliability
-            voiceCommandRecognition.continuous = true; // CHANGED: Back to continuous for reliability
+            // SIMPLER settings - reduce conflicts
+            voiceCommandRecognition.continuous = false; // CHANGED: Back to single-shot
             voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
             
-            // Track processed commands to prevent duplicates
+            // Simpler duplicate tracking
             voiceCommandRecognition.lastCommand = '';
             voiceCommandRecognition.lastCommandTime = 0;
             
             voiceCommandRecognition.onstart = function() {
                 isVoiceCommandListening = true;
-                console.log('✅ Persistent voice commands started');
+                console.log('✅ Voice commands started (simple mode)');
             };
             
             voiceCommandRecognition.onresult = function(event) {
-                // Process all final results
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    if (event.results[i].isFinal) {
-                        const transcript = event.results[i][0].transcript.trim();
-                        const now = Date.now();
+                // Process only the first final result
+                if (event.results.length > 0 && event.results[0].isFinal) {
+                    const transcript = event.results[0][0].transcript.trim();
+                    const now = Date.now();
+                    
+                    console.log('🎙️ Voice input:', transcript);
+                    
+                    // Check for Leslie commands
+                    if (transcript.toLowerCase().includes('hey leslie') || 
+                        transcript.toLowerCase().includes('leslie')) {
                         
-                        console.log('🎙️ Voice input detected:', transcript);
-                        
-                        // Check for Leslie commands
-                        if (transcript.toLowerCase().includes('hey leslie') || 
-                            transcript.toLowerCase().includes('leslie')) {
+                        // SIMPLER: Only check for very recent duplicates (2 seconds)
+                        if (transcript !== voiceCommandRecognition.lastCommand || 
+                            (now - voiceCommandRecognition.lastCommandTime) > 2000) {
                             
-                            // ANTI-DUPLICATE: Only process if different from last command or enough time passed
-                            if (transcript !== voiceCommandRecognition.lastCommand || 
-                                (now - voiceCommandRecognition.lastCommandTime) > 5000) {
-                                
-                                voiceCommandRecognition.lastCommand = transcript;
-                                voiceCommandRecognition.lastCommandTime = now;
-                                
-                                console.log('🎙️ PROCESSING LESLIE COMMAND:', transcript);
-                                processVoiceCommand(transcript);
-                            } else {
-                                console.log('🎙️ Ignoring duplicate command:', transcript);
-                            }
+                            voiceCommandRecognition.lastCommand = transcript;
+                            voiceCommandRecognition.lastCommandTime = now;
+                            
+                            console.log('🎙️ PROCESSING:', transcript);
+                            processVoiceCommand(transcript);
+                        } else {
+                            console.log('🎙️ Skipping recent duplicate');
                         }
                     }
                 }
@@ -1225,13 +1225,13 @@
             
             voiceCommandRecognition.onend = function() {
                 isVoiceCommandListening = false;
-                console.log('🎙️ Voice commands ended - will restart');
+                console.log('🎙️ Voice command session ended');
                 
                 // ALWAYS restart if not on speech page
                 if (currentPage !== 'speech' && !isListening) {
                     setTimeout(() => {
                         startPersistentVoiceCommands();
-                    }, 1000);
+                    }, 1500); // Longer delay
                 }
             };
             
@@ -1239,15 +1239,15 @@
                 isVoiceCommandListening = false;
                 console.log('🎙️ Voice command error:', event.error);
                 
-                // Restart after any error (except abort) if not on speech page
+                // Restart after error if not on speech page
                 if (event.error !== 'aborted' && currentPage !== 'speech' && !isListening) {
                     setTimeout(() => {
                         startPersistentVoiceCommands();
-                    }, 2000);
+                    }, 3000); // Longer delay after errors
                 }
             };
             
-            // Start the persistent listener
+            // Start the first session
             startPersistentVoiceCommands();
         }
         
@@ -1282,7 +1282,7 @@
             }
         }
 
-        // FIXED: Process voice commands with all the missing commands
+        // FIXED: Process voice commands with all missing commands and proper UI updates
         function processVoiceCommand(command) {
             console.log('Processing voice command:', command);
             const cmd = command.toLowerCase();
@@ -1320,6 +1320,10 @@
             } else if (cmd.includes('close weather') || cmd.includes('hide weather')) {
                 hideWeather();
                 speakResponse('Closing weather');
+            } else if (cmd.includes('close') && !cmd.includes('weather')) {
+                // FIXED: Added general close command
+                hideWeather();
+                speakResponse('Closing');
                 
             // Speech control commands
             } else if (cmd.includes('clear text') || cmd.includes('clear speech')) {
@@ -1331,42 +1335,68 @@
                     speakResponse('Stopping speech recognition');
                 }
                 
-            // FIXED: Enhanced mode commands
+            // FIXED: Enhanced mode commands with UI updates
             } else if (cmd.includes('enhanced mode') && !cmd.includes('turn off') && !cmd.includes('disable')) {
                 settings.enhancedMode = true;
                 updateEnhancedMode(true);
+                saveSettings();
+                // FIXED: Update the actual checkbox
+                const enhancedSwitch = document.getElementById('enhancedModeSwitch');
+                if (enhancedSwitch) enhancedSwitch.checked = true;
                 speakResponse('Enhanced mode enabled');
             } else if (cmd.includes('turn off enhanced mode') || cmd.includes('disable enhanced mode')) {
                 settings.enhancedMode = false;
                 updateEnhancedMode(false);
+                saveSettings();
+                // FIXED: Update the actual checkbox
+                const enhancedSwitch = document.getElementById('enhancedModeSwitch');
+                if (enhancedSwitch) enhancedSwitch.checked = false;
                 speakResponse('Enhanced mode disabled');
                 
-            // FIXED: Speech speed commands
+            // FIXED: Speech speed commands with UI updates
             } else if (cmd.includes('speak faster') || cmd.includes('talk faster')) {
                 const newSpeed = Math.min(settings.speechSpeed + 0.5, 2.0);
                 updateSpeechSpeed(newSpeed);
+                saveSettings();
+                // FIXED: Update the actual slider
+                const speedSlider = document.getElementById('speechSpeedSlider');
+                if (speedSlider) speedSlider.value = newSpeed;
                 speakResponse('Speaking faster');
             } else if (cmd.includes('speak slower') || cmd.includes('talk slower')) {
                 const newSpeed = Math.max(settings.speechSpeed - 0.5, 0.5);
                 updateSpeechSpeed(newSpeed);
+                saveSettings();
+                // FIXED: Update the actual slider
+                const speedSlider = document.getElementById('speechSpeedSlider');
+                if (speedSlider) speedSlider.value = newSpeed;
                 speakResponse('Speaking slower');
                 
-            // FIXED: Pause commands
+            // FIXED: Pause commands with UI updates
             } else if (cmd.includes('pause more')) {
                 const newPause = Math.min(settings.pauseBetweenWords + 0.5, 2.0);
                 updatePauseBetweenWords(newPause);
+                saveSettings();
+                // FIXED: Update the actual slider
+                const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
+                if (pauseSlider) pauseSlider.value = newPause;
                 speakResponse('Pausing more between words');
             } else if (cmd.includes('pause less')) {
                 const newPause = Math.max(settings.pauseBetweenWords - 0.5, 0.0);
                 updatePauseBetweenWords(newPause);
+                saveSettings();
+                // FIXED: Update the actual slider
+                const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
+                if (pauseSlider) pauseSlider.value = newPause;
                 speakResponse('Pausing less between words');
                 
             // Voice command speech toggle
             } else if (cmd.includes('turn off voice command speech')) {
                 updateVoiceCommandSetting(false);
+                saveSettings();
                 speakResponse('Voice command speech disabled');
             } else if (cmd.includes('turn on voice command speech')) {
                 updateVoiceCommandSetting(true);
+                saveSettings();
                 speakResponse('Voice command speech enabled');
                 
             } else {
