@@ -1165,13 +1165,16 @@
             
             voiceCommandRecognition.onend = function() {
                 isVoiceCommandListening = false;
-                console.log('🎙️ Voice command ended, restarting...');
+                console.log('🎙️ Voice command ended, IMMEDIATELY restarting...');
                 
-                // Always restart voice commands if not on speech page
+                // IMMEDIATE restart - no delay
                 if (currentPage !== 'speech' && !isListening) {
+                    console.log('🔄 Immediate voice command restart');
                     setTimeout(() => {
                         startPersistentVoiceCommands();
-                    }, 1000);
+                    }, 100); // Almost immediate
+                } else {
+                    console.log('⏸️ Not restarting - on speech page or main listening active');
                 }
             };
             
@@ -1409,53 +1412,49 @@
             }, 300);
         }
 
-        // Speak complete phrase with better timing and pause handling
+        // FIXED: Speak complete phrase properly - no interruptions
         function speakCompletePhrase(text) {
             console.log('🔊 Speaking complete phrase:', text);
             
-            // Cancel any existing speech
-            speechSynth.cancel();
+            // Cancel any existing speech first
+            if (speechSynth.speaking) {
+                speechSynth.cancel();
+                console.log('Cancelled previous speech');
+            }
             
-            // Wait a moment then speak
+            // Wait longer before speaking to ensure cancellation is complete
             setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = settings.speechSpeed;
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
-                utterance.lang = 'en-US';
-                
-                // Apply pause between words setting properly
-                if (settings.pauseBetweenWords > 0) {
-                    const words = text.split(' ');
-                    let speechText = '';
-                    for (let i = 0; i < words.length; i++) {
-                        speechText += words[i];
-                        if (i < words.length - 1) {
-                            // Add pauses as commas (speech synthesis pauses)
-                            const pauseCount = Math.round(settings.pauseBetweenWords * 2);
-                            speechText += ','.repeat(pauseCount) + ' ';
-                        }
-                    }
-                    utterance.text = speechText;
+                if (speechSynth.speaking) {
+                    speechSynth.cancel();
+                    console.log('Double-cancelled speech');
                 }
                 
-                utterance.onstart = function() {
-                    console.log('Started speaking:', text);
-                    isSpeaking = true;
-                };
-                
-                utterance.onend = function() {
-                    console.log('Finished speaking:', text);
-                    isSpeaking = false;
-                };
-                
-                utterance.onerror = function(event) {
-                    console.error('Speech synthesis error:', event.error);
-                    isSpeaking = false;
-                };
-                
-                speechSynth.speak(utterance);
-            }, 800); // Longer delay to ensure clean speech
+                setTimeout(() => {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.rate = settings.speechSpeed;
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
+                    utterance.lang = 'en-US';
+                    
+                    utterance.onstart = function() {
+                        console.log('✅ Started speaking complete phrase:', text);
+                        isSpeaking = true;
+                    };
+                    
+                    utterance.onend = function() {
+                        console.log('✅ Finished speaking complete phrase:', text);
+                        isSpeaking = false;
+                    };
+                    
+                    utterance.onerror = function(event) {
+                        console.error('❌ Speech error:', event.error);
+                        isSpeaking = false;
+                    };
+                    
+                    console.log('🎵 Starting speech synthesis for:', text);
+                    speechSynth.speak(utterance);
+                }, 300); // Additional delay
+            }, 500); // Initial delay to ensure clean speech
         }
 
         // FIXED: Speech display - NO cascading, simple single phrase display + ALWAYS speak back
@@ -1999,13 +1998,9 @@
                         }
                     }, 100);
                 } else {
-                    // Start voice commands when on other pages
-                    console.log('🎙️ On non-speech page - ensuring voice commands active');
-                    setTimeout(() => {
-                        if (currentPage !== 'speech' && !isListening) {
-                            startPersistentVoiceCommands();
-                        }
-                    }, 1000);
+                    // Start voice commands when on other pages - IMMEDIATE
+                    console.log('🎙️ Non-speech page - starting voice commands IMMEDIATELY');
+                    startPersistentVoiceCommands(); // Start immediately, no delay
                 }
                 
                 // Auto-display contacts when entering phone page
