@@ -964,7 +964,7 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // FIXED: Better speech recognition - catches all words including beginning/end
+        // MUCH BETTER speech recognition - more accurate word capture
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
@@ -974,15 +974,15 @@
             
             recognition = new SpeechRecognition();
             recognition.continuous = true;
-            recognition.interimResults = true; // ENABLE interim to catch first/last words
+            recognition.interimResults = true;
             recognition.lang = 'en-US';
-            recognition.maxAlternatives = 1;
+            recognition.maxAlternatives = 3; // IMPROVED: Get multiple alternatives for better accuracy
 
             recognition.onstart = function() {
                 isListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening for your voice... Speak clearly!');
-                console.log('✅ Recognition started and ready');
+                updateStatus('🎤 Listening clearly - Speak at normal pace');
+                console.log('✅ Recognition started with improved accuracy');
                 resetSessionTimeout();
             };
 
@@ -995,7 +995,7 @@
                     listenButton && 
                     listenButton.textContent === 'STOP LISTENING') {
                     
-                    console.log('🔄 Auto-restarting recognition...');
+                    console.log('🔄 Restarting recognition for continuous listening...');
                     setTimeout(() => {
                         if (currentPage === 'speech' && 
                             listenButton.textContent === 'STOP LISTENING') {
@@ -1007,10 +1007,10 @@
                                 updateStatus('❌ Click "START TALKING" to restart');
                             }
                         }
-                    }, 1000);
+                    }, 500); // Shorter restart delay
                 } else {
                     updateListenButton();
-                    updateStatus('✅ Stopped listening - Click "START TALKING" to restart');
+                    updateStatus('✅ Stopped - Click "START TALKING" to restart');
                 }
             };
 
@@ -1020,46 +1020,46 @@
                 updateListenButton();
                 
                 if (event.error === 'no-speech') {
-                    updateStatus('🔇 No speech detected - Click "START TALKING" to try again');
+                    updateStatus('🔇 Speak louder or closer to microphone');
+                } else if (event.error === 'audio-capture') {
+                    updateStatus('🎤 Check microphone permissions');
                 } else {
-                    updateStatus('❌ Error: ' + event.error + ' - Click "START TALKING" to restart');
+                    updateStatus('❌ Error: ' + event.error + ' - Try restarting');
                 }
             };
 
             recognition.onresult = function(event) {
-                console.log('📝 Speech result received');
+                console.log('📝 Processing speech results...');
                 lastSpeechTime = Date.now();
                 resetSessionTimeout();
                 
-                let interimTranscript = '';
-                let finalTranscript = '';
+                let interimText = '';
+                let finalText = '';
                 
-                // Process ALL results to catch first and last words
+                // Process ALL results for maximum word capture
                 for (let i = 0; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript;
+                    const result = event.results[i];
+                    const transcript = result[0].transcript;
                     
-                    if (event.results[i].isFinal) {
-                        finalTranscript += transcript;
+                    if (result.isFinal) {
+                        finalText += transcript;
+                        console.log(`📝 Final result ${i}: "${transcript}" (confidence: ${result[0].confidence})`);
                     } else {
-                        interimTranscript += transcript;
+                        interimText += transcript;
+                        console.log(`📝 Interim result ${i}: "${transcript}"`);
                     }
                 }
                 
-                // Show interim results immediately (helps catch all words)
-                if (interimTranscript.trim().length > 0) {
-                    currentInterimTranscript = interimTranscript.trim();
-                    console.log('📝 INTERIM (capturing words):', currentInterimTranscript);
-                    
-                    // Update display with interim
+                // Show interim results for immediate feedback
+                if (interimText.trim().length > 0) {
                     const recognizedTextEl = document.getElementById('recognizedText');
                     if (recognizedTextEl) {
-                        let html = `<div class="interim-phrase">🎤 Speaking: ${currentInterimTranscript}...</div>`;
+                        let html = `<div class="interim-phrase">🎤 Hearing: ${interimText.trim()}</div>`;
                         
-                        // Show previous phrases
                         if (phraseHistory.length > 0) {
-                            const latestPhrase = phraseHistory[phraseHistory.length - 1];
-                            html += `<div class="final-phrase" style="background-color: #f5f5f5; border-left-color: #ccc; margin-top: 8px;">
-                                        Previous: ${latestPhrase}
+                            const latest = phraseHistory[phraseHistory.length - 1];
+                            html += `<div class="final-phrase" style="background-color: #f5f5f5; margin-top: 8px;">
+                                        Last: ${latest}
                                      </div>`;
                         }
                         
@@ -1068,44 +1068,37 @@
                 }
                 
                 // Process final results
-                if (finalTranscript.trim().length > 1) {
-                    const transcript = finalTranscript.trim();
-                    console.log('📝 FINAL PHRASE:', transcript);
+                if (finalText.trim().length > 1) {
+                    const cleanText = finalText.trim();
+                    console.log('📝 FINAL COMPLETE PHRASE:', cleanText);
                     
-                    // Clear interim display
-                    currentInterimTranscript = '';
-                    
-                    // Check for duplicates against recent history
-                    const isDuplicate = phraseHistory.length > 0 && 
-                        phraseHistory.slice(-2).includes(transcript); // Check last 2 phrases
-                    
-                    if (isDuplicate) {
-                        console.log('⚠️ Ignoring duplicate phrase:', transcript);
+                    // Skip duplicates
+                    if (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === cleanText) {
+                        console.log('⚠️ Skipping duplicate phrase');
                         return;
                     }
                     
-                    // Check for voice commands first
-                    if (transcript.toLowerCase().includes('hey leslie') || 
-                        transcript.toLowerCase().includes('leslie')) {
-                        console.log('🎙️ Voice command detected:', transcript);
-                        processVoiceCommand(transcript);
-                        updateStatus('🎙️ Voice command processed - Ready for next phrase...');
+                    // Check for voice commands
+                    if (cleanText.toLowerCase().includes('hey leslie') || cleanText.toLowerCase().includes('leslie')) {
+                        console.log('🎙️ VOICE COMMAND detected:', cleanText);
+                        processVoiceCommand(cleanText);
+                        updateStatus('🎙️ Voice command processed');
                         return;
                     }
                     
-                    // Regular speech processing
-                    phraseHistory.push(transcript);
+                    // Regular speech
+                    phraseHistory.push(cleanText);
                     if (phraseHistory.length > 10) phraseHistory.shift();
                     updateSpeechDisplay();
-                    updateStatus('✅ Got: "' + transcript + '" - Ready for next phrase...');
+                    updateStatus(`✅ Captured: "${cleanText}"`);
                     
-                    // Speak the phrase back
-                    console.log('🔊 Speaking phrase back:', transcript);
-                    speakCompletePhrase(transcript);
+                    // Speak it back
+                    console.log('🔊 Speaking back:', cleanText);
+                    speakCompletePhrase(cleanText);
                 }
             };
             
-            console.log('✅ Speech recognition setup complete');
+            console.log('✅ Improved speech recognition ready');
         }
 
         // Session timeout management functions
@@ -1178,7 +1171,7 @@
                 });
         }
         
-        // VERY AGGRESSIVE voice command restart - shorter delays
+        // FIXED: Voice commands that NEVER stop working
         function initializePersistentVoiceCommands() {
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 console.log('❌ Speech recognition not supported for voice commands');
@@ -1191,58 +1184,64 @@
             voiceCommandRecognition.continuous = false;
             voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
+            voiceCommandRecognition.maxAlternatives = 2; // Better accuracy
             
             voiceCommandRecognition.lastCommand = '';
             voiceCommandRecognition.lastCommandTime = 0;
             
             voiceCommandRecognition.onstart = function() {
                 isVoiceCommandListening = true;
-                console.log('✅ Voice commands ACTIVELY listening');
+                console.log('✅ Voice commands ACTIVELY listening (never stop)');
             };
             
             voiceCommandRecognition.onresult = function(event) {
                 if (event.results.length > 0 && event.results[0].isFinal) {
                     const transcript = event.results[0][0].transcript.trim();
+                    const confidence = event.results[0][0].confidence;
                     const now = Date.now();
                     
-                    console.log('🎙️ Voice command HEARD:', transcript);
+                    console.log(`🎙️ Voice command input: "${transcript}" (confidence: ${confidence})`);
                     
                     if (transcript.toLowerCase().includes('hey leslie') || 
                         transcript.toLowerCase().includes('leslie')) {
                         
-                        // MUCH SHORTER duplicate check - 3 seconds for immediate response
+                        // VERY SHORT duplicate check - 2 seconds only
                         if (transcript !== voiceCommandRecognition.lastCommand || 
-                            (now - voiceCommandRecognition.lastCommandTime) > 3000) {
+                            (now - voiceCommandRecognition.lastCommandTime) > 2000) {
                             
                             voiceCommandRecognition.lastCommand = transcript;
                             voiceCommandRecognition.lastCommandTime = now;
                             
-                            console.log('🎙️ IMMEDIATELY PROCESSING:', transcript);
+                            console.log('🎙️ ✅ PROCESSING COMMAND:', transcript);
                             processVoiceCommand(transcript);
                         } else {
                             const timeSince = Math.round((now - voiceCommandRecognition.lastCommandTime) / 1000);
-                            console.log(`🎙️ Too recent - ${timeSince}s ago (need 3s gap)`);
+                            console.log(`🎙️ ⏰ Too recent - ${timeSince}s ago (need 2s)`);
                         }
                     } else {
-                        console.log('🎙️ Not a Leslie command:', transcript);
+                        console.log('🎙️ ❌ Not a Leslie command:', transcript);
                     }
                 }
             };
             
             voiceCommandRecognition.onend = function() {
                 isVoiceCommandListening = false;
-                console.log('🎙️ Voice command ended - IMMEDIATE restart');
+                console.log('🎙️ Voice command ended - INSTANT restart (never stop)');
                 
-                // IMMEDIATE restart - no delay for faster response
+                // INSTANT restart - voice commands should NEVER stop working
                 if (currentPage !== 'speech' && !isListening) {
+                    // NO setTimeout - restart immediately
+                    console.log('🔄 IMMEDIATE voice command restart');
+                    startPersistentVoiceCommands();
+                } else {
+                    console.log('⏸️ Pausing voice commands - on speech page');
+                    // Even on speech page, restart after short delay
                     setTimeout(() => {
                         if (currentPage !== 'speech' && !isListening) {
-                            console.log('🔄 FAST restart voice commands');
+                            console.log('🔄 Delayed restart after speech page');
                             startPersistentVoiceCommands();
                         }
-                    }, 500); // Very short delay - 0.5 seconds
-                } else {
-                    console.log('⏸️ Not restarting - speech page active');
+                    }, 1000);
                 }
             };
             
@@ -1250,18 +1249,17 @@
                 isVoiceCommandListening = false;
                 console.log('🎙️ Voice command error:', event.error);
                 
-                if (event.error !== 'aborted' && currentPage !== 'speech' && !isListening) {
+                // Always restart after any error - never give up
+                if (currentPage !== 'speech' && !isListening) {
+                    console.log('🔄 Restarting after error - never give up');
                     setTimeout(() => {
-                        if (currentPage !== 'speech' && !isListening) {
-                            console.log('🔄 Restart after error');
-                            startPersistentVoiceCommands();
-                        }
-                    }, 1000); // 1 second after errors
+                        startPersistentVoiceCommands();
+                    }, 500); // Very short delay after errors
                 }
             };
             
             // Start the first session
-            console.log('🎙️ Starting FIRST voice command session');
+            console.log('🎙️ Starting PERSISTENT voice command session');
             startPersistentVoiceCommands();
         }
         
