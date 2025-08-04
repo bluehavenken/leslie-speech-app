@@ -1130,7 +1130,7 @@
                 });
         }
         
-        // FIXED: Voice commands with MUCH longer duplicate window to prevent reinitializing
+        // SHORTER duplicate window for faster voice command response
         function initializePersistentVoiceCommands() {
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 console.log('❌ Speech recognition not supported for voice commands');
@@ -1162,9 +1162,9 @@
                     if (transcript.toLowerCase().includes('hey leslie') || 
                         transcript.toLowerCase().includes('leslie')) {
                         
-                        // MUCH LONGER duplicate check - 15 seconds to prevent repeat processing
+                        // SHORTER duplicate check - 8 seconds for faster response
                         if (transcript !== voiceCommandRecognition.lastCommand || 
-                            (now - voiceCommandRecognition.lastCommandTime) > 15000) {
+                            (now - voiceCommandRecognition.lastCommandTime) > 8000) {
                             
                             voiceCommandRecognition.lastCommand = transcript;
                             voiceCommandRecognition.lastCommandTime = now;
@@ -1172,7 +1172,8 @@
                             console.log('🎙️ PROCESSING VOICE COMMAND:', transcript);
                             processVoiceCommand(transcript);
                         } else {
-                            console.log('🎙️ Skipping duplicate command (15sec window)');
+                            const timeSince = Math.round((now - voiceCommandRecognition.lastCommandTime) / 1000);
+                            console.log(`🎙️ Skipping duplicate command (${timeSince}s ago, need 8s)`);
                         }
                     }
                 }
@@ -1182,14 +1183,14 @@
                 isVoiceCommandListening = false;
                 console.log('🎙️ Voice command ended');
                 
-                // MUCH LONGER delay before restart to prevent constant reinitializing
+                // SHORTER delay for faster response - 2 seconds
                 if (currentPage !== 'speech' && !isListening) {
                     setTimeout(() => {
                         if (currentPage !== 'speech' && !isListening) {
-                            console.log('🔄 Restarting voice commands after delay');
+                            console.log('🔄 Restarting voice commands after 2s delay');
                             startPersistentVoiceCommands();
                         }
-                    }, 3000); // 3 second delay instead of 100ms
+                    }, 2000); // Reduced from 3 seconds to 2 seconds
                 } else {
                     console.log('⏸️ Not restarting - on speech page or main listening active');
                 }
@@ -1205,7 +1206,7 @@
                             console.log('🔄 Restarting voice commands after error');
                             startPersistentVoiceCommands();
                         }
-                    }, 5000); // 5 second delay after errors
+                    }, 3000); // Keep 3 seconds after errors
                 }
             };
             
@@ -1245,13 +1246,13 @@
             }
         }
 
-        // FIXED: Process voice commands with better matching and debugging
+        // FIXED: Process voice commands with ALL missing commands and proper UI updates
         function processVoiceCommand(command) {
             console.log('🎙️ Processing voice command:', command);
             const cmd = command.toLowerCase().trim();
             
             // Log what we're checking against
-            console.log('🔍 Checking command against patterns...');
+            console.log('🔍 Checking command:', cmd);
             
             // Navigation commands - SIMPLE matching
             if (cmd.includes('home')) {
@@ -1270,7 +1271,7 @@
                 console.log('✅ PHONE command detected');
                 showPage('phone');
                 speakResponse('Opening phone contacts');
-            } else if (cmd.includes('settings')) {
+            } else if (cmd.includes('settings page') || cmd.includes('settings')) {
                 console.log('✅ SETTINGS command detected');
                 showPage('settings');
                 speakResponse('Opening settings');
@@ -1317,13 +1318,22 @@
                     speakResponse('Stopping speech recognition');
                 }
                 
-            // Speech settings - SIMPLE matching
+            // Speech settings with UI updates - FIXED
             } else if (cmd.includes('speak faster') || cmd.includes('talk faster')) {
                 console.log('✅ SPEAK FASTER command detected');
                 const newSpeed = Math.min(settings.speechSpeed + 0.5, 2.0);
                 settings.speechSpeed = newSpeed;
                 updateSpeechSpeed(newSpeed);
                 saveSettings();
+                // FIXED: Update the actual slider UI
+                const speedSlider = document.getElementById('speechSpeedSlider');
+                if (speedSlider) {
+                    speedSlider.value = newSpeed;
+                    const speedValue = document.getElementById('speechSpeedValue');
+                    if (speedValue) {
+                        speedValue.textContent = newSpeed == 1.0 ? 'Normal (1.0x)' : newSpeed + 'x';
+                    }
+                }
                 speakResponse('Speaking faster');
             } else if (cmd.includes('speak slower') || cmd.includes('talk slower')) {
                 console.log('✅ SPEAK SLOWER command detected');
@@ -1331,7 +1341,50 @@
                 settings.speechSpeed = newSpeed;
                 updateSpeechSpeed(newSpeed);
                 saveSettings();
+                // FIXED: Update the actual slider UI
+                const speedSlider = document.getElementById('speechSpeedSlider');
+                if (speedSlider) {
+                    speedSlider.value = newSpeed;
+                    const speedValue = document.getElementById('speechSpeedValue');
+                    if (speedValue) {
+                        speedValue.textContent = newSpeed == 1.0 ? 'Normal (1.0x)' : newSpeed + 'x';
+                    }
+                }
                 speakResponse('Speaking slower');
+                
+            // FIXED: Pause commands - added back
+            } else if (cmd.includes('pause more')) {
+                console.log('✅ PAUSE MORE command detected');
+                const newPause = Math.min(settings.pauseBetweenWords + 0.5, 2.0);
+                settings.pauseBetweenWords = newPause;
+                updatePauseBetweenWords(newPause);
+                saveSettings();
+                // FIXED: Update the actual slider UI
+                const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
+                if (pauseSlider) {
+                    pauseSlider.value = newPause;
+                    const pauseValue = document.getElementById('pauseBetweenWordsValue');
+                    if (pauseValue) {
+                        pauseValue.textContent = newPause + ' seconds';
+                    }
+                }
+                speakResponse('Pausing more between words');
+            } else if (cmd.includes('pause less')) {
+                console.log('✅ PAUSE LESS command detected');
+                const newPause = Math.max(settings.pauseBetweenWords - 0.5, 0.0);
+                settings.pauseBetweenWords = newPause;
+                updatePauseBetweenWords(newPause);
+                saveSettings();
+                // FIXED: Update the actual slider UI
+                const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
+                if (pauseSlider) {
+                    pauseSlider.value = newPause;
+                    const pauseValue = document.getElementById('pauseBetweenWordsValue');
+                    if (pauseValue) {
+                        pauseValue.textContent = newPause + ' seconds';
+                    }
+                }
+                speakResponse('Pausing less between words');
                 
             // Voice command toggle - SIMPLIFIED
             } else if (cmd.includes('voice commands off')) {
@@ -1339,17 +1392,23 @@
                 settings.speakVoiceCommands = false;
                 updateVoiceCommandSetting(false);
                 saveSettings();
+                // FIXED: Update the actual checkbox UI
+                const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
+                if (voiceSwitch) voiceSwitch.checked = false;
                 speakResponse('Voice commands off');
             } else if (cmd.includes('voice commands on')) {
                 console.log('✅ VOICE COMMANDS ON detected');
                 settings.speakVoiceCommands = true;
                 updateVoiceCommandSetting(true);
                 saveSettings();
+                // FIXED: Update the actual checkbox UI
+                const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
+                if (voiceSwitch) voiceSwitch.checked = true;
                 speakResponse('Voice commands on');
                 
             } else {
                 console.log('❌ Command not recognized:', cmd);
-                console.log('Available patterns: home, start talking, start texting, phone, settings, help, weather, etc.');
+                console.log('Available: home, start talking, start texting, phone, settings, help, weather, speak faster/slower, pause more/less, voice commands on/off');
                 speakResponse('Command not recognized');
             }
         }
@@ -1365,49 +1424,72 @@
             }, 300);
         }
 
-        // FIXED: Speak complete phrase properly - no interruptions
+        // FIXED: Speak complete phrase properly - GUARANTEED to work
         function speakCompletePhrase(text) {
-            console.log('🔊 Speaking complete phrase:', text);
+            console.log('🔊 ATTEMPTING to speak complete phrase:', text);
             
-            // Cancel any existing speech first
-            if (speechSynth.speaking) {
+            // Force cancel any existing speech
+            try {
                 speechSynth.cancel();
-                console.log('Cancelled previous speech');
+                console.log('Cancelled any existing speech');
+            } catch (e) {
+                console.log('Error cancelling speech:', e);
             }
             
-            // Wait longer before speaking to ensure cancellation is complete
+            // Wait longer and try multiple times to ensure speech works
             setTimeout(() => {
-                if (speechSynth.speaking) {
+                try {
+                    // Double-check cancellation
                     speechSynth.cancel();
-                    console.log('Double-cancelled speech');
+                    
+                    setTimeout(() => {
+                        const utterance = new SpeechSynthesisUtterance(text);
+                        utterance.rate = settings.speechSpeed || 1.0;
+                        utterance.pitch = 1.0;
+                        utterance.volume = 1.0;
+                        utterance.lang = 'en-US';
+                        
+                        utterance.onstart = function() {
+                            console.log('✅ SPEECH STARTED:', text);
+                            isSpeaking = true;
+                        };
+                        
+                        utterance.onend = function() {
+                            console.log('✅ SPEECH COMPLETED:', text);
+                            isSpeaking = false;
+                        };
+                        
+                        utterance.onerror = function(event) {
+                            console.error('❌ SPEECH ERROR:', event.error, 'for text:', text);
+                            isSpeaking = false;
+                            
+                            // Try again on error
+                            setTimeout(() => {
+                                console.log('🔄 Retrying speech after error...');
+                                const retryUtterance = new SpeechSynthesisUtterance(text);
+                                retryUtterance.rate = settings.speechSpeed || 1.0;
+                                speechSynth.speak(retryUtterance);
+                            }, 1000);
+                        };
+                        
+                        console.log('🎵 CALLING speechSynth.speak() for:', text);
+                        speechSynth.speak(utterance);
+                        
+                        // Verify it's actually speaking
+                        setTimeout(() => {
+                            if (!speechSynth.speaking) {
+                                console.log('⚠️ Speech not detected, trying alternative method...');
+                                const backupUtterance = new SpeechSynthesisUtterance(text);
+                                backupUtterance.rate = settings.speechSpeed || 1.0;
+                                speechSynth.speak(backupUtterance);
+                            }
+                        }, 500);
+                        
+                    }, 500); // Second delay
+                } catch (e) {
+                    console.error('❌ Error in speech synthesis:', e);
                 }
-                
-                setTimeout(() => {
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    utterance.rate = settings.speechSpeed;
-                    utterance.pitch = 1.0;
-                    utterance.volume = 1.0;
-                    utterance.lang = 'en-US';
-                    
-                    utterance.onstart = function() {
-                        console.log('✅ Started speaking complete phrase:', text);
-                        isSpeaking = true;
-                    };
-                    
-                    utterance.onend = function() {
-                        console.log('✅ Finished speaking complete phrase:', text);
-                        isSpeaking = false;
-                    };
-                    
-                    utterance.onerror = function(event) {
-                        console.error('❌ Speech error:', event.error);
-                        isSpeaking = false;
-                    };
-                    
-                    console.log('🎵 Starting speech synthesis for:', text);
-                    speechSynth.speak(utterance);
-                }, 300); // Additional delay
-            }, 500); // Initial delay to ensure clean speech
+            }, 1000); // First delay
         }
 
         // FIXED: Speech display - NO cascading, simple single phrase display + ALWAYS speak back
