@@ -964,12 +964,12 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // FIXED: Speech recognition - NO RESTART after commands, longer delays for first words
+        // FIXED: Speech recognition settings - NO interim results to prevent cascading
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
             recognition.continuous = true; // Keep continuous
-            recognition.interimResults = true; // CHANGED: Allow interim to catch first words
+            recognition.interimResults = false; // FIXED: NO interim results to prevent cascading
             recognition.lang = 'en-US';
             recognition.maxAlternatives = 1;
 
@@ -1079,80 +1079,40 @@
                 lastSpeechTime = Date.now();
                 resetSessionTimeout();
                 
-                let interimTranscript = '';
-                let finalTranscript = '';
-                
-                // FIXED: Process both interim and final results to catch first words
+                // FIXED: Only process FINAL results to prevent cascading speech
                 for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript;
-                    
                     if (event.results[i].isFinal) {
-                        finalTranscript += transcript;
-                    } else {
-                        interimTranscript += transcript;
-                    }
-                }
-                
-                // Show interim results immediately to catch first words
-                if (interimTranscript && interimTranscript.trim().length > 0) {
-                    currentInterimTranscript = interimTranscript.trim();
-                    console.log('📝 INTERIM (first words):', currentInterimTranscript);
-                    
-                    // Update display with interim text
-                    const recognizedTextEl = document.getElementById('recognizedText');
-                    if (recognizedTextEl) {
-                        let html = '';
+                        const transcript = event.results[i][0].transcript.trim();
+                        console.log('📝 FINAL PHRASE:', transcript);
                         
-                        // Show current interim phrase
-                        html += `<div class="interim-phrase">🎤 Speaking: ${currentInterimTranscript}...</div>`;
-                        
-                        // Show previous final phrases
-                        if (phraseHistory.length > 0) {
-                            for (let i = phraseHistory.length - 1; i >= 0; i--) {
-                                const phrase = phraseHistory[i];
-                                html += `<div class="final-phrase" style="background-color: #f5f5f5; border-left-color: #ccc;">
-                                            ${phrase}
-                                         </div>`;
+                        if (transcript && transcript.length > 1) {
+                            // Check for duplicates
+                            const lastPhrase = phraseHistory.length > 0 ? phraseHistory[phraseHistory.length - 1] : '';
+                            if (transcript === lastPhrase) {
+                                console.log('⚠️ Ignoring duplicate phrase');
+                                return;
                             }
+                            
+                            // Check for voice commands first
+                            if (transcript.toLowerCase().includes('hey leslie') || transcript.toLowerCase().includes('leslie')) {
+                                console.log('🎙️ Voice command in speech mode:', transcript);
+                                processVoiceCommand(transcript);
+                                updateStatus('🎙️ Voice command processed - Ready for next phrase...');
+                                return;
+                            }
+                            
+                            // Regular speech processing - SPEAK COMPLETE PHRASE ONCE
+                            phraseHistory.push(transcript);
+                            if (phraseHistory.length > 10) phraseHistory.shift();
+                            updateSpeechDisplay();
+                            updateStatus('✅ Got: "' + transcript + '" - Ready for next phrase...');
+                            
+                            // SPEAK COMPLETE PHRASE BACK ONCE
+                            console.log('🔊 SPEAKING COMPLETE PHRASE:', transcript);
+                            speakCompletePhrase(transcript);
                         }
-                        
-                        recognizedTextEl.innerHTML = html;
+                        break;
                     }
-                }
-                
-                // Process final results
-                if (finalTranscript && finalTranscript.trim().length > 1) {
-                    const transcript = finalTranscript.trim();
-                    console.log('📝 FINAL PHRASE:', transcript);
-                    
-                    // Clear interim display
-                    currentInterimTranscript = '';
-                    
-                    // Check for duplicates
-                    const lastPhrase = phraseHistory.length > 0 ? phraseHistory[phraseHistory.length - 1] : '';
-                    if (transcript === lastPhrase) {
-                        console.log('⚠️ Ignoring duplicate phrase');
-                        return;
-                    }
-                    
-                    // Check for voice commands first
-                    if (transcript.toLowerCase().includes('hey leslie') || transcript.toLowerCase().includes('leslie')) {
-                        console.log('🎙️ Voice command in speech mode:', transcript);
-                        processVoiceCommand(transcript);
-                        updateStatus('🎙️ Voice command processed - Ready for next phrase...');
-                        // DON'T restart recognition after voice commands
-                        return;
-                    }
-                    
-                    // Regular speech processing - ALWAYS SPEAK BACK
-                    phraseHistory.push(transcript);
-                    if (phraseHistory.length > 10) phraseHistory.shift();
-                    updateSpeechDisplay();
-                    updateStatus('✅ Got: "' + transcript + '" - Ready for next phrase...');
-                    
-                    // GUARANTEED: Always speak the phrase back immediately
-                    console.log('🔊 SPEAKING PHRASE BACK:', transcript);
-                    speakCompletePhrase(transcript);
                 }
             };
         }
@@ -1191,7 +1151,7 @@
             return (Date.now() - lastSpeechTime) > SESSION_TIMEOUT;
         }
 
-        // Voice commands with persistent recognition
+        // Voice commands with persistent recognition - FIXED TO WORK
         function setupVoiceCommands() {
             console.log('🎙️ Setting up voice commands...');
             
@@ -1200,12 +1160,17 @@
                     console.log('✅ Microphone permission granted');
                     stream.getTracks().forEach(track => track.stop());
                     
+                    // Start voice commands immediately
                     setTimeout(() => {
                         initializePersistentVoiceCommands();
-                    }, 3000);
+                    }, 1000); // Shorter delay
                 })
                 .catch(function(error) {
                     console.log('❌ Microphone permission denied:', error);
+                    // Try to initialize anyway
+                    setTimeout(() => {
+                        initializePersistentVoiceCommands();
+                    }, 2000);
                 });
         }
         
@@ -1263,13 +1228,13 @@
                 isVoiceCommandListening = false;
                 console.log('🎙️ Voice command session ended');
                 
-                // MUCH LONGER delay to prevent interference with speech recognition
+                // SHORTER delay to restart voice commands more aggressively
                 if (currentPage !== 'speech' && !isListening && !isSpeaking) {
                     setTimeout(() => {
                         if (currentPage !== 'speech' && !isListening && !isSpeaking) {
                             startPersistentVoiceCommands();
                         }
-                    }, 4000); // 4 seconds between voice command sessions
+                    }, 1500); // Reduced from 4 seconds to 1.5 seconds
                 }
             };
             
@@ -1277,19 +1242,20 @@
                 isVoiceCommandListening = false;
                 console.log('🎙️ Voice command error:', event.error);
                 
-                // Even longer delay after errors
+                // Shorter delay after errors too
                 if (event.error !== 'aborted' && currentPage !== 'speech' && !isListening && !isSpeaking) {
                     setTimeout(() => {
                         if (currentPage !== 'speech' && !isListening && !isSpeaking) {
                             startPersistentVoiceCommands();
                         }
-                    }, 8000); // 8 seconds after errors
+                    }, 3000); // Reduced from 8 seconds to 3 seconds
                 }
             };
             
             startPersistentVoiceCommands();
         }
         
+        // FIXED: Start persistent voice commands immediately and more aggressively
         function startPersistentVoiceCommands() {
             if (currentPage !== 'speech' && !isListening && !isVoiceCommandListening && voiceCommandRecognition) {
                 try {
@@ -1299,9 +1265,10 @@
                     console.log('🎙️ Failed to start voice commands:', e);
                     isVoiceCommandListening = false;
                     
+                    // Retry more aggressively
                     setTimeout(() => {
                         startPersistentVoiceCommands();
-                    }, 5000);
+                    }, 2000); // Shorter retry delay
                 }
             }
         }
