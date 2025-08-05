@@ -117,12 +117,26 @@
             `;
         }
 
-        function startVoiceCommands() {
+        async function startVoiceCommands() {
             log('🎙️ Starting voice command test...', 'info');
             
             // Check browser support
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 log('❌ ERROR: Speech recognition not supported in this browser', 'error');
+                return;
+            }
+
+            // First try to get microphone permission explicitly
+            try {
+                log('🎤 Requesting microphone permission...', 'info');
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                log('✅ Microphone permission granted!', 'success');
+                
+                // Stop the stream immediately as we just needed permission
+                stream.getTracks().forEach(track => track.stop());
+            } catch (permError) {
+                log(`❌ Microphone permission error: ${permError.message}`, 'error');
+                log('💡 Please click the microphone icon in your address bar and allow access', 'warning');
                 return;
             }
             
@@ -178,7 +192,7 @@
                     log('🔄 Voice recognition ENDED - restarting in 2 seconds...', 'warning');
                     updateDebugInfo();
                     
-                    // Auto-restart
+                    // Auto-restart only if no permission errors
                     setTimeout(() => {
                         if (voiceRecognition) {
                             log('🔄 Restarting voice recognition...', 'info');
@@ -186,6 +200,10 @@
                                 voiceRecognition.start();
                             } catch (e) {
                                 log(`❌ Restart failed: ${e.message}`, 'error');
+                                if (e.message.includes('not-allowed')) {
+                                    log('🛑 Stopping auto-restart due to permission issue', 'error');
+                                    return;
+                                }
                             }
                         }
                     }, 2000);
@@ -196,7 +214,12 @@
                     log(`❌ Voice recognition ERROR: ${event.error}`, 'error');
                     
                     if (event.error === 'not-allowed') {
-                        log('❌ MICROPHONE PERMISSION DENIED - Please allow microphone access', 'error');
+                        log('❌ MICROPHONE PERMISSION DENIED', 'error');
+                        log('💡 SOLUTION: Click the 🎤 icon in your address bar and select "Allow"', 'warning');
+                        log('💡 OR: Go to browser settings and allow microphone for this site', 'warning');
+                        log('💡 Then refresh the page and try again', 'warning');
+                        // Don't restart on permission errors
+                        return;
                     } else if (event.error === 'no-speech') {
                         log('⚠️ No speech detected - try speaking louder', 'warning');
                     } else if (event.error === 'audio-capture') {
