@@ -861,8 +861,8 @@
                 </div>
                 <div class="settings-section">
                     <div class="settings-title">Pause Between Words</div>
-                    <div class="settings-description">How long to pause between words when speaking</div>
-                    <input type="range" class="slider" id="pauseBetweenWordsSlider" min="0" max="5" step="0.5" value="0.5">
+                    <div class="settings-description">How long to wait for you to continue speaking (helps with slower speech patterns)</div>
+                    <input type="range" class="slider" id="pauseBetweenWordsSlider" min="0.5" max="5" step="0.5" value="0.5">
                     <div class="setting-value" id="pauseBetweenWordsValue">0.5 seconds</div>
                 </div>
                 <div class="settings-section">
@@ -994,14 +994,18 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
             recognition.continuous = true;
-            recognition.interimResults = false;
+            recognition.interimResults = true; // Enable interim results to handle pauses better
             recognition.lang = 'en-US';
             recognition.maxAlternatives = 1;
+
+            // Variables for handling pause tolerance
+            let speechTimeout = null;
+            let currentInterimText = '';
 
             recognition.onstart = function() {
                 isListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening - Speak clearly');
+                updateStatus(`🎤 Listening - Pause tolerance: ${settings.pauseBetweenWords}s between words`);
                 resetSessionTimeout();
             };
 
@@ -1036,31 +1040,70 @@
                 resetSessionTimeout();
                 
                 let finalText = '';
-                for (let i = event.results.length - 1; i >= 0; i--) {
+                let interimText = '';
+                
+                // Process all results
+                for (let i = 0; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
-                        finalText = event.results[i][0].transcript.trim();
-                        break;
+                        finalText += transcript;
+                    } else {
+                        interimText += transcript;
                     }
                 }
                 
-                if (finalText && finalText.length > 1) {
-                    if (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === finalText) {
-                        return; // Skip duplicates
+                // Handle interim results with custom pause tolerance
+                if (interimText) {
+                    currentInterimText = interimText;
+                    
+                    // Clear existing timeout
+                    if (speechTimeout) {
+                        clearTimeout(speechTimeout);
                     }
                     
-                    if (finalText.toLowerCase().includes('hey leslie') || finalText.toLowerCase().includes('leslie')) {
-                        processVoiceCommand(finalText);
-                        updateStatus('🎙️ Voice command processed');
-                        return;
-                    }
+                    // Set new timeout based on user's pause setting
+                    const pauseTimeoutMs = Math.max(1000, settings.pauseBetweenWords * 2000);
+                    speechTimeout = setTimeout(() => {
+                        if (currentInterimText.trim()) {
+                            // Treat the interim text as final if user paused long enough
+                            processFinalSpeech(currentInterimText.trim());
+                            currentInterimText = '';
+                        }
+                    }, pauseTimeoutMs);
                     
-                    phraseHistory.push(finalText);
-                    if (phraseHistory.length > 10) phraseHistory.shift();
-                    updateSpeechDisplay();
-                    updateStatus(`✅ Got: "${finalText}"`);
-                    speakCompletePhrase(finalText);
+                    // Show interim text with pause indicator
+                    updateStatus(`🎤 Hearing: "${interimText}" (waiting ${settings.pauseBetweenWords}s for more...)`);
+                }
+                
+                // Handle final results immediately
+                if (finalText.trim()) {
+                    if (speechTimeout) {
+                        clearTimeout(speechTimeout);
+                        speechTimeout = null;
+                    }
+                    processFinalSpeech(finalText.trim());
                 }
             };
+        }
+
+        function processFinalSpeech(text) {
+            if (text && text.length > 1) {
+                if (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === text) {
+                    return; // Skip duplicates
+                }
+                
+                if (text.toLowerCase().includes('hey leslie') || text.toLowerCase().includes('leslie')) {
+                    processVoiceCommand(text);
+                    updateStatus('🎙️ Voice command processed');
+                    return;
+                }
+                
+                phraseHistory.push(text);
+                if (phraseHistory.length > 10) phraseHistory.shift();
+                updateSpeechDisplay();
+                updateStatus(`✅ Got: "${text}"`);
+                speakCompletePhrase(text);
+            }
         }
 
         // === VOICE COMMANDS ===
@@ -1426,50 +1469,18 @@
             if (text) {
                 speechSynth.cancel();
                 setTimeout(() => {
-                    // FIXED: Proper pause implementation
-                    if (settings.pauseBetweenWords > 0) {
-                        // Split text and speak word by word with actual delays
-                        const words = text.split(/\s+/);
-                        let wordIndex = 0;
-                        
-                        function speakNextWord() {
-                            if (wordIndex < words.length) {
-                                const utterance = new SpeechSynthesisUtterance(words[wordIndex]);
-                                utterance.rate = settings.speechSpeed;
-                                utterance.pitch = 1.0;
-                                utterance.volume = 1.0;
-                                
-                                utterance.onend = function() {
-                                    wordIndex++;
-                                    if (wordIndex < words.length) {
-                                        // Wait for the pause duration before next word
-                                        setTimeout(speakNextWord, settings.pauseBetweenWords * 1000);
-                                    } else {
-                                        // All words spoken, clear the text
-                                        textInput.value = '';
-                                        updateTextSpeakButton();
-                                    }
-                                };
-                                
-                                speechSynth.speak(utterance);
-                            }
-                        }
-                        
-                        speakNextWord();
-                    } else {
-                        // No pause - speak normally
-                        const utterance = new SpeechSynthesisUtterance(text);
-                        utterance.rate = settings.speechSpeed;
-                        utterance.pitch = 1.0;
-                        utterance.volume = 1.0;
-                        
-                        utterance.onend = function() {
-                            textInput.value = '';
-                            updateTextSpeakButton();
-                        };
-                        
-                        speechSynth.speak(utterance);
-                    }
+                    // Simple speech without word-by-word pausing for text input
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.rate = settings.speechSpeed;
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
+                    
+                    utterance.onend = function() {
+                        textInput.value = '';
+                        updateTextSpeakButton();
+                    };
+                    
+                    speechSynth.speak(utterance);
                 }, 200);
             }
         }
@@ -2212,6 +2223,20 @@
             if (label) {
                 label.textContent = value + ' seconds';
             }
+            
+            // Update the speech recognition if it's active
+            if (recognition && isListening) {
+                // Need to restart recognition for new settings to take effect
+                try {
+                    recognition.abort();
+                } catch(e) {}
+                setTimeout(() => {
+                    if (currentPage === 'speech') {
+                        startListening();
+                    }
+                }, 500);
+            }
+            
             saveSettings();
         }
 
