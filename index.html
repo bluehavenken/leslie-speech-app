@@ -914,10 +914,14 @@
         let lastSpeechTime = null;
         const SESSION_TIMEOUT = 3 * 60 * 1000; // 3 minutes
         
-        // FIXED: Add duplicate prevention
+        // FIXED: Improved duplicate prevention and command processing
         let lastProcessedPhrase = '';
         let lastPhraseTime = 0;
-        const DUPLICATE_TIMEOUT = 2000; // 2 seconds
+        let lastVoiceCommand = '';
+        let lastVoiceCommandTime = 0;
+        const DUPLICATE_TIMEOUT = 3000; // 3 seconds for speech
+        const COMMAND_TIMEOUT = 2000; // 2 seconds for commands
+        let isProcessingCommand = false;
         
         // Settings
         let settings = {
@@ -1048,8 +1052,8 @@
                 let finalText = '';
                 let interimText = '';
                 
-                // Process all results
-                for (let i = 0; i < event.results.length; i++) {
+                // FIXED: More careful result processing
+                for (let i = event.resultIndex; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
                         finalText += transcript;
@@ -1059,7 +1063,7 @@
                 }
                 
                 // Handle interim results with custom pause tolerance
-                if (interimText) {
+                if (interimText && !finalText) {
                     currentInterimText = interimText;
                     
                     // Clear existing timeout
@@ -1088,45 +1092,52 @@
                         speechTimeout = null;
                     }
                     processFinalSpeech(finalText.trim());
+                    currentInterimText = ''; // Clear interim text
                 }
             };
         }
 
         function processFinalSpeech(text) {
-            if (text && text.length > 1) {
-                const currentTime = Date.now();
-                
-                // FIXED: Prevent duplicate processing
-                if (text === lastProcessedPhrase && (currentTime - lastPhraseTime) < DUPLICATE_TIMEOUT) {
-                    console.log('🚫 Duplicate phrase detected, skipping:', text);
-                    return;
-                }
-                
-                lastProcessedPhrase = text;
-                lastPhraseTime = currentTime;
-                
-                // Skip if already in phrase history (recent duplicate)
-                if (phraseHistory.length > 0 && phraseHistory[phraseHistory.length - 1] === text) {
+            if (!text || text.length <= 1) return;
+            
+            const currentTime = Date.now();
+            
+            // FIXED: Better duplicate prevention
+            if (text === lastProcessedPhrase && (currentTime - lastPhraseTime) < DUPLICATE_TIMEOUT) {
+                console.log('🚫 Duplicate phrase detected, skipping:', text);
+                return;
+            }
+            
+            lastProcessedPhrase = text;
+            lastPhraseTime = currentTime;
+            
+            // Check for voice commands first
+            if (text.toLowerCase().includes('hey leslie') || text.toLowerCase().includes('leslie')) {
+                processVoiceCommand(text);
+                updateStatus('🎙️ Voice command processed');
+                return;
+            }
+            
+            // Skip if already in recent phrase history
+            if (phraseHistory.length > 0) {
+                const recentPhrases = phraseHistory.slice(-3); // Check last 3 phrases
+                if (recentPhrases.includes(text)) {
                     console.log('🚫 Recent duplicate in history, skipping:', text);
                     return;
                 }
-                
-                if (text.toLowerCase().includes('hey leslie') || text.toLowerCase().includes('leslie')) {
-                    processVoiceCommand(text);
-                    updateStatus('🎙️ Voice command processed');
-                    return;
-                }
-                
-                phraseHistory.push(text);
-                if (phraseHistory.length > 10) phraseHistory.shift();
-                updateSpeechDisplay();
-                updateStatus(`✅ Got: "${text}"`);
-                
-                // FIXED: Ensure speech synthesis happens
-                setTimeout(() => {
-                    speakCompletePhrase(text);
-                }, 200);
             }
+            
+            // Add to phrase history
+            phraseHistory.push(text);
+            if (phraseHistory.length > 10) phraseHistory.shift();
+            
+            updateSpeechDisplay();
+            updateStatus(`✅ Got: "${text}"`);
+            
+            // Speak the phrase
+            setTimeout(() => {
+                speakCompletePhrase(text);
+            }, 200);
         }
 
         // === VOICE COMMANDS ===
@@ -1155,10 +1166,11 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             voiceCommandRecognition = new SpeechRecognition();
             
+            // FIXED: More reliable voice command settings
             voiceCommandRecognition.continuous = true;
-            voiceCommandRecognition.interimResults = true;
+            voiceCommandRecognition.interimResults = false; // Only final results for commands
             voiceCommandRecognition.lang = 'en-US';
-            voiceCommandRecognition.maxAlternatives = 3;
+            voiceCommandRecognition.maxAlternatives = 1; // Reduced for consistency
             
             voiceCommandRecognition.onstart = function() {
                 isVoiceCommandListening = true;
@@ -1167,25 +1179,28 @@
             };
             
             voiceCommandRecognition.onresult = function(event) {
+                // FIXED: Only process final results for voice commands
                 for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript.trim();
-                    const confidence = event.results[i][0].confidence;
-                    const isFinal = event.results[i].isFinal;
-                    
-                    console.log(`🎙️ Voice command heard: "${transcript}" (confidence: ${confidence?.toFixed(2) || 'unknown'}, final: ${isFinal})`);
-                    
-                    const lowerTranscript = transcript.toLowerCase();
-                    if (lowerTranscript.includes('leslie') || 
-                        lowerTranscript.includes('hey leslie') ||
-                        lowerTranscript.includes('less lee') ||
-                        lowerTranscript.includes('lesley') ||
-                        lowerTranscript.includes('wesley') ||
-                        lowerTranscript.includes('bessie')) {
+                    if (event.results[i].isFinal) {
+                        const transcript = event.results[i][0].transcript.trim();
+                        const confidence = event.results[i][0].confidence;
                         
-                        console.log('🎯 Leslie command detected:', transcript);
+                        console.log(`🎙️ Voice command heard: "${transcript}" (confidence: ${confidence?.toFixed(2) || 'unknown'})`);
                         
-                        if (confidence === undefined || confidence > 0.3) {
-                            processVoiceCommand(transcript);
+                        const lowerTranscript = transcript.toLowerCase();
+                        if (lowerTranscript.includes('leslie') || 
+                            lowerTranscript.includes('hey leslie') ||
+                            lowerTranscript.includes('less lee') ||
+                            lowerTranscript.includes('lesley') ||
+                            lowerTranscript.includes('wesley') ||
+                            lowerTranscript.includes('bessie')) {
+                            
+                            console.log('🎯 Leslie command detected:', transcript);
+                            
+                            // FIXED: Better confidence checking and duplicate prevention
+                            if (confidence === undefined || confidence > 0.4) {
+                                processVoiceCommand(transcript);
+                            }
                         }
                     }
                 }
@@ -1196,10 +1211,13 @@
                 updateVoiceCommandStatus('ready');
                 console.log('🎙️ Voice command session ended - restarting immediately');
                 
+                // FIXED: Consistent restart timing
                 if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
                     setTimeout(() => {
-                        startVoiceCommands();
-                    }, 100);
+                        if (!isVoiceCommandListening && currentPage !== 'speech' && !isListening) {
+                            startVoiceCommands();
+                        }
+                    }, 300); // Slightly longer delay for stability
                 }
             };
             
@@ -1215,10 +1233,13 @@
                 
                 updateVoiceCommandStatus('ready');
                 
+                // FIXED: Error recovery with longer delay
                 if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
                     setTimeout(() => {
-                        startVoiceCommands();
-                    }, 200);
+                        if (!isVoiceCommandListening && currentPage !== 'speech' && !isListening) {
+                            startVoiceCommands();
+                        }
+                    }, 1000); // Longer delay after errors
                 }
             };
             
@@ -1242,7 +1263,7 @@
                 if (microphonePermissionGranted) {
                     setTimeout(() => {
                         startVoiceCommands();
-                    }, 500);
+                    }, 1000);
                 }
             }
         }
@@ -1298,31 +1319,43 @@
         }
 
         function processVoiceCommand(command) {
+            // FIXED: Prevent overlapping command processing
+            if (isProcessingCommand) {
+                console.log('🚫 Command already processing, skipping:', command);
+                return;
+            }
+            
+            const currentTime = Date.now();
             const cmd = command.toLowerCase().trim();
+            
+            // FIXED: Enhanced duplicate command prevention
+            if (cmd === lastVoiceCommand && (currentTime - lastVoiceCommandTime) < COMMAND_TIMEOUT) {
+                console.log('🚫 Duplicate command detected, skipping:', cmd);
+                return;
+            }
+            
+            isProcessingCommand = true;
+            lastVoiceCommand = cmd;
+            lastVoiceCommandTime = currentTime;
+            
             console.log('🎯 Processing voice command:', cmd);
             
-            // FIXED: Improved close command detection and processing
+            // FIXED: Priority processing for close command
             const weatherDisplay = document.getElementById('weatherDisplay');
             const isWeatherOpen = weatherDisplay && !weatherDisplay.classList.contains('hidden');
             
-            // FIXED: Priority processing for close command
             if (cmd.includes('close')) {
                 console.log('🎯 Close command detected, weather open:', isWeatherOpen);
                 if (isWeatherOpen) {
                     hideWeather();
                     speakResponse('Weather closed');
-                    return; // Exit early to prevent other processing
                 } else if (currentPage !== 'home') {
                     showPage('home');
                     speakResponse('Going home');
-                    return; // Exit early
                 } else {
                     speakResponse('Nothing to close');
-                    return; // Exit early
                 }
-            }
-            
-            if (cmd.includes('home')) {
+            } else if (cmd.includes('home')) {
                 if (isWeatherOpen) hideWeather();
                 showPage('home');
                 speakResponse('Going home');
@@ -1386,7 +1419,7 @@
                 if (enhancedSwitch) enhancedSwitch.checked = false;
                 speakResponse('Enhanced mode off');
                 
-            // Speech settings - FIXED: Changed from 0.5 to 0.2 increments
+            // FIXED: Speech settings commands with better matching
             } else if (cmd.includes('speak faster') || cmd.includes('talk faster') || cmd.includes('faster')) {
                 const newSpeed = Math.min(settings.speechSpeed + 0.2, 2.0);
                 settings.speechSpeed = parseFloat(newSpeed.toFixed(1));
@@ -1419,14 +1452,14 @@
                 const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
                 if (pauseSlider) pauseSlider.value = newPause;
                 speakResponse('Pausing less between words');
-            } else if (cmd.includes('voice commands off')) {
+            } else if (cmd.includes('voice commands off') || cmd.includes('voice command off')) {
                 settings.speakVoiceCommands = false;
                 updateVoiceCommandSetting(false);
                 saveSettings();
                 const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
                 if (voiceSwitch) voiceSwitch.checked = false;
                 speakResponse('Voice command responses disabled');
-            } else if (cmd.includes('voice commands on')) {
+            } else if (cmd.includes('voice commands on') || cmd.includes('voice command on')) {
                 settings.speakVoiceCommands = true;
                 updateVoiceCommandSetting(true);
                 saveSettings();
@@ -1444,6 +1477,11 @@
                 console.log('❌ Command not recognized:', cmd);
                 speakResponse('Command not recognized');
             }
+            
+            // FIXED: Clear processing flag after a delay
+            setTimeout(() => {
+                isProcessingCommand = false;
+            }, 500);
         }
 
         function speakResponse(text) {
@@ -1452,7 +1490,7 @@
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.rate = settings.speechSpeed;
                 speechSynth.speak(utterance);
-            }, 100); // Reduced for even faster response
+            }, 100);
         }
 
         // === SPEECH SYNTHESIS ===
@@ -1465,7 +1503,7 @@
                     utterance.pitch = 1.0;
                     utterance.volume = 1.0;
                     speechSynth.speak(utterance);
-                }, 300); // Small delay to ensure speech synthesis works
+                }, 300);
             } catch (e) {
                 console.error('Speech synthesis error:', e);
             }
@@ -1662,15 +1700,18 @@
             if (recognizedTextEl) {
                 let html = '';
                 if (phraseHistory.length > 0) {
-                    const latestPhrase = phraseHistory[phraseHistory.length - 1];
-                    html += `<div class="final-phrase" style="font-size: 18px; font-weight: bold;">
-                                ✅ LATEST: ${latestPhrase}
+                    // FIXED: Show all phrases in history, not just latest
+                    html = phraseHistory.map((phrase, index) => {
+                        const isLatest = index === phraseHistory.length - 1;
+                        const className = isLatest ? 'final-phrase' : 'final-phrase';
+                        const style = isLatest ? 'font-size: 18px; font-weight: bold;' : 'font-size: 16px; opacity: 0.8;';
+                        const prefix = isLatest ? '✅ LATEST: ' : '📝 ';
+                        return `<div class="${className}" style="${style}">${prefix}${phrase}</div>`;
+                    }).join('');
+                    
+                    html += `<div style="color: #999; font-size: 14px; margin-top: 12px; text-align: center; padding: 8px; background: #f9f9f9; border-radius: 4px;">
+                                📊 Total phrases: ${phraseHistory.length}
                              </div>`;
-                    if (phraseHistory.length > 1) {
-                        html += `<div style="color: #999; font-size: 14px; margin-top: 12px; text-align: center; padding: 8px; background: #f9f9f9; border-radius: 4px;">
-                                    📝 Previous phrases: ${phraseHistory.length - 1}
-                                 </div>`;
-                    }
                 } else {
                     html = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Say something and your phrase will appear here...</div>';
                 }
@@ -1680,7 +1721,8 @@
 
         function clearSpeechText() {
             phraseHistory = [];
-            lastProcessedPhrase = ''; // Clear duplicate prevention
+            lastProcessedPhrase = '';
+            lastPhraseTime = 0;
             updateSpeechDisplay();
         }
 
@@ -1981,7 +2023,6 @@
             }
         }
 
-        // FIXED: 24-hour forecast from current time
         async function showHourlyWeather() {
             showWeatherDisplay('Next 24 Hours', 'Loading 24-hour forecast...');
             
@@ -1990,13 +2031,11 @@
                 const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=2`);
                 const data = await response.json();
                 
-                // FIXED: Start from current hour, not midnight
                 const now = new Date();
                 const currentHour = now.getHours();
                 
                 let hourlyData = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 6px; padding: 10px;">';
                 
-                // Find current hour index in the data
                 let startIndex = 0;
                 for (let i = 0; i < data.hourly.time.length; i++) {
                     const timeDate = new Date(data.hourly.time[i]);
@@ -2007,7 +2046,6 @@
                     }
                 }
                 
-                // Show 24 hours starting from current hour
                 for (let i = startIndex; i < Math.min(startIndex + 24, data.hourly.time.length); i++) {
                     const time = new Date(data.hourly.time[i]);
                     const hour = time.getHours();
@@ -2015,7 +2053,6 @@
                     const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
                     const ampm = hour >= 12 ? 'PM' : 'AM';
                     
-                    // Mark current hour
                     const isCurrent = i === startIndex;
                     const timeDisplay = isCurrent ? 'NOW' : `${displayHour} ${ampm}`;
                     const bgColor = isCurrent ? '#0099cc' : '#f0f8ff';
