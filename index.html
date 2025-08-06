@@ -1090,7 +1090,7 @@
             };
         }
 
-        // FIXED: Simplified speech processing - always speak what user says
+        // FIXED: Prevent cascading speech and display issues
         function processFinalSpeech(text) {
             if (!text || text.length <= 1) return;
             
@@ -1109,8 +1109,8 @@
                 return; // Don't display or speak Leslie commands
             }
             
-            // FIXED: Stricter duplicate prevention
-            if (text === lastProcessedPhrase && (currentTime - lastPhraseTime) < DUPLICATE_TIMEOUT) {
+            // FIXED: Much stricter duplicate prevention to stop cascading
+            if (text === lastProcessedPhrase && (currentTime - lastPhraseTime) < 8000) {
                 console.log('🚫 Duplicate phrase detected, skipping:', text);
                 return;
             }
@@ -1121,18 +1121,25 @@
                 return;
             }
             
+            // FIXED: Stop any ongoing speech before processing new phrase
+            speechSynth.cancel();
+            
             lastProcessedPhrase = text;
             lastPhraseTime = currentTime;
             
-            // FIXED: Always add to history and display - no duplicate checking in history
-            phraseHistory = [text]; // Only keep current phrase
+            // FIXED: Replace current phrase instead of adding to history
+            phraseHistory = [text]; // Always replace with current phrase only
             
             updateSpeechDisplay();
             updateStatus(`✅ Got: "${text}"`);
             
-            // FIXED: Force speech synthesis immediately
-            console.log('🔊 Speaking phrase:', text);
-            speakCompletePhrase(text);
+            // FIXED: Delay speech to prevent overlapping
+            setTimeout(() => {
+                if (lastProcessedPhrase === text) { // Only speak if still the latest phrase
+                    console.log('🔊 Speaking phrase:', text);
+                    speakCompletePhrase(text);
+                }
+            }, 500);
         }
 
         // FIXED: Function to filter out Leslie commands from speech text
@@ -1367,13 +1374,13 @@
             }
         }
 
-        // FIXED: Simplified and more reliable voice command processing
+        // FIXED: Faster voice command processing with better command recognition
         function processVoiceCommand(command) {
             const currentTime = Date.now();
             const cmd = command.toLowerCase().trim();
             
-            // FIXED: Simple duplicate prevention - shorter timeout
-            if (cmd === lastVoiceCommand && (currentTime - lastVoiceCommandTime) < 2000) {
+            // FIXED: Reduced timeout to 1 second for faster commands
+            if (cmd === lastVoiceCommand && (currentTime - lastVoiceCommandTime) < 1000) {
                 console.log('🚫 Duplicate command detected, skipping:', cmd);
                 return;
             }
@@ -1387,7 +1394,7 @@
             executeVoiceCommand(cmd);
         }
 
-        // FIXED: Immediate command execution
+        // FIXED: Enhanced command recognition with more variations
         function executeVoiceCommand(cmd) {
             const weatherDisplay = document.getElementById('weatherDisplay');
             const isWeatherOpen = weatherDisplay && !weatherDisplay.classList.contains('hidden');
@@ -1452,6 +1459,24 @@
                     speakResponse('Stopping speech recognition');
                 }
                 
+            // FIXED: Enhanced pause commands recognition
+            } else if (cmd.includes('pause more') || cmd.includes('more pause') || cmd.includes('pause longer')) {
+                const newPause = Math.min(settings.pauseBetweenWords + 0.5, 5.0);
+                settings.pauseBetweenWords = newPause;
+                updatePauseBetweenWords(newPause);
+                saveSettings();
+                const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
+                if (pauseSlider) pauseSlider.value = newPause;
+                speakResponse('Pausing more between words');
+            } else if (cmd.includes('pause less') || cmd.includes('less pause') || cmd.includes('pause shorter') || cmd.includes('faster pause')) {
+                const newPause = Math.max(settings.pauseBetweenWords - 0.5, 0.0);
+                settings.pauseBetweenWords = newPause;
+                updatePauseBetweenWords(newPause);
+                saveSettings();
+                const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
+                if (pauseSlider) pauseSlider.value = newPause;
+                speakResponse('Pausing less between words');
+                
             // Settings commands
             } else if (cmd.includes('enhanced mode on') || cmd.includes('enhanced on')) {
                 settings.enhancedMode = true;
@@ -1472,22 +1497,32 @@
                 settings.speechSpeed = parseFloat(newSpeed.toFixed(1));
                 updateSpeechSpeed(settings.speechSpeed);
                 saveSettings();
+                const speedSlider = document.getElementById('speechSpeedSlider');
+                if (speedSlider) speedSlider.value = settings.speechSpeed;
                 speakResponse('Speaking faster');
             } else if (cmd.includes('speak slower') || cmd.includes('talk slower') || cmd.includes('slower')) {
                 const newSpeed = Math.max(settings.speechSpeed - 0.2, 0.5);
                 settings.speechSpeed = parseFloat(newSpeed.toFixed(1));
                 updateSpeechSpeed(settings.speechSpeed);
                 saveSettings();
+                const speedSlider = document.getElementById('speechSpeedSlider');
+                if (speedSlider) speedSlider.value = settings.speechSpeed;
                 speakResponse('Speaking slower');
+                
+            // FIXED: Voice command toggle with checkbox updates
             } else if (cmd.includes('voice commands off') || cmd.includes('voice command off')) {
                 settings.speakVoiceCommands = false;
                 updateVoiceCommandSetting(false);
                 saveSettings();
-                speakResponse('Voice command responses disabled');
+                const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
+                if (voiceSwitch) voiceSwitch.checked = false;
+                // Don't speak response since we just turned off voice commands
             } else if (cmd.includes('voice commands on') || cmd.includes('voice command on')) {
                 settings.speakVoiceCommands = true;
                 updateVoiceCommandSetting(true);
                 saveSettings();
+                const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
+                if (voiceSwitch) voiceSwitch.checked = true;
                 speakResponse('Voice command responses enabled');
             } else {
                 console.log('❌ Command not recognized:', cmd);
@@ -1526,16 +1561,23 @@
             }, 50);
         }
 
-        // FIXED: Enhanced speech synthesis with multiple fallbacks
+        // FIXED: Enhanced speech synthesis with cascading prevention
         function speakCompletePhrase(text) {
             try {
-                // Cancel any ongoing speech
+                // FIXED: Always cancel any existing speech first
                 speechSynth.cancel();
                 
                 console.log('🔊 Attempting to speak:', text);
                 
-                // Wait a moment for cancel to complete, then speak
+                // FIXED: Longer delay to ensure cancel completes
                 setTimeout(() => {
+                    // Double-check we're not already speaking
+                    if (speechSynth.speaking) {
+                        speechSynth.cancel();
+                        setTimeout(() => speakCompletePhrase(text), 200);
+                        return;
+                    }
+                    
                     const utterance = new SpeechSynthesisUtterance(text);
                     utterance.rate = settings.speechSpeed;
                     utterance.pitch = 1.0;
@@ -1551,12 +1593,6 @@
                     
                     utterance.onerror = function(event) {
                         console.error('❌ Speech error:', event);
-                        // Retry once if error occurs
-                        setTimeout(() => {
-                            const retryUtterance = new SpeechSynthesisUtterance(text);
-                            retryUtterance.rate = settings.speechSpeed;
-                            speechSynth.speak(retryUtterance);
-                        }, 500);
                     };
                     
                     // Force speech synthesis to be ready
@@ -1565,19 +1601,10 @@
                     }
                     
                     speechSynth.speak(utterance);
-                    console.log('🔊 Speech synthesis started for:', text);
-                }, 100);
+                    console.log('🔊 Speech synthesis queued for:', text);
+                }, 300);
             } catch (e) {
                 console.error('Speech synthesis error:', e);
-                // Retry with a simpler approach
-                setTimeout(() => {
-                    try {
-                        const simpleUtterance = new SpeechSynthesisUtterance(text);
-                        speechSynth.speak(simpleUtterance);
-                    } catch (retryError) {
-                        console.error('Speech retry failed:', retryError);
-                    }
-                }, 1000);
             }
         }
 
@@ -1659,137 +1686,89 @@
                     displayContactsOnPhonePage();
                 }
                 
-                // FIXED: Aggressive keyboard opening for mobile devices
-                if (pageId === 'textInput') {
-                    setTimeout(() => {
-                        const textInput = document.getElementById('largeTextInputField');
-                        if (textInput) {
-                            textInput.value = '';
-                            
-                            console.log('📱 Attempting to open keyboard...');
-                            
-                            // FIXED: Multiple aggressive attempts to open keyboard
-                            function forceKeyboardOpen() {
-                                console.log('🔄 Keyboard opening attempt');
-                                
-                                // Method 1: Focus and click
-                                textInput.focus();
-                                textInput.click();
-                                
-                                // Method 2: Simulate touch for mobile
-                                if (/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-                                    console.log('📱 Mobile device detected - using touch simulation');
-                                    
-                                    // Create and dispatch touch events
-                                    const touchEvent = new TouchEvent('touchstart', {
-                                        bubbles: true,
-                                        cancelable: true,
-                                        view: window,
-                                        touches: [new Touch({
-                                            identifier: 1,
-                                            target: textInput,
-                                            clientX: 100,
-                                            clientY: 100,
-                                            radiusX: 2.5,
-                                            radiusY: 2.5,
-                                            rotationAngle: 0,
-                                            force: 0.5
-                                        })]
-                                    });
-                                    
-                                    textInput.dispatchEvent(touchEvent);
-                                    
-                                    const touchEndEvent = new TouchEvent('touchend', {
-                                        bubbles: true,
-                                        cancelable: true,
-                                        view: window
-                                    });
-                                    
-                                    setTimeout(() => {
-                                        textInput.dispatchEvent(touchEndEvent);
-                                        textInput.focus();
-                                    }, 10);
-                                }
-                                
-                                // Method 3: Input and selection manipulation
-                                setTimeout(() => {
-                                    textInput.value = ' ';
-                                    textInput.setSelectionRange(1, 1);
-                                    textInput.focus();
-                                    
-                                    setTimeout(() => {
-                                        textInput.value = '';
-                                        textInput.setSelectionRange(0, 0);
-                                        textInput.focus();
-                                    }, 100);
-                                }, 50);
-                                
-                                // Method 4: Scroll into view
-                                textInput.scrollIntoView({ 
-                                    behavior: 'smooth', 
-                                    block: 'center',
-                                    inline: 'center' 
-                                });
-                            }
-                            
-                            // Execute multiple attempts with delays
-                            forceKeyboardOpen();
-                            setTimeout(forceKeyboardOpen, 200);
-                            setTimeout(forceKeyboardOpen, 500);
-                            setTimeout(forceKeyboardOpen, 1000);
-                            setTimeout(forceKeyboardOpen, 1500);
-                            
-                            // Method 5: iOS specific workaround
-                            if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-                                console.log('🍎 iOS device - using iOS-specific keyboard trigger');
-                                
-                                setTimeout(() => {
-                                    // Create temporary input to trigger iOS keyboard
-                                    const tempInput = document.createElement('input');
-                                    tempInput.type = 'text';
-                                    tempInput.style.position = 'fixed';
-                                    tempInput.style.left = '50%';
-                                    tempInput.style.top = '50%';
-                                    tempInput.style.width = '1px';
-                                    tempInput.style.height = '1px';
-                                    tempInput.style.opacity = '0';
-                                    tempInput.style.pointerEvents = 'none';
-                                    
-                                    document.body.appendChild(tempInput);
-                                    tempInput.focus();
-                                    
-                                    setTimeout(() => {
-                                        textInput.focus();
-                                        textInput.click();
-                                        
-                                        // Clean up temp input
-                                        setTimeout(() => {
-                                            if (document.body.contains(tempInput)) {
-                                                document.body.removeChild(tempInput);
-                                            }
-                                        }, 500);
-                                    }, 300);
-                                }, 500);
-                            }
-                            
-                            // Method 6: Android Chrome specific
-                            if (/Android.*Chrome/i.test(navigator.userAgent)) {
-                                console.log('🤖 Android Chrome - using Chrome-specific method');
-                                setTimeout(() => {
-                                    const event = new Event('input', { bubbles: true });
-                                    textInput.dispatchEvent(event);
-                                    textInput.focus();
-                                    
-                                    // Force cursor position
-                                    setTimeout(() => {
-                                        textInput.setSelectionRange(0, 0);
-                                    }, 100);
-                                }, 1000);
-                            }
-                        }
-                        updateTextSpeakButton();
-                    }, 100);
-                }
+        // FIXED: Better keyboard opening with user interaction simulation
+        function forceKeyboardOpen() {
+            const textInput = document.getElementById('largeTextInputField');
+            if (!textInput) return;
+            
+            console.log('📱 Forcing keyboard open...');
+            
+            // Clear any existing content
+            textInput.value = '';
+            
+            // Method 1: Direct focus with user event simulation
+            const userEvent = new Event('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                isTrusted: true
+            });
+            
+            textInput.dispatchEvent(userEvent);
+            textInput.focus();
+            
+            // Method 2: For mobile - simulate actual user tap
+            if ('ontouchstart' in window) {
+                console.log('📱 Touch device detected');
+                
+                const rect = textInput.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                
+                // Create more realistic touch events
+                const touchStartEvent = new TouchEvent('touchstart', {
+                    bubbles: true,
+                    cancelable: true,
+                    touches: [new Touch({
+                        identifier: 1,
+                        target: textInput,
+                        clientX: centerX,
+                        clientY: centerY,
+                        radiusX: 2.5,
+                        radiusY: 2.5,
+                        rotationAngle: 0,
+                        force: 0.5
+                    })]
+                });
+                
+                textInput.dispatchEvent(touchStartEvent);
+                
+                setTimeout(() => {
+                    const touchEndEvent = new TouchEvent('touchend', {
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    textInput.dispatchEvent(touchEndEvent);
+                    textInput.focus();
+                }, 50);
+            }
+            
+            // Method 3: iOS Safari specific
+            if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                console.log('🍎 iOS device - using iOS method');
+                setTimeout(() => {
+                    textInput.style.transform = 'translateZ(0)';
+                    textInput.focus();
+                    textInput.click();
+                    
+                    // Force input event
+                    const inputEvent = new Event('input', { bubbles: true });
+                    textInput.dispatchEvent(inputEvent);
+                }, 100);
+            }
+            
+            // Method 4: Programmatic input to trigger keyboard
+            setTimeout(() => {
+                textInput.value = ' ';
+                textInput.setSelectionRange(1, 1);
+                
+                setTimeout(() => {
+                    textInput.value = '';
+                    textInput.setSelectionRange(0, 0);
+                    textInput.focus();
+                }, 100);
+            }, 200);
+        }
             }
         }
 
