@@ -1269,12 +1269,11 @@
             } else if (cmd.includes('settings') || cmd.includes('setting')) {
                 showPage('settings');
                 speakResponse('Opening settings');
-            } else if (cmd.includes('help') && !cmd.includes('commands off') && !cmd.includes('commands on')) {
-                // FIXED: Only go to help if not a commands on/off command
+            } else if (cmd.includes('help')) {
                 showPage('commands');
                 speakResponse('Showing commands');
-            } else if (cmd.includes('commands') && !cmd.includes('voice commands') && !cmd.includes('commands off') && !cmd.includes('commands on')) {
-                // FIXED: Only go to commands page if not voice commands on/off
+            } else if (cmd.includes('commands') && !cmd.includes('voice commands')) {
+                // Show commands page only if not "voice commands"
                 showPage('commands');
                 speakResponse('Showing commands');
                 
@@ -1363,8 +1362,8 @@
                 const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
                 if (pauseSlider) pauseSlider.value = newPause;
                 speakResponse('Pausing less between words');
-            } else if (cmd.includes('voice commands off') && cmd.includes('voice')) {
-                // FIXED: Be very specific - must include "voice" to avoid confusion
+            } else if (cmd.includes('voice commands off')) {
+                // FIXED: Simplified - just look for "voice commands off"
                 settings.speakVoiceCommands = false;
                 updateVoiceCommandSetting(false);
                 saveSettings();
@@ -1372,8 +1371,8 @@
                 const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
                 if (voiceSwitch) voiceSwitch.checked = false;
                 speakResponse('Voice command responses disabled');
-            } else if (cmd.includes('voice commands on') && cmd.includes('voice')) {
-                // FIXED: Be very specific - must include "voice" to avoid confusion
+            } else if (cmd.includes('voice commands on')) {
+                // FIXED: Simplified - just look for "voice commands on"
                 settings.speakVoiceCommands = true;
                 updateVoiceCommandSetting(true);
                 saveSettings();
@@ -1427,42 +1426,50 @@
             if (text) {
                 speechSynth.cancel();
                 setTimeout(() => {
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    utterance.rate = settings.speechSpeed;
-                    
-                    // FIXED: Apply pause between words setting properly
+                    // FIXED: Proper pause implementation
                     if (settings.pauseBetweenWords > 0) {
-                        const words = text.split(/\s+/); // Split on any whitespace
-                        let speechText = '';
-                        for (let i = 0; i < words.length; i++) {
-                            speechText += words[i];
-                            if (i < words.length - 1) {
-                                // Add actual pause time in seconds
-                                speechText += `<break time="${settings.pauseBetweenWords}s"/>`;
+                        // Split text and speak word by word with actual delays
+                        const words = text.split(/\s+/);
+                        let wordIndex = 0;
+                        
+                        function speakNextWord() {
+                            if (wordIndex < words.length) {
+                                const utterance = new SpeechSynthesisUtterance(words[wordIndex]);
+                                utterance.rate = settings.speechSpeed;
+                                utterance.pitch = 1.0;
+                                utterance.volume = 1.0;
+                                
+                                utterance.onend = function() {
+                                    wordIndex++;
+                                    if (wordIndex < words.length) {
+                                        // Wait for the pause duration before next word
+                                        setTimeout(speakNextWord, settings.pauseBetweenWords * 1000);
+                                    } else {
+                                        // All words spoken, clear the text
+                                        textInput.value = '';
+                                        updateTextSpeakButton();
+                                    }
+                                };
+                                
+                                speechSynth.speak(utterance);
                             }
                         }
-                        // Use SSML if supported, otherwise fall back to comma method
-                        try {
-                            utterance.text = speechText;
-                        } catch (e) {
-                            // Fallback: use commas for pauses
-                            speechText = '';
-                            for (let i = 0; i < words.length; i++) {
-                                speechText += words[i];
-                                if (i < words.length - 1) {
-                                    const pauseCount = Math.round(settings.pauseBetweenWords * 3);
-                                    speechText += ','.repeat(pauseCount) + ' ';
-                                }
-                            }
-                            utterance.text = speechText;
-                        }
+                        
+                        speakNextWord();
+                    } else {
+                        // No pause - speak normally
+                        const utterance = new SpeechSynthesisUtterance(text);
+                        utterance.rate = settings.speechSpeed;
+                        utterance.pitch = 1.0;
+                        utterance.volume = 1.0;
+                        
+                        utterance.onend = function() {
+                            textInput.value = '';
+                            updateTextSpeakButton();
+                        };
+                        
+                        speechSynth.speak(utterance);
                     }
-                    
-                    utterance.onend = function() {
-                        textInput.value = '';
-                        updateTextSpeakButton();
-                    };
-                    speechSynth.speak(utterance);
                 }, 200);
             }
         }
