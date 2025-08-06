@@ -914,15 +914,16 @@
         let lastSpeechTime = null;
         const SESSION_TIMEOUT = 3 * 60 * 1000; // 3 minutes
         
-        // FIXED: Improved speech and command processing
+        // FIXED: Enhanced duplicate prevention with stricter timeouts
         let lastProcessedPhrase = '';
         let lastPhraseTime = 0;
         let lastVoiceCommand = '';
         let lastVoiceCommandTime = 0;
-        const DUPLICATE_TIMEOUT = 2000; // 2 seconds for speech
-        const COMMAND_TIMEOUT = 1500; // 1.5 seconds for commands
+        const DUPLICATE_TIMEOUT = 5000; // Increased to 5 seconds for speech
+        const COMMAND_TIMEOUT = 3000; // Increased to 3 seconds for commands
         let isProcessingCommand = false;
-        let speechTimeoutId = null; // For managing interim timeouts
+        let speechTimeoutId = null;
+        let pendingPhrase = null;
         
         // Settings
         let settings = {
@@ -1046,67 +1047,155 @@
                 lastSpeechTime = Date.now();
                 resetSessionTimeout();
                 
-                // FIXED: Only process final results to prevent cascading
+                // FIXED: Process both interim and final results differently
+                let interimText = '';
+                let finalText = '';
+                
                 for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript.trim();
+                    
                     if (event.results[i].isFinal) {
-                        const transcript = event.results[i][0].transcript.trim();
-                        if (transcript && transcript.length > 1) {
-                            // Clear any pending interim timeout
-                            if (speechTimeoutId) {
-                                clearTimeout(speechTimeoutId);
-                                speechTimeoutId = null;
-                            }
-                            
-                            processFinalSpeech(transcript);
-                        }
+                        finalText = transcript;
                     } else {
-                        // FIXED: Handle interim results differently - only for status display
-                        const interimText = event.results[i][0].transcript.trim();
-                        if (interimText) {
-                            updateStatus(`🎤 Hearing: "${interimText}" (processing...)`);
-                        }
+                        interimText = transcript;
                     }
+                }
+                
+                // Handle interim text for live feedback
+                if (interimText && !finalText) {
+                    updateStatus(`🎤 Hearing: "${interimText}" (processing...)`);
+                    
+                    // Clear any previous timeout and set new one for interim processing
+                    if (speechTimeoutId) {
+                        clearTimeout(speechTimeoutId);
+                    }
+                    speechTimeoutId = setTimeout(() => {
+                        // If no final result comes in time, process interim as final
+                        if (interimText && interimText.length > 2) {
+                            processFinalSpeech(interimText);
+                        }
+                        speechTimeoutId = null;
+                    }, 1500);
+                }
+                
+                // Handle final text
+                if (finalText && finalText.length > 1) {
+                    // Clear interim timeout since we got final result
+                    if (speechTimeoutId) {
+                        clearTimeout(speechTimeoutId);
+                        speechTimeoutId = null;
+                    }
+                    processFinalSpeech(finalText);
                 }
             };
         }
 
+        // FIXED: Enhanced phrase processing with Leslie filtering
         function processFinalSpeech(text) {
             if (!text || text.length <= 1) return;
             
             const currentTime = Date.now();
             
-            // FIXED: Enhanced duplicate prevention
-            if (text === lastProcessedPhrase && (currentTime - lastPhraseTime) < DUPLICATE_TIMEOUT) {
-                console.log('🚫 Duplicate phrase detected, skipping:', text);
+            console.log('🎙️ Processing speech:', text);
+            
+            // FIXED: Filter out "Hey Leslie" commands completely
+            const cleanText = filterLeslieCommands(text);
+            
+            // If the text was just a Leslie command, don't process it as speech
+            if (!cleanText || cleanText.length <= 1) {
+                console.log('🚫 Text was just a Leslie command, skipping speech processing');
                 return;
             }
             
-            lastProcessedPhrase = text;
+            // FIXED: Stricter duplicate prevention
+            if (cleanText === lastProcessedPhrase && (currentTime - lastPhraseTime) < DUPLICATE_TIMEOUT) {
+                console.log('🚫 Duplicate phrase detected, skipping:', cleanText);
+                return;
+            }
+            
+            // FIXED: Check if it's a phantom phrase (common false positives)
+            if (isPhantomPhrase(cleanText)) {
+                console.log('🚫 Phantom phrase detected, skipping:', cleanText);
+                return;
+            }
+            
+            lastProcessedPhrase = cleanText;
             lastPhraseTime = currentTime;
             
-            // Check for voice commands first
-            if (text.toLowerCase().includes('hey leslie') || text.toLowerCase().includes('leslie')) {
-                processVoiceCommand(text);
-                updateStatus('🎙️ Voice command processed');
-                return;
-            }
-            
             // Skip if already in recent phrase history
-            if (phraseHistory.includes(text)) {
-                console.log('🚫 Phrase already in history, skipping:', text);
+            if (phraseHistory.includes(cleanText)) {
+                console.log('🚫 Phrase already in history, skipping:', cleanText);
                 return;
             }
             
             // Add to phrase history
-            phraseHistory.push(text);
+            phraseHistory.push(cleanText);
             if (phraseHistory.length > 10) phraseHistory.shift();
             
             updateSpeechDisplay();
-            updateStatus(`✅ Got: "${text}"`);
+            updateStatus(`✅ Got: "${cleanText}"`);
             
-            // FIXED: Ensure speech happens
-            console.log('🔊 Speaking phrase:', text);
-            speakCompletePhrase(text);
+            // FIXED: Immediate speech synthesis
+            console.log('🔊 Speaking phrase:', cleanText);
+            speakCompletePhrase(cleanText);
+        }
+
+        // FIXED: Function to filter out Leslie commands from speech text
+        function filterLeslieCommands(text) {
+            const lowerText = text.toLowerCase().trim();
+            
+            // Check if it contains Leslie trigger words
+            const leslieVariants = ['hey leslie', 'leslie', 'less lee', 'lesley', 'wesley', 'bessie'];
+            const hasLeslieCommand = leslieVariants.some(variant => lowerText.includes(variant));
+            
+            if (!hasLeslieCommand) {
+                return text; // No Leslie command, return as is
+            }
+            
+            // If it's a Leslie command, process it but don't return the text for speech
+            processVoiceCommand(text);
+            
+            // Extract any non-command part if it exists
+            let cleanedText = text;
+            leslieVariants.forEach(variant => {
+                const regex = new RegExp(`\\b${variant}\\b.*?(?=\\.|$|\\s(?:and|then|now)\\s|$)`, 'gi');
+                cleanedText = cleanedText.replace(regex, '').trim();
+            });
+            
+            // Remove common command words that might remain
+            const commandWords = ['home', 'weather', 'settings', 'clear', 'stop', 'close', 'help', 'commands'];
+            commandWords.forEach(word => {
+                const regex = new RegExp(`\\b${word}\\b`, 'gi');
+                cleanedText = cleanedText.replace(regex, '').trim();
+            });
+            
+            return cleanedText;
+        }
+
+        // FIXED: Function to detect phantom/false positive phrases
+        function isPhantomPhrase(text) {
+            const phantomPhrases = [
+                'can you hear',
+                'can you hear me',
+                'can you hear me now',
+                'hello',
+                'hello hello',
+                'test',
+                'testing',
+                'testing testing',
+                'one two three',
+                'thank you',
+                'okay',
+                'yes',
+                'no',
+                'hmm',
+                'uh',
+                'um',
+                'ah'
+            ];
+            
+            const lowerText = text.toLowerCase().trim();
+            return phantomPhrases.some(phantom => lowerText === phantom || lowerText.includes(phantom));
         }
 
         // === VOICE COMMANDS ===
@@ -1164,9 +1253,8 @@
                             
                             console.log('🎯 Leslie command detected:', transcript);
                             
-                            if (confidence === undefined || confidence > 0.3) {
-                                processVoiceCommand(transcript);
-                            }
+                            // FIXED: Process commands immediately without confidence check
+                            processVoiceCommand(transcript);
                         }
                     }
                 }
@@ -1177,9 +1265,10 @@
                 updateVoiceCommandStatus('ready');
                 console.log('🎙️ Voice command session ended - restarting immediately');
                 
-                if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
+                // FIXED: Only restart voice commands if NOT on speech page
+                if (currentPage !== 'speech' && microphonePermissionGranted) {
                     setTimeout(() => {
-                        if (!isVoiceCommandListening && currentPage !== 'speech' && !isListening) {
+                        if (!isVoiceCommandListening && currentPage !== 'speech') {
                             startVoiceCommands();
                         }
                     }, 300);
@@ -1198,9 +1287,9 @@
                 
                 updateVoiceCommandStatus('ready');
                 
-                if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
+                if (currentPage !== 'speech' && microphonePermissionGranted) {
                     setTimeout(() => {
-                        if (!isVoiceCommandListening && currentPage !== 'speech' && !isListening) {
+                        if (!isVoiceCommandListening && currentPage !== 'speech') {
                             startVoiceCommands();
                         }
                     }, 1000);
@@ -1211,7 +1300,9 @@
         }
 
         function startVoiceCommands() {
+            // FIXED: Never start voice commands on speech page
             if (currentPage === 'speech' || isListening || isVoiceCommandListening || !microphonePermissionGranted) {
+                console.log('🚫 Not starting voice commands - on speech page or conditions not met');
                 return;
             }
             
@@ -1281,6 +1372,7 @@
             }
         }
 
+        // FIXED: Improved voice command processing with better duplicate prevention
         function processVoiceCommand(command) {
             if (isProcessingCommand) {
                 console.log('🚫 Command already processing, skipping:', command);
@@ -1302,11 +1394,20 @@
             
             console.log('🎯 Processing voice command:', cmd);
             
-            // FIXED: Enhanced close command detection
+            // Process commands immediately without delay
+            executeVoiceCommand(cmd);
+            
+            // Clear processing flag after shorter delay
+            setTimeout(() => {
+                isProcessingCommand = false;
+            }, 500);
+        }
+
+        // FIXED: Separate function for command execution
+        function executeVoiceCommand(cmd) {
             const weatherDisplay = document.getElementById('weatherDisplay');
             const isWeatherOpen = weatherDisplay && !weatherDisplay.classList.contains('hidden');
             
-            // FIXED: More reliable close command matching
             if (cmd.includes('close') || cmd.includes('clothes') || cmd.includes('closed')) {
                 console.log('🎯 Close command detected, weather open:', isWeatherOpen);
                 if (isWeatherOpen) {
@@ -1440,11 +1541,6 @@
                 console.log('❌ Command not recognized:', cmd);
                 speakResponse('Command not recognized');
             }
-            
-            // Clear processing flag
-            setTimeout(() => {
-                isProcessingCommand = false;
-            }, 500);
         }
 
         function speakResponse(text) {
@@ -1518,6 +1614,7 @@
                 }
                 
                 if (pageId === 'speech') {
+                    // FIXED: Ensure voice commands are stopped when entering speech page
                     stopVoiceCommands();
                     clearSpeechText();
                     setTimeout(() => {
@@ -1538,6 +1635,7 @@
                         }
                     }, 100);
                 } else {
+                    // FIXED: Only restart voice commands when NOT on speech page
                     setTimeout(() => {
                         if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
                             startVoiceCommands();
@@ -1715,6 +1813,7 @@
             if (statusText) statusText.textContent = message;
         }
 
+        // FIXED: Enhanced speech display with cleaner formatting
         function updateSpeechDisplay() {
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
@@ -1746,11 +1845,21 @@
             }
         }
 
+        // FIXED: Enhanced clear function
         function clearSpeechText() {
             phraseHistory = [];
             lastProcessedPhrase = '';
             lastPhraseTime = 0;
+            pendingPhrase = null;
+            
+            // Clear any pending timeouts
+            if (speechTimeoutId) {
+                clearTimeout(speechTimeoutId);
+                speechTimeoutId = null;
+            }
+            
             updateSpeechDisplay();
+            console.log('🗑️ Speech text cleared');
         }
 
         function clearTextInput() {
@@ -1995,10 +2104,6 @@
                 });
             }
             displayContactsOnPhonePage();
-        }
-
-        function callContact(contact) {
-            window.location.href = 'tel:' + contact.phone.replace(/[^0-9]/g, '');
         }
 
         // === WEATHER ===
