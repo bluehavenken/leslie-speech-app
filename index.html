@@ -1064,47 +1064,56 @@
                 lastSpeechTime = Date.now();
                 resetSessionTimeout();
                 
-                let finalText = '';
-                let interimText = '';
+                // FIXED: Only process the LATEST final result to avoid cascading
+                let latestFinalText = '';
+                let latestInterimText = '';
                 
-                // FIXED: Process ALL results to avoid losing words
-                for (let i = 0; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript;
-                    
-                    if (event.results[i].isFinal) {
-                        finalText += transcript + ' ';
-                    } else {
-                        interimText += transcript + ' ';
+                // Find the most recent final result
+                for (let i = event.results.length - 1; i >= 0; i--) {
+                    if (event.results[i].isFinal && !latestFinalText) {
+                        latestFinalText = event.results[i][0].transcript.trim();
+                        break;
                     }
                 }
                 
-                // Clean up the text
-                finalText = finalText.trim();
-                interimText = interimText.trim();
-                
-                // Show interim text for feedback
-                if (interimText && !finalText) {
-                    updateStatus(`🎤 Hearing: "${interimText}" (processing...)`);
+                // Get the latest interim result
+                if (event.results.length > 0) {
+                    const lastResult = event.results[event.results.length - 1];
+                    if (!lastResult.isFinal) {
+                        latestInterimText = lastResult[0].transcript.trim();
+                    }
                 }
                 
-                // FIXED: Process final results with better word preservation
-                if (finalText && finalText.length > 1) {
-                    console.log('🎤 Final result received:', finalText);
-                    
-                    // FIXED: Add delay based on pause setting to collect complete phrases
-                    clearTimeout(speechTimeoutId);
-                    speechTimeoutId = setTimeout(() => {
-                        processFinalSpeech(finalText);
-                    }, settings.pauseBetweenWords * 500); // Use pause setting for processing delay
+                // Show interim feedback
+                if (latestInterimText && !latestFinalText) {
+                    updateStatus(`🎤 Hearing: "${latestInterimText}"`);
+                }
+                
+                // FIXED: Only process if we have a new, complete final result
+                if (latestFinalText && latestFinalText.length > 1) {
+                    // Prevent duplicate processing
+                    if (latestFinalText !== lastProcessedPhrase || (Date.now() - lastPhraseTime) > 3000) {
+                        console.log('🎤 New final result:', latestFinalText);
+                        lastProcessedPhrase = latestFinalText;
+                        lastPhraseTime = Date.now();
+                        
+                        // Clear any existing timeout
+                        clearTimeout(speechTimeoutId);
+                        
+                        // Process immediately for better responsiveness
+                        processFinalSpeech(latestFinalText);
+                    } else {
+                        console.log('🚫 Duplicate result ignored:', latestFinalText);
+                    }
                 }
             };
         }
 
-        // FIXED: Better speech processing with complete phrase collection
+        // FIXED: Simplified speech processing - no phrase holding, immediate processing
         function processFinalSpeech(text) {
             if (!text || text.length <= 1) return;
             
-            console.log('🎙️ Processing text:', `"${text}"`);
+            console.log('🎙️ Processing final speech:', `"${text}"`);
             
             // Check for Leslie commands first
             const lowerText = text.toLowerCase().trim();
@@ -1113,7 +1122,7 @@
                 'wesley', 'bessie'
             ];
             
-            // FIXED: More thorough Leslie command detection
+            // Check if this is a Leslie command
             let isLeslieCommand = false;
             for (const variant of leslieVariants) {
                 if (lowerText.includes(variant)) {
@@ -1123,59 +1132,32 @@
             }
             
             if (isLeslieCommand) {
-                console.log('🚫 Leslie command detected - processing and suppressing display');
+                console.log('🚫 Leslie command detected - processing without display');
                 processVoiceCommand(text);
                 updateStatus('🎤 Voice command processed');
-                return; // COMPLETELY STOP HERE - don't display or speak
-            }
-            
-            // This is regular speech - not a command
-            console.log('✅ Regular speech phrase:', text);
-            
-            // FIXED: Combine with any existing pending phrase to avoid losing words
-            if (pendingPhrase && pendingPhrase.trim()) {
-                text = pendingPhrase.trim() + ' ' + text.trim();
-                console.log('📝 Combined with pending phrase:', text);
-            }
-            pendingPhrase = null;
-            
-            // FIXED: Check for very short phrases and hold them briefly
-            const wordCount = text.trim().split(/\s+/).length;
-            if (wordCount < 3 && text.length < 15) {
-                console.log('📋 Short phrase detected, holding for potential continuation...');
-                pendingPhrase = text;
-                
-                // Wait for potential continuation based on pause setting
-                setTimeout(() => {
-                    if (pendingPhrase === text) {
-                        // No continuation received, process the short phrase
-                        console.log('📤 Processing held phrase:', text);
-                        processCompletePhrase(text);
-                        pendingPhrase = null;
-                    }
-                }, (settings.pauseBetweenWords * 1500) + 500);
                 return;
             }
             
-            // Process longer phrases immediately
+            // This is regular speech
+            console.log('✅ Regular speech detected:', text);
+            
+            // Cancel any existing speech
+            speechSynth.cancel();
+            
+            // FIXED: Process immediately without delays or holding
             processCompletePhrase(text);
         }
         
-        // FIXED: Separate function for final phrase processing
+        // FIXED: Clean, simple phrase processing
         function processCompletePhrase(text) {
-            // Cancel any existing speech to prevent stuttering
-            speechSynth.cancel();
+            // Store and display
+            phraseHistory = [text];
+            updateSpeechDisplay();
+            updateStatus(`✅ Captured: "${text}"`);
             
-            setTimeout(() => {
-                // Store and display only if it's not a command
-                phraseHistory = [text];
-                updateSpeechDisplay();
-                updateStatus(`✅ Captured: "${text}"`);
-                
-                // Speak the phrase with delay to prevent stuttering
-                console.log('🔊 About to speak:', text);
-                speakCompletePhrase(text);
-            }, 200);
+            // Speak the phrase
+            console.log('🔊 Speaking phrase:', text);
+            speakCompletePhrase(text);
         }
 
         // === VOICE COMMANDS ===
@@ -1205,7 +1187,7 @@
             voiceCommandRecognition = new SpeechRecognition();
             
             voiceCommandRecognition.continuous = true;
-            voiceCommandRecognition.interimResults = false;
+            voiceCommandRecognition.interimResults = false; // FIXED: No interim results for faster processing
             voiceCommandRecognition.lang = 'en-US';
             voiceCommandRecognition.maxAlternatives = 1;
             
@@ -1216,20 +1198,18 @@
             };
             
             voiceCommandRecognition.onresult = function(event) {
+                // FIXED: Process results immediately for faster response
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     if (event.results[i].isFinal) {
                         const transcript = event.results[i][0].transcript.trim();
                         const confidence = event.results[i][0].confidence;
                         
-                        console.log(`🎙️ Voice command heard: "${transcript}" (confidence: ${confidence?.toFixed(2) || 'unknown'})`);
+                        console.log(`🎙️ Voice command candidate: "${transcript}" (confidence: ${confidence?.toFixed(2) || 'unknown'})`);
                         
                         const lowerTranscript = transcript.toLowerCase();
                         
-                        // FIXED: More thorough Leslie detection with variations
-                        const leslieVariants = [
-                            'leslie', 'hey leslie', 'less lee', 'lesley', 
-                            'wesley', 'bessie', 'leslie,', 'hey leslie,'
-                        ];
+                        // FIXED: Simplified Leslie detection for faster processing
+                        const leslieVariants = ['leslie', 'hey leslie', 'less lee', 'lesley'];
                         
                         let foundLeslie = false;
                         for (const variant of leslieVariants) {
@@ -1240,11 +1220,9 @@
                         }
                         
                         if (foundLeslie) {
-                            console.log('🎯 Leslie command detected:', transcript);
-                            // FIXED: Add small delay for more reliable processing
-                            setTimeout(() => {
-                                processVoiceCommand(transcript);
-                            }, 100);
+                            console.log('🎯 Leslie command detected - processing immediately');
+                            // FIXED: Process immediately without delay
+                            processVoiceCommand(transcript);
                         }
                     }
                 }
@@ -1253,16 +1231,15 @@
             voiceCommandRecognition.onend = function() {
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('ready');
-                console.log('🎙️ Voice command session ended - restarting');
+                console.log('🎙️ Voice command session ended - restarting quickly');
                 
                 if (currentPage !== 'speech' && microphonePermissionGranted) {
-                    // FIXED: Use pause setting for voice command restart delay too
-                    const restartDelay = Math.max((settings.pauseBetweenWords * 1000), 300);
+                    // FIXED: Faster restart for more responsive commands
                     setTimeout(() => {
                         if (!isVoiceCommandListening && currentPage !== 'speech') {
                             startVoiceCommands();
                         }
-                    }, restartDelay);
+                    }, 200); // Much faster restart
                 }
             };
             
@@ -1279,13 +1256,12 @@
                 updateVoiceCommandStatus('ready');
                 
                 if (currentPage !== 'speech' && microphonePermissionGranted) {
-                    // FIXED: Use pause setting for error restart delay
-                    const restartDelay = Math.max((settings.pauseBetweenWords * 1000), 1000);
+                    // FIXED: Faster error recovery
                     setTimeout(() => {
                         if (!isVoiceCommandListening && currentPage !== 'speech') {
                             startVoiceCommands();
                         }
-                    }, restartDelay);
+                    }, 500); // Faster recovery
                 }
             };
             
@@ -1364,20 +1340,20 @@
             }
         }
 
-        // FIXED: More reliable voice command processing with better duplicate prevention
+        // FIXED: Faster voice command processing with better duplicate prevention
         function processVoiceCommand(command) {
             const cmd = command.toLowerCase().trim();
             const now = Date.now();
             
             console.log('🎯 Voice command received:', cmd);
             
-            // FIXED: Better duplicate prevention for voice commands
-            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < COMMAND_TIMEOUT) {
+            // FIXED: Stricter duplicate prevention for voice commands only
+            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 2000) { // Reduced to 2 seconds
                 console.log('🚫 Duplicate voice command ignored');
                 return;
             }
             
-            // FIXED: Don't process if already processing a command
+            // FIXED: Simplified processing flag
             if (isProcessingCommand) {
                 console.log('🚫 Already processing command, skipping');
                 return;
@@ -1387,13 +1363,13 @@
             lastVoiceCommandTime = now;
             isProcessingCommand = true;
             
-            // Execute command immediately
+            // FIXED: Execute command immediately for better responsiveness
             executeVoiceCommand(cmd);
             
-            // Reset processing flag after delay
+            // FIXED: Shorter processing flag reset
             setTimeout(() => {
                 isProcessingCommand = false;
-            }, 1000);
+            }, 500); // Reduced from 1000ms
         }
 
         // FIXED: More comprehensive command recognition with all missing commands
