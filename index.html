@@ -1019,6 +1019,10 @@
                 isListening = false;
                 const listenButton = document.getElementById('listenButton');
                 if (currentPage === 'speech' && listenButton && listenButton.textContent === 'STOP LISTENING') {
+                    // FIXED: Use the actual user pause setting from settings
+                    const restartDelay = (settings.pauseBetweenWords * 1000) + 200;
+                    console.log(`🔄 Restarting recognition with ${settings.pauseBetweenWords}s pause setting`);
+                    
                     setTimeout(() => {
                         if (currentPage === 'speech' && listenButton.textContent === 'STOP LISTENING') {
                             try {
@@ -1028,7 +1032,7 @@
                                 updateStatus('❌ Click "START TALKING" to restart');
                             }
                         }
-                    }, (settings.pauseBetweenWords * 1000) + 100);
+                    }, restartDelay);
                 } else {
                     updateListenButton();
                     updateStatus('✅ Stopped - Click "START TALKING" to restart');
@@ -1039,6 +1043,21 @@
                 isListening = false;
                 updateListenButton();
                 updateStatus('❌ Error: ' + event.error);
+                
+                // FIXED: Auto-restart on most errors (except permission)
+                if (event.error !== 'not-allowed' && currentPage === 'speech') {
+                    const restartDelay = (settings.pauseBetweenWords * 1000) + 500;
+                    setTimeout(() => {
+                        if (currentPage === 'speech' && !isListening) {
+                            try {
+                                recognition.start();
+                                updateStatus('🔄 Restarted after error');
+                            } catch (e) {
+                                updateStatus('❌ Could not restart - click START TALKING');
+                            }
+                        }
+                    }, restartDelay);
+                }
             };
 
             recognition.onresult = function(event) {
@@ -1048,31 +1067,40 @@
                 let finalText = '';
                 let interimText = '';
                 
-                // Process all results, focusing on final ones
-                for (let i = event.resultIndex; i < event.results.length; i++) {
+                // FIXED: Process ALL results to avoid losing words
+                for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     
                     if (event.results[i].isFinal) {
-                        finalText = transcript.trim();
+                        finalText += transcript + ' ';
                     } else {
-                        interimText = transcript.trim();
+                        interimText += transcript + ' ';
                     }
                 }
+                
+                // Clean up the text
+                finalText = finalText.trim();
+                interimText = interimText.trim();
                 
                 // Show interim text for feedback
                 if (interimText && !finalText) {
                     updateStatus(`🎤 Hearing: "${interimText}" (processing...)`);
                 }
                 
-                // Process final results immediately
+                // FIXED: Process final results with better word preservation
                 if (finalText && finalText.length > 1) {
                     console.log('🎤 Final result received:', finalText);
-                    processFinalSpeech(finalText);
+                    
+                    // FIXED: Add delay based on pause setting to collect complete phrases
+                    clearTimeout(speechTimeoutId);
+                    speechTimeoutId = setTimeout(() => {
+                        processFinalSpeech(finalText);
+                    }, settings.pauseBetweenWords * 500); // Use pause setting for processing delay
                 }
             };
         }
 
-        // FIXED: Better speech processing with proper Leslie command filtering
+        // FIXED: Better speech processing with complete phrase collection
         function processFinalSpeech(text) {
             if (!text || text.length <= 1) return;
             
@@ -1104,10 +1132,40 @@
             // This is regular speech - not a command
             console.log('✅ Regular speech phrase:', text);
             
+            // FIXED: Combine with any existing pending phrase to avoid losing words
+            if (pendingPhrase && pendingPhrase.trim()) {
+                text = pendingPhrase.trim() + ' ' + text.trim();
+                console.log('📝 Combined with pending phrase:', text);
+            }
+            pendingPhrase = null;
+            
+            // FIXED: Check for very short phrases and hold them briefly
+            const wordCount = text.trim().split(/\s+/).length;
+            if (wordCount < 3 && text.length < 15) {
+                console.log('📋 Short phrase detected, holding for potential continuation...');
+                pendingPhrase = text;
+                
+                // Wait for potential continuation based on pause setting
+                setTimeout(() => {
+                    if (pendingPhrase === text) {
+                        // No continuation received, process the short phrase
+                        console.log('📤 Processing held phrase:', text);
+                        processCompletePhrase(text);
+                        pendingPhrase = null;
+                    }
+                }, (settings.pauseBetweenWords * 1500) + 500);
+                return;
+            }
+            
+            // Process longer phrases immediately
+            processCompletePhrase(text);
+        }
+        
+        // FIXED: Separate function for final phrase processing
+        function processCompletePhrase(text) {
             // Cancel any existing speech to prevent stuttering
             speechSynth.cancel();
             
-            // FIXED: Clear any pending speech to prevent repeats
             setTimeout(() => {
                 // Store and display only if it's not a command
                 phraseHistory = [text];
@@ -1198,11 +1256,13 @@
                 console.log('🎙️ Voice command session ended - restarting');
                 
                 if (currentPage !== 'speech' && microphonePermissionGranted) {
+                    // FIXED: Use pause setting for voice command restart delay too
+                    const restartDelay = Math.max((settings.pauseBetweenWords * 1000), 300);
                     setTimeout(() => {
                         if (!isVoiceCommandListening && currentPage !== 'speech') {
                             startVoiceCommands();
                         }
-                    }, 300);
+                    }, restartDelay);
                 }
             };
             
@@ -1219,11 +1279,13 @@
                 updateVoiceCommandStatus('ready');
                 
                 if (currentPage !== 'speech' && microphonePermissionGranted) {
+                    // FIXED: Use pause setting for error restart delay
+                    const restartDelay = Math.max((settings.pauseBetweenWords * 1000), 1000);
                     setTimeout(() => {
                         if (!isVoiceCommandListening && currentPage !== 'speech') {
                             startVoiceCommands();
                         }
-                    }, 1000);
+                    }, restartDelay);
                 }
             };
             
@@ -2321,15 +2383,37 @@
                 label.textContent = value + ' seconds';
             }
             
+            console.log(`🔧 Pause setting updated to: ${value} seconds`);
+            
+            // FIXED: Apply pause setting immediately to active recognition
             if (recognition && isListening) {
+                console.log('🔄 Restarting speech recognition with new pause setting');
                 try {
                     recognition.abort();
                 } catch(e) {}
                 setTimeout(() => {
                     if (currentPage === 'speech') {
-                        startListening();
+                        try {
+                            recognition.start();
+                            updateStatus(`🎤 Listening with ${value}s pause tolerance`);
+                        } catch(e) {
+                            updateStatus('❌ Please click START TALKING to restart');
+                        }
                     }
-                }, 500);
+                }, 1000);
+            }
+            
+            // FIXED: Apply pause setting to voice commands too
+            if (voiceCommandRecognition && isVoiceCommandListening && currentPage !== 'speech') {
+                console.log('🔄 Restarting voice commands with new pause setting');
+                try {
+                    voiceCommandRecognition.abort();
+                } catch(e) {}
+                setTimeout(() => {
+                    if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
+                        startVoiceCommands();
+                    }
+                }, 1500);
             }
             
             saveSettings();
