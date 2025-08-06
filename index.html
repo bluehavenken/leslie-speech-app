@@ -1269,7 +1269,12 @@
             } else if (cmd.includes('settings') || cmd.includes('setting')) {
                 showPage('settings');
                 speakResponse('Opening settings');
-            } else if (cmd.includes('help') || cmd.includes('commands') || cmd.includes('command')) {
+            } else if (cmd.includes('help') && !cmd.includes('commands off') && !cmd.includes('commands on')) {
+                // FIXED: Only go to help if not a commands on/off command
+                showPage('commands');
+                speakResponse('Showing commands');
+            } else if (cmd.includes('commands') && !cmd.includes('voice commands') && !cmd.includes('commands off') && !cmd.includes('commands on')) {
+                // FIXED: Only go to commands page if not voice commands on/off
                 showPage('commands');
                 speakResponse('Showing commands');
                 
@@ -1358,22 +1363,24 @@
                 const pauseSlider = document.getElementById('pauseBetweenWordsSlider');
                 if (pauseSlider) pauseSlider.value = newPause;
                 speakResponse('Pausing less between words');
-            } else if (cmd.includes('voice commands off') || cmd.includes('commands off')) {
+            } else if (cmd.includes('voice commands off') && cmd.includes('voice')) {
+                // FIXED: Be very specific - must include "voice" to avoid confusion
                 settings.speakVoiceCommands = false;
                 updateVoiceCommandSetting(false);
                 saveSettings();
                 // Update UI checkbox
                 const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
                 if (voiceSwitch) voiceSwitch.checked = false;
-                speakResponse('Voice commands off');
-            } else if (cmd.includes('voice commands on') || cmd.includes('commands on')) {
+                speakResponse('Voice command responses disabled');
+            } else if (cmd.includes('voice commands on') && cmd.includes('voice')) {
+                // FIXED: Be very specific - must include "voice" to avoid confusion
                 settings.speakVoiceCommands = true;
                 updateVoiceCommandSetting(true);
                 saveSettings();
                 // Update UI checkbox
                 const voiceSwitch = document.getElementById('speakVoiceCommandsSwitch');
                 if (voiceSwitch) voiceSwitch.checked = true;
-                speakResponse('Voice commands on');
+                speakResponse('Voice command responses enabled');
             } else if (cmd.includes('enhanced speech on') || cmd.includes('speak enhanced on')) {
                 // FIXED: Changed from "speak commands on" to avoid confusion
                 settings.enhancedMode = true;
@@ -1524,28 +1531,79 @@
                             textInput.value = '';
                             textInput.focus();
                             
-                            // IMPROVED: Force keyboard on mobile devices
-                            if (/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-                                console.log('📱 Mobile detected - forcing keyboard');
+                            // IMPROVED: More aggressive keyboard opening
+                            console.log('📱 Opening keyboard for text input...');
+                            
+                            // Force focus immediately
+                            textInput.focus();
+                            textInput.click();
+                            
+                            // Multiple attempts with different timings
+                            setTimeout(() => {
+                                textInput.focus();
                                 textInput.click();
-                                // Multiple attempts to ensure keyboard appears
+                                textInput.select();
+                            }, 10);
+                            
+                            setTimeout(() => {
+                                textInput.focus();
+                                textInput.click();
+                            }, 50);
+                            
+                            setTimeout(() => {
+                                textInput.focus();
+                                textInput.click();
+                            }, 100);
+                            
+                            // Special handling for mobile devices
+                            if (/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+                                console.log('📱 Mobile device detected - using mobile keyboard tricks');
+                                
+                                // Create a temporary input to trigger keyboard
+                                const tempInput = document.createElement('input');
+                                tempInput.style.position = 'absolute';
+                                tempInput.style.top = '-1000px';
+                                tempInput.style.opacity = '0';
+                                document.body.appendChild(tempInput);
+                                
+                                setTimeout(() => {
+                                    tempInput.focus();
+                                    tempInput.click();
+                                    setTimeout(() => {
+                                        textInput.focus();
+                                        textInput.click();
+                                        document.body.removeChild(tempInput);
+                                    }, 50);
+                                }, 20);
+                                
+                                // Additional mobile attempts
+                                setTimeout(() => {
+                                    textInput.focus();
+                                    textInput.click();
+                                    const event = new TouchEvent('touchstart', {
+                                        bubbles: true,
+                                        cancelable: true,
+                                    });
+                                    textInput.dispatchEvent(event);
+                                }, 150);
+                                
                                 setTimeout(() => {
                                     textInput.focus();
                                     textInput.select();
-                                    textInput.click();
-                                }, 50);
-                                setTimeout(() => {
-                                    textInput.focus();
-                                    textInput.click();
-                                }, 150);
+                                }, 200);
+                                
                                 setTimeout(() => {
                                     textInput.focus();
                                     textInput.click();
                                 }, 300);
+                                
+                                setTimeout(() => {
+                                    textInput.focus();
+                                }, 500);
                             }
                         }
                         updateTextSpeakButton();
-                    }, 100);
+                    }, 50); // Reduced delay for faster response
                 }
             }
         }
