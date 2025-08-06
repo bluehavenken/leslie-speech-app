@@ -914,14 +914,15 @@
         let lastSpeechTime = null;
         const SESSION_TIMEOUT = 3 * 60 * 1000; // 3 minutes
         
-        // FIXED: Improved duplicate prevention and command processing
+        // FIXED: Improved speech and command processing
         let lastProcessedPhrase = '';
         let lastPhraseTime = 0;
         let lastVoiceCommand = '';
         let lastVoiceCommandTime = 0;
-        const DUPLICATE_TIMEOUT = 3000; // 3 seconds for speech
-        const COMMAND_TIMEOUT = 2000; // 2 seconds for commands
+        const DUPLICATE_TIMEOUT = 2000; // 2 seconds for speech
+        const COMMAND_TIMEOUT = 1500; // 1.5 seconds for commands
         let isProcessingCommand = false;
+        let speechTimeoutId = null; // For managing interim timeouts
         
         // Settings
         let settings = {
@@ -1008,10 +1009,6 @@
             recognition.lang = 'en-US';
             recognition.maxAlternatives = 1;
 
-            // Variables for handling pause tolerance
-            let speechTimeout = null;
-            let currentInterimText = '';
-
             recognition.onstart = function() {
                 isListening = true;
                 updateListenButton();
@@ -1049,50 +1046,26 @@
                 lastSpeechTime = Date.now();
                 resetSessionTimeout();
                 
-                let finalText = '';
-                let interimText = '';
-                
-                // FIXED: More careful result processing
+                // FIXED: Only process final results to prevent cascading
                 for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
-                        finalText += transcript;
-                    } else {
-                        interimText += transcript;
-                    }
-                }
-                
-                // Handle interim results with custom pause tolerance
-                if (interimText && !finalText) {
-                    currentInterimText = interimText;
-                    
-                    // Clear existing timeout
-                    if (speechTimeout) {
-                        clearTimeout(speechTimeout);
-                    }
-                    
-                    // Set new timeout based on user's pause setting
-                    const pauseTimeoutMs = Math.max(1000, settings.pauseBetweenWords * 1000);
-                    speechTimeout = setTimeout(() => {
-                        if (currentInterimText.trim()) {
-                            // Treat the interim text as final if user paused long enough
-                            processFinalSpeech(currentInterimText.trim());
-                            currentInterimText = '';
+                        const transcript = event.results[i][0].transcript.trim();
+                        if (transcript && transcript.length > 1) {
+                            // Clear any pending interim timeout
+                            if (speechTimeoutId) {
+                                clearTimeout(speechTimeoutId);
+                                speechTimeoutId = null;
+                            }
+                            
+                            processFinalSpeech(transcript);
                         }
-                    }, pauseTimeoutMs);
-                    
-                    // Show interim text with pause indicator
-                    updateStatus(`🎤 Hearing: "${interimText}" (waiting ${settings.pauseBetweenWords}s for more...)`);
-                }
-                
-                // Handle final results immediately
-                if (finalText.trim()) {
-                    if (speechTimeout) {
-                        clearTimeout(speechTimeout);
-                        speechTimeout = null;
+                    } else {
+                        // FIXED: Handle interim results differently - only for status display
+                        const interimText = event.results[i][0].transcript.trim();
+                        if (interimText) {
+                            updateStatus(`🎤 Hearing: "${interimText}" (processing...)`);
+                        }
                     }
-                    processFinalSpeech(finalText.trim());
-                    currentInterimText = ''; // Clear interim text
                 }
             };
         }
@@ -1102,7 +1075,7 @@
             
             const currentTime = Date.now();
             
-            // FIXED: Better duplicate prevention
+            // FIXED: Enhanced duplicate prevention
             if (text === lastProcessedPhrase && (currentTime - lastPhraseTime) < DUPLICATE_TIMEOUT) {
                 console.log('🚫 Duplicate phrase detected, skipping:', text);
                 return;
@@ -1119,12 +1092,9 @@
             }
             
             // Skip if already in recent phrase history
-            if (phraseHistory.length > 0) {
-                const recentPhrases = phraseHistory.slice(-3); // Check last 3 phrases
-                if (recentPhrases.includes(text)) {
-                    console.log('🚫 Recent duplicate in history, skipping:', text);
-                    return;
-                }
+            if (phraseHistory.includes(text)) {
+                console.log('🚫 Phrase already in history, skipping:', text);
+                return;
             }
             
             // Add to phrase history
@@ -1134,10 +1104,9 @@
             updateSpeechDisplay();
             updateStatus(`✅ Got: "${text}"`);
             
-            // Speak the phrase
-            setTimeout(() => {
-                speakCompletePhrase(text);
-            }, 200);
+            // FIXED: Ensure speech happens
+            console.log('🔊 Speaking phrase:', text);
+            speakCompletePhrase(text);
         }
 
         // === VOICE COMMANDS ===
@@ -1166,11 +1135,10 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             voiceCommandRecognition = new SpeechRecognition();
             
-            // FIXED: More reliable voice command settings
             voiceCommandRecognition.continuous = true;
             voiceCommandRecognition.interimResults = false; // Only final results for commands
             voiceCommandRecognition.lang = 'en-US';
-            voiceCommandRecognition.maxAlternatives = 1; // Reduced for consistency
+            voiceCommandRecognition.maxAlternatives = 1;
             
             voiceCommandRecognition.onstart = function() {
                 isVoiceCommandListening = true;
@@ -1179,7 +1147,6 @@
             };
             
             voiceCommandRecognition.onresult = function(event) {
-                // FIXED: Only process final results for voice commands
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     if (event.results[i].isFinal) {
                         const transcript = event.results[i][0].transcript.trim();
@@ -1197,8 +1164,7 @@
                             
                             console.log('🎯 Leslie command detected:', transcript);
                             
-                            // FIXED: Better confidence checking and duplicate prevention
-                            if (confidence === undefined || confidence > 0.4) {
+                            if (confidence === undefined || confidence > 0.3) {
                                 processVoiceCommand(transcript);
                             }
                         }
@@ -1211,13 +1177,12 @@
                 updateVoiceCommandStatus('ready');
                 console.log('🎙️ Voice command session ended - restarting immediately');
                 
-                // FIXED: Consistent restart timing
                 if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
                     setTimeout(() => {
                         if (!isVoiceCommandListening && currentPage !== 'speech' && !isListening) {
                             startVoiceCommands();
                         }
-                    }, 300); // Slightly longer delay for stability
+                    }, 300);
                 }
             };
             
@@ -1233,17 +1198,15 @@
                 
                 updateVoiceCommandStatus('ready');
                 
-                // FIXED: Error recovery with longer delay
                 if (currentPage !== 'speech' && !isListening && microphonePermissionGranted) {
                     setTimeout(() => {
                         if (!isVoiceCommandListening && currentPage !== 'speech' && !isListening) {
                             startVoiceCommands();
                         }
-                    }, 1000); // Longer delay after errors
+                    }, 1000);
                 }
             };
             
-            // Start immediately
             startVoiceCommands();
         }
 
@@ -1319,7 +1282,6 @@
         }
 
         function processVoiceCommand(command) {
-            // FIXED: Prevent overlapping command processing
             if (isProcessingCommand) {
                 console.log('🚫 Command already processing, skipping:', command);
                 return;
@@ -1328,7 +1290,7 @@
             const currentTime = Date.now();
             const cmd = command.toLowerCase().trim();
             
-            // FIXED: Enhanced duplicate command prevention
+            // FIXED: Better duplicate command prevention
             if (cmd === lastVoiceCommand && (currentTime - lastVoiceCommandTime) < COMMAND_TIMEOUT) {
                 console.log('🚫 Duplicate command detected, skipping:', cmd);
                 return;
@@ -1340,11 +1302,12 @@
             
             console.log('🎯 Processing voice command:', cmd);
             
-            // FIXED: Priority processing for close command
+            // FIXED: Enhanced close command detection
             const weatherDisplay = document.getElementById('weatherDisplay');
             const isWeatherOpen = weatherDisplay && !weatherDisplay.classList.contains('hidden');
             
-            if (cmd.includes('close')) {
+            // FIXED: More reliable close command matching
+            if (cmd.includes('close') || cmd.includes('clothes') || cmd.includes('closed')) {
                 console.log('🎯 Close command detected, weather open:', isWeatherOpen);
                 if (isWeatherOpen) {
                     hideWeather();
@@ -1419,7 +1382,7 @@
                 if (enhancedSwitch) enhancedSwitch.checked = false;
                 speakResponse('Enhanced mode off');
                 
-            // FIXED: Speech settings commands with better matching
+            // Speech settings commands
             } else if (cmd.includes('speak faster') || cmd.includes('talk faster') || cmd.includes('faster')) {
                 const newSpeed = Math.min(settings.speechSpeed + 0.2, 2.0);
                 settings.speechSpeed = parseFloat(newSpeed.toFixed(1));
@@ -1478,7 +1441,7 @@
                 speakResponse('Command not recognized');
             }
             
-            // FIXED: Clear processing flag after a delay
+            // Clear processing flag
             setTimeout(() => {
                 isProcessingCommand = false;
             }, 500);
@@ -1503,6 +1466,7 @@
                     utterance.pitch = 1.0;
                     utterance.volume = 1.0;
                     speechSynth.speak(utterance);
+                    console.log('🔊 Speech synthesis started for:', text);
                 }, 300);
             } catch (e) {
                 console.error('Speech synthesis error:', e);
@@ -1585,47 +1549,103 @@
                     displayContactsOnPhonePage();
                 }
                 
+                // FIXED: Enhanced keyboard opening for text input
                 if (pageId === 'textInput') {
                     setTimeout(() => {
                         const textInput = document.getElementById('largeTextInputField');
                         if (textInput) {
                             textInput.value = '';
                             
-                            function openKeyboard() {
+                            console.log('📱 Attempting to open keyboard...');
+                            
+                            // FIXED: More aggressive keyboard opening strategy
+                            function forceKeyboardOpen() {
+                                // Method 1: Direct focus and click
                                 textInput.focus();
                                 textInput.click();
                                 
+                                // Method 2: Simulate user interaction
+                                const clickEvent = new MouseEvent('click', {
+                                    view: window,
+                                    bubbles: true,
+                                    cancelable: true,
+                                    clientX: 50,
+                                    clientY: 50
+                                });
+                                textInput.dispatchEvent(clickEvent);
+                                
+                                // Method 3: For mobile devices
                                 if (/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-                                    const touchEvent = new TouchEvent('touchstart', {
+                                    console.log('📱 Mobile device - using touch events');
+                                    
+                                    // Touch events
+                                    const touchStart = new TouchEvent('touchstart', {
                                         bubbles: true,
                                         cancelable: true,
-                                        touches: [{
+                                        touches: [new Touch({
                                             identifier: 1,
                                             target: textInput,
                                             clientX: 50,
                                             clientY: 50
-                                        }]
+                                        })]
                                     });
-                                    textInput.dispatchEvent(touchEvent);
+                                    textInput.dispatchEvent(touchStart);
                                     
+                                    const touchEnd = new TouchEvent('touchend', {
+                                        bubbles: true,
+                                        cancelable: true
+                                    });
+                                    textInput.dispatchEvent(touchEnd);
+                                    
+                                    // Input event to trigger keyboard
                                     const inputEvent = new Event('input', { bubbles: true });
                                     textInput.dispatchEvent(inputEvent);
+                                    
+                                    // Set selection to trigger cursor
+                                    textInput.setSelectionRange(0, 0);
                                 }
+                                
+                                // Method 4: Temporary text trick
+                                setTimeout(() => {
+                                    textInput.value = ' ';
+                                    textInput.select();
+                                    setTimeout(() => {
+                                        textInput.value = '';
+                                        textInput.focus();
+                                        textInput.setSelectionRange(0, 0);
+                                    }, 50);
+                                }, 100);
+                                
+                                // Method 5: Scroll into view
+                                textInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
                             }
                             
-                            openKeyboard();
-                            setTimeout(openKeyboard, 100);
-                            setTimeout(openKeyboard, 300);
-                            setTimeout(openKeyboard, 500);
+                            // Multiple attempts with different timings
+                            forceKeyboardOpen();
+                            setTimeout(forceKeyboardOpen, 100);
+                            setTimeout(forceKeyboardOpen, 300);
+                            setTimeout(forceKeyboardOpen, 500);
+                            setTimeout(forceKeyboardOpen, 1000);
                             
-                            setTimeout(() => {
-                                textInput.focus();
-                                textInput.value = ' ';
+                            // Method 6: Create temporary input for iOS
+                            if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                                console.log('📱 iOS device - using temporary input method');
+                                const tempInput = document.createElement('input');
+                                tempInput.type = 'text';
+                                tempInput.style.position = 'absolute';
+                                tempInput.style.left = '-9999px';
+                                tempInput.style.opacity = '0';
+                                document.body.appendChild(tempInput);
+                                
                                 setTimeout(() => {
-                                    textInput.value = '';
-                                    textInput.focus();
-                                }, 50);
-                            }, 200);
+                                    tempInput.focus();
+                                    setTimeout(() => {
+                                        textInput.focus();
+                                        textInput.click();
+                                        document.body.removeChild(tempInput);
+                                    }, 100);
+                                }, 200);
+                            }
                         }
                         updateTextSpeakButton();
                     }, 50);
@@ -1700,16 +1720,23 @@
             if (recognizedTextEl) {
                 let html = '';
                 if (phraseHistory.length > 0) {
-                    // FIXED: Show all phrases in history, not just latest
-                    html = phraseHistory.map((phrase, index) => {
-                        const isLatest = index === phraseHistory.length - 1;
-                        const className = isLatest ? 'final-phrase' : 'final-phrase';
-                        const style = isLatest ? 'font-size: 18px; font-weight: bold;' : 'font-size: 16px; opacity: 0.8;';
-                        const prefix = isLatest ? '✅ LATEST: ' : '📝 ';
-                        return `<div class="${className}" style="${style}">${prefix}${phrase}</div>`;
-                    }).join('');
+                    // FIXED: Show latest phrase prominently, previous ones smaller
+                    const latestPhrase = phraseHistory[phraseHistory.length - 1];
+                    html += `<div class="final-phrase" style="font-size: 20px; font-weight: bold; border: 2px solid #0099cc;">
+                                ✅ LATEST: ${latestPhrase}
+                             </div>`;
                     
-                    html += `<div style="color: #999; font-size: 14px; margin-top: 12px; text-align: center; padding: 8px; background: #f9f9f9; border-radius: 4px;">
+                    // Show previous phrases if any
+                    if (phraseHistory.length > 1) {
+                        for (let i = phraseHistory.length - 2; i >= 0; i--) {
+                            const phrase = phraseHistory[i];
+                            html += `<div class="final-phrase" style="font-size: 14px; opacity: 0.7; border-left: 2px solid #0099cc;">
+                                        📝 ${phrase}
+                                     </div>`;
+                        }
+                    }
+                    
+                    html += `<div style="color: #999; font-size: 12px; margin-top: 12px; text-align: center; padding: 6px; background: #f9f9f9; border-radius: 4px;">
                                 📊 Total phrases: ${phraseHistory.length}
                              </div>`;
                 } else {
