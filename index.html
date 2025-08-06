@@ -810,7 +810,6 @@
                             • "Hey Leslie, <strong>pause less</strong>" - Decreases pause between words<br>
                             • "Hey Leslie, <strong>voice commands off</strong>" - Disables voice responses<br>
                             • "Hey Leslie, <strong>voice commands on</strong>" - Enables voice responses<br>
-                            • "Hey Leslie, <strong>enhanced speech on</strong>" - Enables enhanced mode<br>
                         </div>
                     </div>
                     
@@ -1001,6 +1000,7 @@
         }
 
         // === SPEECH RECOGNITION ===
+        // FIXED: Enhanced speech recognition setup with user settings
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
@@ -1020,6 +1020,7 @@
                 isListening = false;
                 const listenButton = document.getElementById('listenButton');
                 if (currentPage === 'speech' && listenButton && listenButton.textContent === 'STOP LISTENING') {
+                    // FIXED: Restart with user's pause setting
                     setTimeout(() => {
                         if (currentPage === 'speech' && listenButton.textContent === 'STOP LISTENING') {
                             try {
@@ -1029,7 +1030,7 @@
                                 updateStatus('❌ Click "START TALKING" to restart');
                             }
                         }
-                    }, 500);
+                    }, (settings.pauseBetweenWords * 1000) + 100); // Use user's pause setting
                 } else {
                     updateListenButton();
                     updateStatus('✅ Stopped - Click "START TALKING" to restart');
@@ -1041,6 +1042,32 @@
                 updateListenButton();
                 updateStatus('❌ Error: ' + event.error);
             };
+
+            recognition.onresult = function(event) {
+                lastSpeechTime = Date.now();
+                resetSessionTimeout();
+                
+                // FIXED: Simple and reliable approach - use latest final result only
+                if (event.results.length > 0) {
+                    const latestResult = event.results[event.results.length - 1];
+                    
+                    if (latestResult.isFinal) {
+                        const transcript = latestResult[0].transcript.trim();
+                        console.log(`🎤 Final result:`, transcript);
+                        
+                        if (transcript && transcript.length > 0) {
+                            processFinalSpeech(transcript);
+                        }
+                    } else {
+                        // Show interim feedback
+                        const interimText = latestResult[0].transcript.trim();
+                        if (interimText) {
+                            updateStatus(`🎤 Hearing: "${interimText}" (processing...)`);
+                        }
+                    }
+                }
+            };
+        }
 
         recognition.onresult = function(event) {
             lastSpeechTime = Date.now();
@@ -1074,79 +1101,42 @@
         };
         }
 
-        // FIXED: More robust Leslie command detection to prevent any display
+        // FIXED: Simple and reliable speech processing
         function processFinalSpeech(text) {
             if (!text || text.length <= 1) return;
             
-            console.log('🎙️ Raw text received:', `"${text}"`);
+            console.log('🎙️ Processing text:', `"${text}"`);
             
-            // FIXED: Ultra-comprehensive Leslie command detection
-            const originalText = text;
+            // Check for Leslie commands first
             const lowerText = text.toLowerCase().trim();
             const leslieVariants = [
                 'hey leslie', 'leslie', 'less lee', 'lesley', 
-                'wesley', 'bessie', 'hey less lee', 'hey lesley',
-                'hey wesley', 'hey bessie'
+                'wesley', 'bessie'
             ];
             
-            // Check every possible Leslie variant
-            let isLeslieCommand = false;
-            let foundVariant = '';
-            
+            // FIXED: Strict Leslie command detection
             for (const variant of leslieVariants) {
                 if (lowerText.includes(variant)) {
-                    isLeslieCommand = true;
-                    foundVariant = variant;
-                    console.log('🎯 Leslie variant detected:', foundVariant);
-                    break;
+                    console.log('🚫 Leslie command detected - suppressing display');
+                    processVoiceCommand(text);
+                    updateStatus('🎤 Voice command processed');
+                    return;
                 }
             }
             
-            // FIXED: If ANY Leslie variant found, completely suppress and process
-            if (isLeslieCommand) {
-                console.log('🚫 LESLIE COMMAND DETECTED - COMPLETE SUPPRESSION');
-                console.log('🚫 Original text:', originalText);
-                console.log('🚫 Found variant:', foundVariant);
-                
-                // IMMEDIATE complete suppression
-                phraseHistory = [];  // Clear any existing display
-                updateSpeechDisplay();  // Update display to show nothing
-                updateStatus('🎤 Voice command processed - ready for next phrase');
-                
-                // Process the command but don't display anything
-                processVoiceCommand(originalText);
-                
-                return; // COMPLETE EXIT - nothing should display
-            }
-            
-            // Check for phantom phrases
-            if (isPhantomPhrase(text)) {
-                console.log('🚫 Phantom phrase detected, skipping:', text);
-                return;
-            }
-            
-            // FIXED: Better duplicate prevention
-            const currentTime = Date.now();
-            if (text === lastProcessedPhrase && (currentTime - lastPhraseTime) < 3000) {
-                console.log('🚫 Duplicate phrase detected, skipping:', text);
-                return;
-            }
+            // This is regular speech
+            console.log('✅ Regular speech phrase:', text);
             
             // Cancel any existing speech
-            if (speechSynth.speaking) {
-                speechSynth.cancel();
-            }
+            speechSynth.cancel();
             
-            lastProcessedPhrase = text;
-            lastPhraseTime = currentTime;
-            
-            // Store and display the phrase
+            // Store and display
             phraseHistory = [text];
             updateSpeechDisplay();
-            updateStatus(`✅ Got: "${text}"`);
+            updateStatus(`✅ Captured: "${text}"`);
             
             // Speak the phrase
-            console.log('🔊 About to speak phrase:', text);
+            console.log('🔊 About to speak:', text);
             speakCompletePhrase(text);
         }
 
@@ -1230,19 +1220,20 @@
             }
         }
 
+        // FIXED: Enhanced voice command recognition with pause settings
         function initializeVoiceCommands() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             voiceCommandRecognition = new SpeechRecognition();
             
             voiceCommandRecognition.continuous = true;
-            voiceCommandRecognition.interimResults = false; // Only final results for commands
+            voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
             voiceCommandRecognition.maxAlternatives = 1;
             
             voiceCommandRecognition.onstart = function() {
                 isVoiceCommandListening = true;
                 updateVoiceCommandStatus('active');
-                console.log('✅ Voice commands started');
+                console.log('✅ Voice commands started with pause setting:', settings.pauseBetweenWords);
             };
             
             voiceCommandRecognition.onresult = function(event) {
@@ -1262,8 +1253,6 @@
                             lowerTranscript.includes('bessie')) {
                             
                             console.log('🎯 Leslie command detected:', transcript);
-                            
-                            // FIXED: Process commands immediately without confidence check
                             processVoiceCommand(transcript);
                         }
                     }
@@ -1273,15 +1262,15 @@
             voiceCommandRecognition.onend = function() {
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('ready');
-                console.log('🎙️ Voice command session ended - restarting immediately');
+                console.log('🎙️ Voice command session ended - restarting with pause setting');
                 
-                // FIXED: Only restart voice commands if NOT on speech page
                 if (currentPage !== 'speech' && microphonePermissionGranted) {
+                    // FIXED: Use user's pause setting for voice command restart
                     setTimeout(() => {
                         if (!isVoiceCommandListening && currentPage !== 'speech') {
                             startVoiceCommands();
                         }
-                    }, 300);
+                    }, (settings.pauseBetweenWords * 1000) + 200);
                 }
             };
             
@@ -1302,7 +1291,7 @@
                         if (!isVoiceCommandListening && currentPage !== 'speech') {
                             startVoiceCommands();
                         }
-                    }, 1000);
+                    }, (settings.pauseBetweenWords * 1000) + 500);
                 }
             };
             
@@ -1456,16 +1445,12 @@
                 showHourlyWeather();
                 speakResponse('Showing hourly forecast');
                 commandExecuted = true;
-            } else if (cmd.includes('weekly') || cmd.includes('7 day') || cmd.includes('seven day') || cmd.includes('week') || cmd.includes('7day')) {
+            } else if (cmd.includes('weekly') || cmd.includes('7 day') || cmd.includes('seven day') || cmd.includes('week') || cmd.includes('7day') || cmd.includes('7-day')) {
                 showWeeklyWeather();
                 speakResponse('Showing 7 day forecast');
                 commandExecuted = true;
                 
             // Speech control
-            } else if (cmd.includes('clear text') || cmd.includes('clear') || cmd.includes('clear speech')) {
-                clearSpeechText();
-                speakResponse('Clearing text');
-                commandExecuted = true;
             } else if (cmd.includes('stop listening') || cmd.includes('stop')) {
                 if (isListening) {
                     toggleListening();
@@ -1588,68 +1573,47 @@
             }, 50);
         }
 
-        // FIXED: Prevent repeat speech and ensure single playback
+        // FIXED: Guaranteed speech synthesis
         function speakCompletePhrase(text) {
+            console.log('🔊 ATTEMPTING to speak:', text);
+            
             try {
-                console.log('🔊 Starting speech synthesis for:', text);
-                
-                // FIXED: More aggressive cancellation
                 speechSynth.cancel();
                 
-                // FIXED: Wait longer to ensure cancellation completes
                 setTimeout(() => {
-                    // Double-check nothing is speaking
-                    if (speechSynth.speaking || speechSynth.pending) {
-                        console.log('🛑 Speech still active, cancelling again');
-                        speechSynth.cancel();
-                        
-                        // Try again after additional delay
-                        setTimeout(() => speakCompletePhrase(text), 300);
-                        return;
-                    }
-                    
                     const utterance = new SpeechSynthesisUtterance(text);
                     utterance.rate = settings.speechSpeed || 1.0;
                     utterance.pitch = 1.0;
                     utterance.volume = 1.0;
                     utterance.lang = 'en-US';
                     
-                    // FIXED: Better event handling to prevent repeats
                     utterance.onstart = function() {
-                        console.log('✅ Speech synthesis started:', text);
+                        console.log('✅ SPEECH STARTED for:', text);
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ Speech synthesis completed:', text);
-                        // FIXED: Ensure no additional speech
-                        speechSynth.cancel();
+                        console.log('✅ SPEECH COMPLETED for:', text);
                     };
                     
                     utterance.onerror = function(event) {
-                        console.error('❌ Speech synthesis error:', event.error);
-                        speechSynth.cancel(); // Cancel on error to prevent repeats
+                        console.error('❌ Speech error:', event.error);
                     };
                     
-                    utterance.onboundary = function(event) {
-                        // FIXED: Prevent word-level repeats
-                        if (event.name === 'word') {
-                            console.log('🎯 Word boundary:', event.name);
-                        }
-                    };
-                    
-                    // Force resume if paused
-                    if (speechSynth.paused) {
-                        speechSynth.resume();
-                    }
-                    
-                    console.log('🎙️ Queuing speech for:', text);
+                    console.log('🎙️ Queuing speech synthesis...');
                     speechSynth.speak(utterance);
                     
-                }, 200);
+                    // Force check after delay
+                    setTimeout(() => {
+                        if (!speechSynth.speaking) {
+                            console.log('🔄 Speech didn\'t start, forcing retry...');
+                            speechSynth.speak(utterance);
+                        }
+                    }, 200);
+                    
+                }, 100);
                 
             } catch (e) {
                 console.error('❌ Speech synthesis error:', e);
-                speechSynth.cancel(); // Cancel on any error
             }
         }
 
