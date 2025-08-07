@@ -1186,39 +1186,41 @@
         function processFinalSpeech(text) {
             if (!text || text.length <= 1) return;
             
-            console.log('🎙️ Processing final speech:', `"${text}"`);
+            console.log('🎙️ PROCESSING FINAL SPEECH:', `"${text}"`);
             
-            // FIXED: More precise Leslie command detection
+            // FIXED: Better Leslie command detection that prevents ANY display
             const lowerText = text.toLowerCase().trim();
             
-            // Check for Leslie command patterns
+            // Check if it starts with or contains Leslie command patterns
             const isLeslieCommand = lowerText.startsWith('hey leslie') || 
                                   lowerText.startsWith('leslie ') ||
                                   lowerText.startsWith('less lee') ||
                                   lowerText.startsWith('lesley ') ||
                                   lowerText.includes('hey leslie') ||
                                   lowerText === 'leslie' ||
-                                  lowerText === 'hey leslie';
+                                  lowerText === 'hey leslie' ||
+                                  lowerText === 'hey';
             
             if (isLeslieCommand) {
-                console.log('🎯 Leslie command detected in speech recognition');
+                console.log('🎯 LESLIE COMMAND DETECTED - BLOCKING FROM DISPLAY');
                 
                 if (currentPage === 'speech') {
-                    // FIXED: On speech page, completely block from display and only process as voice command
-                    console.log('🚫 Leslie command on speech page - processing silently without display');
+                    // FIXED: Completely block from display on speech page
+                    console.log('🚫 BLOCKING LESLIE COMMAND FROM SPEECH PAGE DISPLAY');
                     updateStatus('🎤 Voice command processed - ready for next phrase');
                     
-                    // Process as voice command but don't display ANYTHING
+                    // Process as voice command silently
                     setTimeout(() => {
                         processVoiceCommand(text);
-                        
-                        // FIXED: Clear any display that might have occurred
-                        setTimeout(() => {
-                            updateStatus('🎤 Ready for next phrase - speak clearly');
-                        }, 200);
                     }, 50);
                     
-                    return; // FIXED: Return early to prevent any display
+                    // FIXED: Clear the display immediately to prevent any "Hey" showing
+                    setTimeout(() => {
+                        updateSpeechDisplaySingle(''); // Clear display
+                        updateStatus('🎤 Ready for next phrase');
+                    }, 100);
+                    
+                    return; // CRITICAL: Exit early to prevent any processing as regular speech
                 } else {
                     // On other pages, process as voice command
                     processVoiceCommand(text);
@@ -1226,8 +1228,8 @@
                 }
             }
             
-            // FIXED: Only process as regular speech if it's definitely NOT a Leslie command
-            console.log('✅ Regular speech confirmed - processing phrase:', text);
+            // FIXED: Only process as regular speech if it's absolutely NOT a Leslie command
+            console.log('✅ CONFIRMED REGULAR SPEECH - PROCESSING:', text);
             processCompletePhrase(text);
         }
         
@@ -1620,62 +1622,91 @@
         }
 
         function forceSpeakPhrase(text) {
-            console.log('🔊 FORCE SPEAK PHRASE STARTING:', text);
+            console.log('🔊 FORCE SPEAK PHRASE - MAXIMUM EFFORT:', text);
             
-            // FIXED: Aggressive speech synthesis forcing
+            // FIXED: Multiple speech synthesis approaches for reliability
             try {
-                // Stop everything first
+                // Method 1: Direct speech synthesis
                 speechSynth.cancel();
                 
-                // Wait a moment then speak
                 setTimeout(() => {
                     try {
-                        speechSynth.cancel(); // Double cancel
+                        if (speechSynth.speaking) speechSynth.cancel();
                         
                         const utterance = new SpeechSynthesisUtterance(text);
                         utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
-                        utterance.pitch = 1.2; // Slightly higher pitch for clarity
-                        utterance.volume = 1.0; // Full volume
+                        utterance.pitch = 1.0;
+                        utterance.volume = 1.0;
                         utterance.lang = 'en-US';
                         
+                        let speechStarted = false;
+                        
                         utterance.onstart = function() {
-                            console.log('✅ FORCE SPEECH STARTED:', text);
+                            speechStarted = true;
+                            console.log('✅ DIRECT SPEECH STARTED:', text);
                             updateStatus(`🔊 Speaking: "${text}"`);
                         };
                         
                         utterance.onend = function() {
-                            console.log('✅ FORCE SPEECH COMPLETED:', text);
-                            updateStatus('🎤 Ready for next phrase - speak clearly');
+                            console.log('✅ DIRECT SPEECH COMPLETED:', text);
+                            updateStatus('🎤 Ready for next phrase');
                         };
                         
                         utterance.onerror = function(event) {
-                            console.error('❌ FORCE SPEECH ERROR:', event.error);
-                            updateStatus(`❌ Speech error: ${event.error} - Try again`);
+                            console.error('❌ DIRECT SPEECH ERROR:', event.error);
+                            updateStatus(`❌ Speech error: ${event.error}`);
                         };
                         
-                        // FIXED: Multiple attempts to ensure speech works
+                        // Ensure speech synthesis is ready
                         if (speechSynth.paused) speechSynth.resume();
                         
-                        console.log('🎤 FORCE SPEAKING NOW:', text);
+                        console.log('🎤 SPEAKING WITH DIRECT METHOD:', text);
                         speechSynth.speak(utterance);
                         
-                        // FIXED: Backup attempt if first fails
+                        // Method 2: Backup attempt after delay
                         setTimeout(() => {
-                            if (!speechSynth.speaking) {
-                                console.log('🔄 BACKUP SPEECH ATTEMPT');
-                                speechSynth.speak(new SpeechSynthesisUtterance(text));
+                            if (!speechStarted && !speechSynth.speaking) {
+                                console.log('🔄 BACKUP SPEECH ATTEMPT - Direct failed');
+                                speechSynth.cancel();
+                                
+                                const backupUtterance = new SpeechSynthesisUtterance(text);
+                                backupUtterance.rate = parseFloat(settings.speechSpeed) || 1.0;
+                                backupUtterance.pitch = 1.0;
+                                backupUtterance.volume = 1.0;
+                                backupUtterance.lang = 'en-US';
+                                
+                                backupUtterance.onstart = function() {
+                                    console.log('✅ BACKUP SPEECH STARTED:', text);
+                                    updateStatus(`🔊 Speaking (backup): "${text}"`);
+                                };
+                                
+                                if (speechSynth.paused) speechSynth.resume();
+                                speechSynth.speak(backupUtterance);
                             }
-                        }, 500);
+                        }, 800);
                         
                     } catch (innerError) {
                         console.error('❌ INNER SPEECH ERROR:', innerError);
-                        updateStatus('❌ Speech synthesis failed - check audio settings');
+                        // Method 3: Emergency speech attempt
+                        setTimeout(() => {
+                            console.log('🚨 EMERGENCY SPEECH ATTEMPT');
+                            try {
+                                speechSynth.cancel();
+                                const emergencyUtterance = new SpeechSynthesisUtterance(text);
+                                emergencyUtterance.rate = 1.0;
+                                emergencyUtterance.volume = 1.0;
+                                speechSynth.speak(emergencyUtterance);
+                            } catch (emergencyError) {
+                                console.error('❌ EMERGENCY SPEECH FAILED:', emergencyError);
+                                updateStatus('❌ Speech synthesis not working - check device audio');
+                            }
+                        }, 1000);
                     }
-                }, 200);
+                }, 100);
                 
             } catch (outerError) {
                 console.error('❌ OUTER SPEECH ERROR:', outerError);
-                updateStatus('❌ Speech system error - check browser audio permissions');
+                updateStatus('❌ Speech system error - audio may be disabled');
             }
         }
 
@@ -1787,48 +1818,18 @@
                     }
                     
                     if (pageId === 'textInput') {
-                        console.log('📱 TEXTING PAGE - MAXIMUM KEYBOARD FORCE DEPLOYMENT');
+                        console.log('📱 TEXTING PAGE - NUCLEAR KEYBOARD DEPLOYMENT');
                         
-                        // FIXED: Immediate keyboard forcing with multiple methods
-                        setTimeout(() => {
-                            console.log('📱 Keyboard attempt 1 - immediate');
-                            forceKeyboardOpen();
-                        }, 10);
+                        // FIXED: Immediate nuclear option - no delays
+                        forceKeyboardNuclearOption();
                         
-                        setTimeout(() => {
-                            console.log('📱 Keyboard attempt 2 - 100ms');
-                            forceKeyboardOpen();
-                        }, 100);
-                        
-                        setTimeout(() => {
-                            console.log('📱 Keyboard attempt 3 - 300ms');
-                            forceKeyboardOpen();
-                        }, 300);
-                        
-                        setTimeout(() => {
-                            console.log('📱 Keyboard attempt 4 - 600ms');
-                            forceKeyboardOpen();
-                        }, 600);
-                        
-                        setTimeout(() => {
-                            console.log('📱 Keyboard attempt 5 - 1000ms');
-                            forceKeyboardOpen();
-                        }, 1000);
-                        
-                        setTimeout(() => {
-                            console.log('📱 Keyboard attempt 6 - 1500ms');
-                            forceKeyboardOpen();
-                        }, 1500);
-                        
-                        setTimeout(() => {
-                            console.log('📱 Keyboard attempt 7 - 2000ms');
-                            forceKeyboardOpen();
-                        }, 2000);
-                        
-                        setTimeout(() => {
-                            console.log('📱 Keyboard attempt 8 - FINAL - 3000ms');
-                            forceKeyboardOpenUltimate();
-                        }, 3000);
+                        // Also try standard methods as backup
+                        setTimeout(() => forceKeyboardOpen(), 100);
+                        setTimeout(() => forceKeyboardOpen(), 500);
+                        setTimeout(() => forceKeyboardOpen(), 1000);
+                        setTimeout(() => forceKeyboardOpen(), 1500);
+                        setTimeout(() => forceKeyboardOpen(), 2000);
+                        setTimeout(() => forceKeyboardOpen(), 3000);
                     }
                 }
             } catch (error) {
@@ -2098,16 +2099,23 @@
             if (statusText) statusText.textContent = message;
         }
 
+        // FIXED: Function to clear speech display
         function updateSpeechDisplaySingle(currentPhrase) {
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
-                const html = `<div class="final-phrase" style="font-size: 20px; font-weight: bold; border: 2px solid #0099cc;">
-                                ✅ CURRENT: ${currentPhrase}
-                             </div>
-                             <div style="color: #999; font-size: 12px; margin-top: 12px; text-align: center; padding: 6px; background: #f9f9f9; border-radius: 4px;">
-                                🎤 Speak your next phrase...
-                             </div>`;
-                recognizedTextEl.innerHTML = html;
+                if (!currentPhrase || currentPhrase === '') {
+                    // FIXED: Clear display completely
+                    recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for your next phrase...</div>';
+                } else {
+                    // Show the current phrase
+                    const html = `<div class="final-phrase" style="font-size: 20px; font-weight: bold; border: 2px solid #0099cc;">
+                                    ✅ CAPTURED: ${currentPhrase}
+                                 </div>
+                                 <div style="color: #999; font-size: 12px; margin-top: 12px; text-align: center; padding: 6px; background: #f9f9f9; border-radius: 4px;">
+                                    🎤 Speak your next phrase...
+                                 </div>`;
+                    recognizedTextEl.innerHTML = html;
+                }
             }
         }
 
