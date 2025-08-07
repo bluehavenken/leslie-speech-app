@@ -1002,7 +1002,7 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // Speech recognition setup
+        // FIXED: Better speech recognition to prevent word dropping
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
@@ -1023,8 +1023,9 @@
                 isListening = false;
                 const listenButton = document.getElementById('listenButton');
                 if (currentPage === 'speech' && listenButton && listenButton.textContent === 'STOP LISTENING') {
-                    const restartDelay = (settings.pauseBetweenWords * 1000) + 200;
-                    console.log(`🔄 Restarting recognition with ${settings.pauseBetweenWords}s pause setting`);
+                    // FIXED: Longer delay to prevent word cutting
+                    const restartDelay = Math.max((settings.pauseBetweenWords * 1000) + 500, 1000);
+                    console.log(`🔄 Restarting recognition with ${settings.pauseBetweenWords}s pause + 500ms buffer`);
                     
                     setTimeout(() => {
                         if (currentPage === 'speech' && listenButton.textContent === 'STOP LISTENING') {
@@ -1056,10 +1057,11 @@
                 updateStatus('❌ Error: ' + event.error);
                 
                 if (event.error !== 'not-allowed' && currentPage === 'speech') {
-                    const restartDelay = (settings.pauseBetweenWords * 1000) + 1000;
+                    // FIXED: Longer restart delay to prevent word cutting
+                    const restartDelay = Math.max((settings.pauseBetweenWords * 1000) + 1500, 2000);
                     setTimeout(() => {
                         if (currentPage === 'speech' && !isListening) {
-                            console.log('🔄 Auto-restarting after error');
+                            console.log('🔄 Auto-restarting after error with longer delay');
                             try {
                                 recognition.start();
                                 updateStatus('🔄 Restarted after error');
@@ -1075,19 +1077,28 @@
                 lastSpeechTime = Date.now();
                 resetSessionTimeout();
                 
-                // FIXED: Only process the most recent final result to prevent cascading
+                // FIXED: Better final result detection to prevent word dropping
                 let latestFinalText = '';
                 let hasNewFinal = false;
+                let allFinalText = ''; // Collect all final text to prevent word loss
                 
-                // Look for the most recent final result
+                // Collect ALL final results to prevent word dropping
+                for (let i = 0; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        allFinalText += event.results[i][0].transcript + ' ';
+                    }
+                }
+                
+                allFinalText = allFinalText.trim();
+                
+                // Only look for the most recent final result for newness check
                 for (let i = event.results.length - 1; i >= 0; i--) {
                     if (event.results[i].isFinal) {
                         latestFinalText = event.results[i][0].transcript.trim();
-                        // Check if this is actually a new result
                         if (i >= event.resultIndex) {
                             hasNewFinal = true;
                         }
-                        break; // Take only the most recent final result
+                        break;
                     }
                 }
                 
@@ -1100,16 +1111,17 @@
                     }
                 }
                 
-                // FIXED: Process only new, complete, single phrases
-                if (hasNewFinal && latestFinalText && latestFinalText.length > 1) {
-                    // Prevent processing the same phrase multiple times
-                    if (latestFinalText !== lastProcessedPhrase) {
-                        console.log('🎤 New complete phrase:', latestFinalText);
-                        lastProcessedPhrase = latestFinalText;
+                // FIXED: Use complete final text instead of just latest to prevent word loss
+                const textToProcess = allFinalText.length > latestFinalText.length ? allFinalText : latestFinalText;
+                
+                if (hasNewFinal && textToProcess && textToProcess.length > 1) {
+                    if (textToProcess !== lastProcessedPhrase) {
+                        console.log('🎤 Complete phrase with all words:', textToProcess);
+                        lastProcessedPhrase = textToProcess;
                         lastPhraseTime = Date.now();
-                        processFinalSpeech(latestFinalText);
+                        processFinalSpeech(textToProcess);
                     } else {
-                        console.log('🚫 Duplicate phrase ignored:', latestFinalText);
+                        console.log('🚫 Duplicate phrase ignored:', textToProcess);
                     }
                 }
             };
@@ -1385,26 +1397,40 @@
                 showPage('commands');
                 speakResponse('Showing commands');
                 commandExecuted = true;
-            } else if (cmd.includes('close')) {
+            // Close commands - FIXED: Better close detection for weather
+            else if (cmd.includes('close') || cmd.includes('clothes') || cmd.includes('closed') || cmd.includes('hide weather') || cmd.includes('hide') || cmd.includes('dismiss')) {
                 if (isWeatherOpen) {
                     hideWeather();
                     speakResponse('Weather closed');
+                    commandExecuted = true;
                 } else if (currentPage !== 'home') {
                     showPage('home');
                     speakResponse('Going home');
+                    commandExecuted = true;
                 } else {
                     speakResponse('Nothing to close');
+                    commandExecuted = true;
                 }
-                commandExecuted = true;
-            } else if (cmd.includes('weather')) {
+            } 
+            
+            // Speech control
+            else if (cmd.includes('stop listening') || cmd.includes('stop')) {
+                if (isListening) {
+                    toggleListening();
+                    speakResponse('Stopping speech recognition');
+                    commandExecuted = true;
+                }
+            }
+                // Weather commands
+            else if (cmd.includes('weather') || cmd.includes('current weather')) {
                 showCurrentWeather();
                 speakResponse('Showing current weather');
                 commandExecuted = true;
-            } else if (cmd.includes('hourly')) {
+            } else if (cmd.includes('hourly') || cmd.includes('hour')) {
                 showHourlyWeather();
                 speakResponse('Showing hourly forecast');
                 commandExecuted = true;
-            } else if (cmd.includes('weekly') || cmd.includes('7 day')) {
+            } else if (cmd.includes('weekly') || cmd.includes('7 day') || cmd.includes('seven day') || cmd.includes('week') || cmd.includes('7day') || cmd.includes('7-day')) {
                 showWeeklyWeather();
                 speakResponse('Showing 7 day forecast');
                 commandExecuted = true;
@@ -1618,44 +1644,73 @@
             const textInput = document.getElementById('largeTextInputField');
             if (!textInput) return;
             
-            console.log('📱 Forcing keyboard open...');
+            console.log('📱 FORCING KEYBOARD OPEN - Multiple methods...');
             
-            // FIXED: More aggressive focus methods
+            // Method 1: Basic focus and click
             textInput.focus();
             textInput.click();
             
-            // FIXED: Force scroll into view and focus
-            textInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Method 2: Programmatic selection
+            textInput.select();
+            textInput.setSelectionRange(0, 0);
             
+            // Method 3: Fake typing to trigger keyboard
+            textInput.value = ' ';
+            textInput.focus();
             setTimeout(() => {
-                // Create multiple interaction events
+                textInput.value = '';
                 textInput.focus();
-                textInput.select(); // This often triggers keyboard on mobile
+            }, 50);
+            
+            // Method 4: Multiple event dispatch
+            setTimeout(() => {
+                ['focus', 'click', 'touchstart', 'touchend', 'mousedown', 'mouseup'].forEach(eventType => {
+                    const event = new Event(eventType, { bubbles: true, cancelable: true });
+                    textInput.dispatchEvent(event);
+                });
                 
-                // Simulate typing to force keyboard
+                textInput.focus();
+                textInput.click();
+                
+                // Method 5: Input event simulation
                 const inputEvent = new InputEvent('input', {
                     bubbles: true,
                     cancelable: true,
                     inputType: 'insertText',
-                    data: ''
+                    data: ' '
                 });
                 textInput.dispatchEvent(inputEvent);
                 
-                // Touch simulation for mobile devices
-                if ('ontouchstart' in window) {
-                    const rect = textInput.getBoundingClientRect();
-                    
-                    ['touchstart', 'touchend', 'click'].forEach(eventType => {
-                        const event = new Event(eventType, { bubbles: true });
-                        Object.defineProperty(event, 'target', { value: textInput });
-                        textInput.dispatchEvent(event);
-                    });
-                }
-                
-                // Final focus
-                textInput.focus();
+                // Clear and refocus
+                setTimeout(() => {
+                    textInput.value = '';
+                    textInput.focus();
+                    textInput.click();
+                }, 100);
                 
             }, 100);
+            
+            // Method 6: iOS Safari specific triggers
+            if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                setTimeout(() => {
+                    textInput.style.transform = 'translateY(-1px)';
+                    textInput.focus();
+                    textInput.click();
+                    setTimeout(() => {
+                        textInput.style.transform = '';
+                        textInput.focus();
+                    }, 200);
+                }, 200);
+            }
+            
+            // Method 7: Android Chrome specific
+            if (/Android/.test(navigator.userAgent)) {
+                setTimeout(() => {
+                    textInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    textInput.focus();
+                    textInput.select();
+                }, 300);
+            }
         }
 
         function startTalkingFromHome() {
