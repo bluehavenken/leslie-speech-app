@@ -1245,19 +1245,27 @@
         function processCompletePhrase(text) {
             console.log('🎙️ PROCESSING COMPLETE PHRASE FOR DISPLAY AND SPEECH:', text);
             
-            updateSpeechDisplaySingle(text);
-            updateStatus(`✅ Captured: "${text}" - Now speaking...`);
+            // FIXED: Clear any existing display first to prevent cascading
+            updateSpeechDisplaySingle('');
             
-            // FIXED: Immediate fast speech without delays
-            speakPhraseQuickly(text);
+            // FIXED: Display the complete phrase immediately
+            setTimeout(() => {
+                updateSpeechDisplaySingle(text);
+                updateStatus(`✅ Captured: "${text}" - Now speaking...`);
+                
+                // FIXED: Speak the phrase after display is updated
+                setTimeout(() => {
+                    speakPhraseQuickly(text);
+                }, 200);
+            }, 100);
         }
 
-        // FIXED: Speech function that doesn't cut off the end of phrases
+        // FIXED: Simple, working speech function
         function speakPhraseQuickly(text) {
-            console.log('🔊 SPEAKING COMPLETE PHRASE:', text);
+            console.log('🔊 SPEAKING PHRASE:', text);
             
             if (isSpeaking) {
-                console.log('🔊 Cancelling current speech for new phrase');
+                console.log('🔊 Stopping current speech for new phrase');
                 speechSynth.cancel();
                 isSpeaking = false;
             }
@@ -1265,125 +1273,50 @@
             isSpeaking = true;
             
             try {
-                if (speechSynth.paused) {
-                    speechSynth.resume();
-                }
-                
+                // FIXED: Clear speech queue
                 speechSynth.cancel();
                 
-                // FIXED: Add small pause at end to prevent cutoff
-                const textWithPause = text + "."; // Add period for natural pause
-                
-                const utterance = new SpeechSynthesisUtterance(textWithPause);
-                utterance.rate = Math.min(parseFloat(settings.speechSpeed) || 1.0, 1.2); // Slower for completeness
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
-                utterance.lang = 'en-US';
-                
-                let speechCompleted = false;
-                let speechStarted = false;
-                
-                utterance.onstart = function() {
-                    speechStarted = true;
-                    speechCompleted = false;
-                    console.log('✅ SPEECH STARTED - WILL COMPLETE FULLY:', text);
-                    updateStatus(`🔊 Speaking: "${text}"`);
-                };
-                
-                utterance.onend = function() {
-                    if (!speechCompleted) {
-                        speechCompleted = true;
-                        console.log('✅ SPEECH COMPLETED WITHOUT CUTOFF:', text);
-                        
-                        // FIXED: Delay before clearing flag to ensure speech actually finishes
-                        setTimeout(() => {
-                            isSpeaking = false;
-                            updateStatus('🎤 Listening - Ready for next phrase');
-                        }, 200); // Small delay to prevent cutoff
-                    }
-                };
-                
-                utterance.onerror = function(event) {
-                    console.error('❌ SPEECH ERROR:', event.error, 'for text:', text);
-                    if (!speechCompleted) {
-                        speechCompleted = true;
-                        
-                        // FIXED: Delay before clearing to prevent cutoff
-                        setTimeout(() => {
-                            isSpeaking = false;
-                            updateStatus('🎤 Listening - Speech had error, ready for next phrase');
-                        }, 300);
-                    }
-                };
-                
-                console.log('🎤 STARTING COMPLETE SPEECH:', textWithPause);
-                speechSynth.speak(utterance);
-                
-                // FIXED: Backup check that waits longer for complete speech
+                // FIXED: Small delay to ensure cancel completes
                 setTimeout(() => {
-                    if (!speechStarted && isSpeaking) {
-                        console.log('⚠️ Speech failed to start - trying simple method');
-                        trySimpleSpeech(text);
-                    }
-                }, 2000);
-                
-                // FIXED: Extended backup check for speech completion
-                setTimeout(() => {
-                    if (speechStarted && !speechCompleted && isSpeaking) {
-                        console.log('⚠️ Speech may be hanging - forcing completion');
-                        speechCompleted = true;
+                    if (!isSpeaking) return; // Check if still should speak
+                    
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
+                    utterance.lang = 'en-US';
+                    
+                    utterance.onstart = function() {
+                        console.log('✅ SPEECH STARTED:', text);
+                        updateStatus(`🔊 Speaking: "${text}"`);
+                    };
+                    
+                    utterance.onend = function() {
+                        console.log('✅ SPEECH COMPLETED:', text);
                         isSpeaking = false;
                         updateStatus('🎤 Listening - Ready for next phrase');
+                    };
+                    
+                    utterance.onerror = function(event) {
+                        console.error('❌ SPEECH ERROR:', event.error);
+                        isSpeaking = false;
+                        updateStatus('🎤 Listening - Speech error, ready for next phrase');
+                    };
+                    
+                    // FIXED: Ensure speech synthesis is ready
+                    if (speechSynth.paused) {
+                        speechSynth.resume();
                     }
-                }, 8000); // Longer timeout for complete phrases
+                    
+                    console.log('🎤 STARTING SPEECH SYNTHESIS:', text);
+                    speechSynth.speak(utterance);
+                    
+                }, 100);
                 
             } catch (error) {
                 console.error('❌ SPEECH SYNTHESIS ERROR:', error);
-                setTimeout(() => {
-                    isSpeaking = false;
-                    updateStatus('🎤 Listening - Speech error, ready for next phrase');
-                    trySimpleSpeech(text);
-                }, 300);
-            }
-        }
-        
-        // FIXED: Simple speech method that ensures complete phrases
-        function trySimpleSpeech(text) {
-            console.log('🔄 TRYING SIMPLE COMPLETE SPEECH:', text);
-            
-            try {
-                const simpleUtterance = new SpeechSynthesisUtterance(text + ".");
-                simpleUtterance.rate = 0.9; // Slower to ensure completeness
-                simpleUtterance.pitch = 1.0;
-                simpleUtterance.volume = 1.0;
-                simpleUtterance.lang = 'en-US';
-                
-                simpleUtterance.onstart = function() {
-                    console.log('✅ SIMPLE SPEECH STARTED:', text);
-                };
-                
-                simpleUtterance.onend = function() {
-                    console.log('✅ SIMPLE SPEECH COMPLETED:', text);
-                    setTimeout(() => {
-                        isSpeaking = false;
-                    }, 300); // Delay to ensure complete finish
-                };
-                
-                simpleUtterance.onerror = function(event) {
-                    console.error('❌ SIMPLE SPEECH FAILED:', event.error);
-                    setTimeout(() => {
-                        isSpeaking = false;
-                        updateStatus('🎤 Speech unavailable - ready for next phrase');
-                    }, 300);
-                };
-                
-                if (speechSynth.paused) speechSynth.resume();
-                speechSynth.speak(simpleUtterance);
-                
-            } catch (error) {
-                console.error('❌ SIMPLE SPEECH ERROR:', error);
                 isSpeaking = false;
-                updateStatus('🎤 Speech unavailable - ready for next phrase');
+                updateStatus('🎤 Listening - Speech failed, ready for next phrase');
             }
         }
 
@@ -2069,7 +2002,11 @@
                 if (!currentPhrase || currentPhrase === '') {
                     recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for your next phrase...</div>';
                 } else {
-                    const html = `<div class="final-phrase" style="font-size: 20px; font-weight: bold; border: 2px solid #0099cc;">
+                    // FIXED: Clear and replace content completely to prevent cascading
+                    recognizedTextEl.innerHTML = '';
+                    
+                    // FIXED: Add single phrase display
+                    const html = `<div class="final-phrase" style="font-size: 20px; font-weight: bold; border: 2px solid #0099cc; padding: 12px; margin-bottom: 8px;">
                                     ✅ CAPTURED: ${currentPhrase}
                                  </div>
                                  <div style="color: #999; font-size: 12px; margin-top: 12px; text-align: center; padding: 6px; background: #f9f9f9; border-radius: 4px;">
