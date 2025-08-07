@@ -1166,13 +1166,15 @@
                     let latestFinalResult = null;
                     let interimText = '';
                     
+                    // FIXED: Only process the VERY LAST final result to prevent cascading
                     for (let i = event.results.length - 1; i >= 0; i--) {
                         if (event.results[i].isFinal) {
                             latestFinalResult = event.results[i][0].transcript.trim();
-                            break;
+                            break; // Take only the most recent final result
                         }
                     }
                     
+                    // Show interim results for user feedback
                     for (let i = 0; i < event.results.length; i++) {
                         if (!event.results[i].isFinal) {
                             interimText += event.results[i][0].transcript;
@@ -1183,18 +1185,20 @@
                         updateStatus(`🎤 Hearing: "${interimText.trim()}"`);
                     }
                     
+                    // FIXED: Process ONLY final results with strict duplicate prevention
                     if (latestFinalResult && latestFinalResult.length > 1) {
                         const now = Date.now();
                         const isDifferent = latestFinalResult !== lastProcessedPhrase;
-                        const enoughTimePassed = (now - lastPhraseTime) > 800; // Faster processing
+                        const enoughTimePassed = (now - lastPhraseTime) > 1500; // Longer gap to prevent cascading
                         
-                        if (isDifferent || enoughTimePassed) {
-                            console.log('🎤 NEW FINAL RESULT:', `"${latestFinalResult}"`);
+                        // FIXED: More strict conditions to prevent cascading speech
+                        if (isDifferent && !isSpeaking) {
+                            console.log('🎤 PROCESSING UNIQUE FINAL RESULT:', `"${latestFinalResult}"`);
                             lastProcessedPhrase = latestFinalResult;
                             lastPhraseTime = now;
                             processFinalSpeech(latestFinalResult);
                         } else {
-                            console.log('🚫 Ignoring duplicate phrase:', latestFinalResult);
+                            console.log('🚫 PREVENTING CASCADING - Ignoring:', latestFinalResult, 'isSpeaking:', isSpeaking, 'isDifferent:', isDifferent);
                         }
                     }
                 };
@@ -1258,19 +1262,30 @@
             speakPhraseQuickly(text);
         }
 
-        // FIXED: New fast speech function
+        // FIXED: Enhanced speech function with anti-cascading protection
         function speakPhraseQuickly(text) {
             console.log('🔊 SPEAKING PHRASE QUICKLY:', text);
             
-            // Set speaking flag
+            // FIXED: Strict anti-cascading protection
+            if (isSpeaking) {
+                console.log('🚫 ALREADY SPEAKING - BLOCKING CASCADING SPEECH:', text);
+                return; // Absolutely prevent cascading
+            }
+            
+            // Set speaking flag IMMEDIATELY
             isSpeaking = true;
             
             try {
-                // Stop any existing speech immediately
+                // FIXED: Force stop ANY existing speech immediately
                 speechSynth.cancel();
                 
-                // Wait a tiny moment then speak
+                // FIXED: Wait for cancel to complete, then speak
                 setTimeout(() => {
+                    if (!isSpeaking) {
+                        console.log('🚫 Speaking flag cleared during delay - aborting speech');
+                        return;
+                    }
+                    
                     const utterance = new SpeechSynthesisUtterance(text);
                     utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
                     utterance.pitch = 1.0;
@@ -1278,32 +1293,39 @@
                     utterance.lang = 'en-US';
                     
                     utterance.onstart = function() {
-                        console.log('✅ SPEECH STARTED QUICKLY:', text);
+                        console.log('✅ SPEECH STARTED - ANTI-CASCADE ACTIVE:', text);
                         updateStatus(`🔊 Speaking: "${text}"`);
+                        // Double-check speaking flag is set
+                        isSpeaking = true;
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ SPEECH COMPLETED:', text);
-                        isSpeaking = false; // FIXED: Clear speaking flag
+                        console.log('✅ SPEECH COMPLETED - CLEARING ANTI-CASCADE:', text);
+                        isSpeaking = false; // FIXED: Clear flag when done
                         updateStatus('🎤 Ready for next phrase');
                     };
                     
                     utterance.onerror = function(event) {
-                        console.error('❌ SPEECH ERROR:', event.error);
-                        isSpeaking = false; // FIXED: Clear speaking flag even on error
+                        console.error('❌ SPEECH ERROR - CLEARING ANTI-CASCADE:', event.error);
+                        isSpeaking = false; // FIXED: Clear flag on error
                         updateStatus(`❌ Speech error - ready for next phrase`);
                     };
                     
                     // Ensure synth is ready
                     if (speechSynth.paused) speechSynth.resume();
                     
-                    speechSynth.speak(utterance);
+                    // FIXED: Final check before speaking
+                    if (isSpeaking) {
+                        speechSynth.speak(utterance);
+                    } else {
+                        console.log('🚫 Speaking flag cleared before synthesis - aborting');
+                    }
                     
-                }, 100); // Minimal delay
+                }, 150); // Slightly longer delay to ensure cancel completes
                 
             } catch (error) {
-                console.error('❌ SPEECH ERROR:', error);
-                isSpeaking = false; // FIXED: Clear speaking flag on error
+                console.error('❌ SPEECH ERROR - CLEARING FLAG:', error);
+                isSpeaking = false; // FIXED: Always clear flag on error
                 updateStatus('❌ Speech failed - ready for next phrase');
             }
         }
@@ -2041,7 +2063,10 @@
             lastProcessedPhrase = '';
             lastPhraseTime = 0;
             pendingPhrase = null;
-            isSpeaking = false; // FIXED: Clear speaking flag
+            
+            // FIXED: Force stop any cascading speech and clear flag
+            speechSynth.cancel();
+            isSpeaking = false;
             
             lastVoiceCommand = '';
             lastVoiceCommandTime = 0;
@@ -2056,7 +2081,7 @@
                 recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Say something and your phrase will appear here...</div>';
             }
             
-            console.log('🗑️ Speech text and command history cleared');
+            console.log('🗑️ Speech text, speech synthesis, and anti-cascade flag cleared');
         }
 
         function clearTextInput() {
