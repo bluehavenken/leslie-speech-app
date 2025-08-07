@@ -1138,26 +1138,41 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // FIXED: Only process final results to prevent cascading display
-                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                    // FIXED: Show interim results for immediate feedback
+                    let interimText = '';
+                    let finalText = '';
+                    let hasNewFinal = false;
+                    
+                    for (let i = 0; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            const finalText = event.results[i][0].transcript.trim();
-                            
-                            if (finalText && finalText.length > 1) {
-                                // Check for duplicates
-                                if (finalText !== lastProcessedPhrase) {
-                                    console.log('🎤 Final phrase captured:', finalText);
-                                    lastProcessedPhrase = finalText;
-                                    lastPhraseTime = Date.now();
-                                    processFinalSpeech(finalText);
-                                }
+                            // FIXED: Collect ALL final results to prevent word loss
+                            finalText += event.results[i][0].transcript + ' ';
+                            if (i >= event.resultIndex) {
+                                hasNewFinal = true;
                             }
                         } else {
-                            // Show interim results for user feedback only
-                            const interim = event.results[i][0].transcript.trim();
-                            if (interim) {
-                                updateStatus(`🎤 Hearing: "${interim}"`);
-                            }
+                            // Show interim results for user feedback
+                            interimText += event.results[i][0].transcript + ' ';
+                        }
+                    }
+                    
+                    // Show interim feedback
+                    if (interimText.trim()) {
+                        updateStatus(`🎤 Hearing: "${interimText.trim()}"`);
+                    }
+                    
+                    // Process final results
+                    if (hasNewFinal && finalText.trim() && finalText.trim().length > 1) {
+                        const completeFinalText = finalText.trim();
+                        
+                        // FIXED: Prevent duplicates but allow complete processing
+                        if (completeFinalText !== lastProcessedPhrase) {
+                            console.log('🎤 Complete final phrase captured:', completeFinalText);
+                            lastProcessedPhrase = completeFinalText;
+                            lastPhraseTime = Date.now();
+                            processFinalSpeech(completeFinalText);
+                        } else {
+                            console.log('🚫 Duplicate phrase ignored:', completeFinalText);
                         }
                     }
                 };
@@ -1174,7 +1189,7 @@
             
             console.log('🎙️ Processing final speech:', `"${text}"`);
             
-            // FIXED: Check for Leslie commands and handle on ALL pages
+            // FIXED: More aggressive Leslie command detection with word boundaries
             const lowerText = text.toLowerCase().trim();
             const leslieVariants = [
                 'hey leslie', 'leslie', 'less lee', 'lesley', 
@@ -1190,25 +1205,27 @@
             }
             
             if (containsLeslieCommand) {
-                console.log('🎯 Leslie command detected');
+                console.log('🎯 Leslie command detected in speech');
                 
                 if (currentPage === 'speech') {
-                    // FIXED: On speech page, process as voice command but don't display or speak
-                    console.log('🚫 Leslie command on speech page - processing but not displaying');
-                    updateStatus('🎤 Voice command processed - continue speaking...');
+                    // FIXED: On speech page, ONLY process as voice command, never display
+                    console.log('🚫 Leslie command on speech page - processing silently');
+                    updateStatus('🎤 Voice command processed - ready for next phrase...');
                     
-                    // Process the voice command but don't show it
-                    processVoiceCommand(text);
-                    return; // Don't display or speak
+                    // Process voice command in background without display
+                    setTimeout(() => {
+                        processVoiceCommand(text);
+                    }, 100);
+                    return; // Don't display anything
                 } else {
-                    // On other pages, process as voice command normally
+                    // On other pages, process normally
                     processVoiceCommand(text);
                     return;
                 }
             }
             
-            // Only process as regular speech if it's not a Leslie command
-            console.log('✅ Regular speech detected:', text);
+            // FIXED: Only process regular speech if it's NOT a Leslie command
+            console.log('✅ Regular speech detected - processing:', text);
             processCompletePhrase(text);
         }
         
@@ -1630,36 +1647,36 @@
                     utterance.onend = function() {
                         console.log('✅ Speech completed successfully for:', text);
                         
-                        // FIXED: Restart listening after speech completes with delay to prevent feedback
+                        // FIXED: Much shorter restart delay - 300ms instead of 500ms
                         setTimeout(() => {
                             if (currentPage === 'speech' && !isListening) {
                                 console.log('🔄 Restarting listening after speech playback');
                                 try {
                                     recognition.start();
-                                    updateStatus('🎤 Listening - Speak clearly');
+                                    updateStatus('🎤 Ready for next phrase - speak clearly');
                                 } catch (e) {
                                     console.error('Error restarting recognition after speech:', e);
                                     updateStatus('❌ Click START TALKING to restart');
                                     updateListenButton();
                                 }
                             }
-                        }, 500); // FIXED: 500ms delay to prevent feedback loop
+                        }, 300); // FIXED: Shorter delay for faster response
                     };
                     
                     utterance.onerror = function(event) {
                         console.error('❌ Speech synthesis error:', event.error);
-                        // FIXED: Restart listening even if speech fails
+                        // FIXED: Quick restart even if speech fails
                         setTimeout(() => {
                             if (currentPage === 'speech' && !isListening) {
                                 try {
                                     recognition.start();
-                                    updateStatus('🎤 Listening - Speak clearly');
+                                    updateStatus('🎤 Ready for next phrase - speak clearly');
                                 } catch (e) {
                                     updateStatus('❌ Click START TALKING to restart');
                                     updateListenButton();
                                 }
                             }
-                        }, 500);
+                        }, 300);
                     };
                     
                     // FIXED: Ensure speech synthesis is ready
@@ -1672,20 +1689,20 @@
                     
                 } catch (e) {
                     console.error('❌ Speech synthesis error:', e);
-                    // FIXED: Restart listening if speech fails
+                    // FIXED: Quick restart if speech fails
                     setTimeout(() => {
                         if (currentPage === 'speech' && !isListening) {
                             try {
                                 recognition.start();
-                                updateStatus('🎤 Listening - Speak clearly');
+                                updateStatus('🎤 Ready for next phrase - speak clearly');
                             } catch (e) {
                                 updateStatus('❌ Click START TALKING to restart');
                                 updateListenButton();
                             }
                         }
-                    }, 500);
+                    }, 300);
                 }
-            }, 200);
+            }, 100); // FIXED: Shorter initial delay
         }
 
         function speakTextInput() {
@@ -2387,16 +2404,34 @@
             
             try {
                 const { lat, lon } = userLocation || { lat: 40.7128, lon: -74.0060 };
-                const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`);
-                const data = await response.json();
                 
-                const temperature = Math.round(data.current.temperature_2m * 9/5 + 32);
-                const humidity = data.current.relative_humidity_2m;
-                const windSpeed = Math.round(data.current.wind_speed_10m * 0.621371);
-                const conditions = getWeatherDescription(data.current.weather_code);
+                // FIXED: Get both weather and location data
+                const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`);
+                const weatherData = await weatherResponse.json();
+                
+                // FIXED: Get city name from reverse geocoding
+                let cityName = 'Unknown Location';
+                try {
+                    const locationResponse = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+                    const locationData = await locationResponse.json();
+                    cityName = locationData.city || locationData.locality || locationData.principalSubdivision || 'Unknown Location';
+                    
+                    if (cityName === 'Unknown Location' && locationData.countryName) {
+                        cityName = locationData.countryName;
+                    }
+                } catch (locationError) {
+                    console.log('Could not get city name:', locationError);
+                    cityName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+                }
+                
+                const temperature = Math.round(weatherData.current.temperature_2m * 9/5 + 32);
+                const humidity = weatherData.current.relative_humidity_2m;
+                const windSpeed = Math.round(weatherData.current.wind_speed_10m * 0.621371);
+                const conditions = getWeatherDescription(weatherData.current.weather_code);
                 
                 const weatherContent = `
                     <div style="text-align: center; padding: 10px;">
+                        <div style="font-size: 16px; font-weight: bold; color: #0099cc; margin-bottom: 8px;">📍 ${cityName}</div>
                         <div style="font-size: 28px; font-weight: bold; color: #0099cc; margin-bottom: 8px;">${temperature}°F</div>
                         <div style="font-size: 18px; font-weight: bold; margin-bottom: 16px;">${conditions}</div>
                         <div style="font-size: 14px; line-height: 1.6;">
