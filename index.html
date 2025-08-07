@@ -998,12 +998,15 @@
                 updateTextSpeakButton();
                 clearTextInput();
                 
-                // FIXED: Set microphone permission to true by default to avoid false "permission needed" messages
-                microphonePermissionGranted = true;
-                
                 isInitialized = true;
                 
-                // FIXED: Don't auto-initialize voice commands - let them be requested when needed
+                // FIXED: RESTORE voice command initialization - this was working!
+                setTimeout(() => {
+                    if (isInitialized) {
+                        initializeVoiceCommandsWithPermissions();
+                    }
+                }, 2000);
+                
                 console.log('✅ Leslie Speech Assistant initialized successfully!');
                 
             } catch (error) {
@@ -1165,53 +1168,36 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // FIXED: Only process if we're not currently speaking
-                    if (isSpeaking) {
-                        console.log('🚫 IGNORING RESULT - CURRENTLY SPEAKING');
-                        return;
-                    }
+                    let finalTranscript = '';
+                    let interimTranscript = '';
                     
-                    let latestFinalResult = null;
-                    let interimText = '';
-                    
-                    // FIXED: Find the LATEST and LONGEST final result to avoid partial processing
-                    let longestFinalResult = '';
+                    // FIXED: Process ALL results to get complete transcript
                     for (let i = 0; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            const result = event.results[i][0].transcript.trim();
-                            if (result.length > longestFinalResult.length) {
-                                longestFinalResult = result;
-                            }
-                        }
-                    }
-                    
-                    latestFinalResult = longestFinalResult;
-                    
-                    // Show interim results for user feedback
-                    for (let i = 0; i < event.results.length; i++) {
-                        if (!event.results[i].isFinal) {
-                            interimText += event.results[i][0].transcript;
-                        }
-                    }
-                    
-                    if (interimText.trim() && !isSpeaking) {
-                        updateStatus(`🎤 Hearing: "${interimText.trim()}"`);
-                    }
-                    
-                    // FIXED: Much stricter processing to prevent partial phrases
-                    if (latestFinalResult && latestFinalResult.length > 2 && !isSpeaking) {
-                        const now = Date.now();
-                        const isDifferent = latestFinalResult !== lastProcessedPhrase;
-                        const enoughTimePassed = (now - lastPhraseTime) > 3000; // Much longer gap
-                        
-                        // FIXED: Only process if significantly different and not speaking
-                        if (isDifferent && (enoughTimePassed || lastProcessedPhrase === '')) {
-                            console.log('🎤 PROCESSING COMPLETE FINAL RESULT:', `"${latestFinalResult}"`);
-                            lastProcessedPhrase = latestFinalResult;
-                            lastPhraseTime = now;
-                            processFinalSpeech(latestFinalResult);
+                            finalTranscript += event.results[i][0].transcript;
                         } else {
-                            console.log('🚫 PREVENTING PARTIAL PROCESSING:', latestFinalResult, 'isDiff:', isDifferent, 'timeGap:', (now - lastPhraseTime));
+                            interimTranscript += event.results[i][0].transcript;
+                        }
+                    }
+                    
+                    // Show interim results for feedback
+                    if (interimTranscript.trim()) {
+                        updateStatus(`🎤 Hearing: "${interimTranscript.trim()}"`);
+                    }
+                    
+                    // FIXED: Only process when we get a complete final transcript
+                    if (finalTranscript.trim()) {
+                        const completeText = finalTranscript.trim();
+                        const now = Date.now();
+                        
+                        // FIXED: Simple duplicate prevention - only check if exactly the same
+                        if (completeText !== lastProcessedPhrase || (now - lastPhraseTime) > 2000) {
+                            console.log('🎤 PROCESSING COMPLETE TRANSCRIPT:', `"${completeText}"`);
+                            lastProcessedPhrase = completeText;
+                            lastPhraseTime = now;
+                            processFinalSpeech(completeText);
+                        } else {
+                            console.log('🚫 Duplicate ignored:', completeText);
                         }
                     }
                 };
@@ -1229,30 +1215,30 @@
             console.log('🎙️ PROCESSING FINAL SPEECH:', `"${text}"`);
             
             const lowerText = text.toLowerCase().trim();
+            
+            // FIXED: Better Leslie command detection - don't block on speech page
             const isLeslieCommand = lowerText.startsWith('hey leslie') || 
-                                  lowerText.startsWith('leslie ') ||
-                                  lowerText.includes('hey leslie');
+                                  lowerText.includes('hey leslie') ||
+                                  lowerText.startsWith('leslie ');
             
             if (isLeslieCommand) {
-                console.log('🎯 LESLIE COMMAND DETECTED ON SPEECH PAGE');
+                console.log('🎯 LESLIE COMMAND DETECTED:', text);
                 
-                // FIXED: Process voice commands even on speech page
-                updateStatus('🎤 Processing voice command...');
-                
-                // Don't display Leslie commands in speech recognition
+                // FIXED: Don't display Leslie commands but do process them
                 setTimeout(() => {
                     processVoiceCommand(text);
-                }, 100);
+                }, 50);
                 
+                // Clear display for Leslie commands
                 setTimeout(() => {
                     updateSpeechDisplaySingle('');
                     updateStatus('🎤 Voice command processed - ready for next phrase');
-                }, 200);
+                }, 100);
                 
                 return;
             }
             
-            console.log('✅ CONFIRMED REGULAR SPEECH - PROCESSING:', text);
+            console.log('✅ REGULAR SPEECH - PROCESSING:', text);
             processCompletePhrase(text);
         }
         
@@ -1415,27 +1401,21 @@
             }
 
             try {
-                // FIXED: Don't show permission status changes that confuse users
-                console.log('🎤 Initializing voice commands with existing permissions...');
+                updateVoiceCommandStatus('requesting-permission');
                 
-                // FIXED: Use the gentler permission function
-                await requestAudioPermissions();
-                
-                console.log('✅ Voice commands ready to initialize');
+                // FIXED: Use simple permission request like the original working version
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                microphonePermissionGranted = true;
+                stream.getTracks().forEach(track => track.stop());
+                console.log('✅ Microphone permission granted for voice commands');
                 
                 initializeVoiceCommands();
                 voiceCommandsInitialized = true;
                 
             } catch (error) {
-                console.log('⚠️ Voice command initialization had issues:', error.message);
-                // FIXED: Don't mark as failed if we can still try to work
-                if (microphonePermissionGranted) {
-                    console.log('🔄 Trying to initialize voice commands anyway...');
-                    initializeVoiceCommands();
-                    voiceCommandsInitialized = true;
-                } else {
-                    updateVoiceCommandStatus('permission-denied');
-                }
+                console.log('❌ Microphone permission denied:', error.message);
+                microphonePermissionGranted = false;
+                updateVoiceCommandStatus('permission-denied');
             }
         }
 
@@ -1618,48 +1598,46 @@
         }
 
         function executeVoiceCommand(cmd) {
-            console.log('⚡ Executing command immediately:', cmd);
+            console.log('⚡ Executing voice command:', cmd);
             
             const weatherDisplay = document.getElementById('weatherDisplay');
             const isWeatherOpen = weatherDisplay && !weatherDisplay.classList.contains('hidden');
             
             let commandExecuted = false;
             
-            // FIXED: Simplified pattern matching to reduce false negatives
-            const cmdWords = cmd.toLowerCase().split(/\s+/);
-            
-            // Navigation commands - FIXED: Direct word matching
-            if (cmdWords.includes('home')) {
+            // FIXED: Restore the working command matching system
+            // Navigation commands
+            if ((cmd.includes('home') && !cmd.includes('phone')) || cmd === 'hey leslie home' || cmd.includes('go home')) {
                 if (isWeatherOpen) hideWeather();
                 showPage('home');
                 speakResponse('Going home');
                 commandExecuted = true;
-            } else if (cmdWords.includes('talking') || cmdWords.includes('speech')) {
+            } else if (cmd.includes('start talking') || (cmd.includes('talking') && !cmd.includes('stop')) || cmd.includes('speech recognition')) {
                 if (isWeatherOpen) hideWeather();
                 startTalkingFromHome();
                 speakResponse('Starting speech recognition');
                 commandExecuted = true;
-            } else if (cmdWords.includes('texting') || cmdWords.includes('text')) {
+            } else if (cmd.includes('start texting') || (cmd.includes('texting') && !cmd.includes('stop')) || cmd.includes('text input')) {
                 if (isWeatherOpen) hideWeather();
                 showPage('textInput');
                 speakResponse('Opening text input');
                 commandExecuted = true;
-            } else if (cmdWords.includes('phone') || cmdWords.includes('contact') || cmdWords.includes('call')) {
+            } else if (cmd.includes('phone') || cmd.includes('contacts') || cmd.includes('call')) {
                 if (isWeatherOpen) hideWeather();
                 showPage('phone');
                 speakResponse('Opening phone contacts');
                 commandExecuted = true;
-            } else if (cmdWords.includes('setting')) {
+            } else if (cmd.includes('settings') || cmd.includes('setting')) {
                 if (isWeatherOpen) hideWeather();
                 showPage('settings');
                 speakResponse('Opening settings');
                 commandExecuted = true;
-            } else if (cmdWords.includes('help') || cmdWords.includes('command')) {
+            } else if (cmd.includes('help') || (cmd.includes('commands') && !cmd.includes('voice commands'))) {
                 if (isWeatherOpen) hideWeather();
                 showPage('commands');
                 speakResponse('Showing commands');
                 commandExecuted = true;
-            } else if (cmdWords.includes('close') || cmdWords.includes('hide')) {
+            } else if (cmd.includes('close') || cmd.includes('hide')) {
                 if (isWeatherOpen) {
                     hideWeather();
                     speakResponse('Weather closed');
@@ -1672,7 +1650,7 @@
                     speakResponse('Nothing to close');
                     commandExecuted = true;
                 }
-            } else if (cmdWords.includes('stop') && cmdWords.includes('listening')) {
+            } else if (cmd.includes('stop listening') || cmd.includes('stop')) {
                 if (isListening) {
                     toggleListening();
                     speakResponse('Stopping speech recognition');
@@ -1680,29 +1658,23 @@
                 }
             }
             // Weather commands
-            else if (cmdWords.includes('weather')) {
+            else if (cmd.includes('weather') || cmd.includes('current weather') || cmd.includes('what\'s the weather')) {
                 showCurrentWeather();
                 speakResponse('Showing current weather');
                 commandExecuted = true;
-            } else if (cmdWords.includes('hourly') || cmdWords.includes('hour')) {
+            } else if (cmd.includes('hourly') || cmd.includes('hour') || cmd.includes('24 hour') || cmd.includes('24 hours')) {
                 showHourlyWeather();
                 speakResponse('Showing hourly forecast');
                 commandExecuted = true;
-            } else if (cmdWords.includes('weekly') || cmdWords.includes('week') || cmdWords.includes('day')) {
+            } else if (cmd.includes('weekly') || cmd.includes('7 day') || cmd.includes('seven day') || cmd.includes('week') || cmd.includes('7day') || cmd.includes('7-day')) {
                 showWeeklyWeather();
                 speakResponse('Showing 7 day forecast');
                 commandExecuted = true;
             }
             
-            // FIXED: Only respond with "not recognized" once, and only if it was clearly a Leslie command
             if (!commandExecuted) {
-                const hasLeslie = cmd.toLowerCase().includes('leslie') || cmd.toLowerCase().includes('hey');
-                if (hasLeslie) {
-                    console.log('❌ Leslie command not recognized:', cmd);
-                    speakResponse('Command not recognized');
-                } else {
-                    console.log('🚫 Not a Leslie command - ignoring:', cmd);
-                }
+                console.log('❌ Command not recognized:', cmd);
+                speakResponse('Command not recognized');
             } else {
                 console.log('✅ Command executed successfully:', cmd);
             }
