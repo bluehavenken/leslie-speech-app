@@ -1104,43 +1104,54 @@
                 };
 
                 recognition.onend = function() {
+                    console.log('🎤 Recognition ended naturally');
                     isListening = false;
                     const listenButton = document.getElementById('listenButton');
                     
-                    console.log('🎤 Recognition ended. Page:', currentPage, 'Button text:', listenButton?.textContent, 'Speaking:', isSpeaking);
+                    console.log('📊 END STATE: Page:', currentPage, 'Button:', listenButton?.textContent, 'Speaking:', isSpeaking, 'Listening:', isListening);
                     
-                    // FIXED: Only restart if conditions are perfect
+                    // FIXED: Very strict conditions for restart
                     if (currentPage === 'speech' && 
                         listenButton && 
                         listenButton.textContent === 'STOP LISTENING' && 
-                        !isSpeaking) {
+                        !isSpeaking && 
+                        !isListening) { // CRITICAL: Ensure we're not already listening
                         
-                        console.log('🔄 Conditions met for restart - scheduling restart');
+                        console.log('✅ All conditions perfect for restart');
                         
+                        // FIXED: Longer delay to ensure complete stop
                         setTimeout(() => {
-                            // FIXED: Double-check all conditions again before restart
+                            // FIXED: Triple-check conditions before restart
                             if (currentPage === 'speech' && 
                                 listenButton.textContent === 'STOP LISTENING' && 
                                 !isSpeaking && 
-                                !isListening) { // CRITICAL: Make sure we're not already listening
+                                !isListening) { // CRITICAL CHECK
+                                
+                                console.log('🔄 Conditions still perfect - attempting restart');
                                 
                                 try {
-                                    console.log('🔄 Restarting recognition safely');
+                                    console.log('🎤 SAFE RESTART ATTEMPT');
                                     recognition.start();
-                                    console.log('✅ Recognition restarted successfully');
+                                    console.log('✅ Recognition safely restarted');
                                 } catch (e) {
-                                    console.error('❌ Restart failed:', e.message);
-                                    updateListenButton();
-                                    updateStatus('❌ Auto-restart failed - click "START TALKING" to restart');
+                                    console.error('❌ Safe restart failed:', e.message);
+                                    
+                                    if (e.message.includes('already started')) {
+                                        console.log('⚠️ Already started error in restart - forcing reset');
+                                        forceResetRecognition();
+                                    } else {
+                                        updateListenButton();
+                                        updateStatus('❌ Auto-restart failed - click "START TALKING"');
+                                    }
                                 }
                             } else {
-                                console.log('🚫 Conditions changed - not restarting');
+                                console.log('🚫 Conditions changed during delay - not restarting');
                                 updateListenButton();
                                 updateStatus('✅ Stopped - Click "START TALKING" to restart');
                             }
-                        }, 1500); // Longer delay to ensure complete stop
+                        }, 2000); // LONGER delay to ensure complete stop
                     } else {
-                        console.log('🛑 Not restarting - updating button state');
+                        console.log('🛑 Conditions not met for restart');
                         updateListenButton();
                         updateStatus('✅ Stopped - Click "START TALKING" to restart');
                     }
@@ -2055,43 +2066,98 @@
         function startListening() {
             if (!recognition) {
                 console.log('❌ No recognition object available');
+                updateStatus('❌ Speech recognition not available');
                 return;
             }
             
-            // FIXED: Prevent starting if already running
+            // FIXED: Absolutely prevent starting if already running
             if (isListening) {
-                console.log('🎤 Recognition already running - not starting again');
+                console.log('🚫 Recognition ALREADY RUNNING - aborting start attempt');
                 return;
             }
             
             try {
-                // FIXED: Stop voice commands first to prevent conflicts
+                // FIXED: Stop voice commands and wait for complete stop
                 if (isVoiceCommandListening) {
                     console.log('🛑 Stopping voice commands before starting speech recognition');
                     stopVoiceCommands();
+                    
+                    // FIXED: Wait longer for voice commands to fully stop
+                    setTimeout(() => {
+                        attemptStartRecognition();
+                    }, 500);
+                } else {
+                    attemptStartRecognition();
                 }
-                
-                // FIXED: Clear speaking flag to prevent conflicts
-                isSpeaking = false;
-                
-                // FIXED: Small delay to ensure voice commands are fully stopped
-                setTimeout(() => {
-                    try {
-                        console.log('🎤 Starting fresh speech recognition');
-                        recognition.start();
-                    } catch (error) {
-                        console.error('❌ Error starting recognition:', error.message);
-                        isListening = false;
-                        updateListenButton();
-                        updateStatus('❌ Recognition error: ' + error.message + ' - Try clicking START TALKING again');
-                    }
-                }, 200);
                 
             } catch (error) {
                 console.error('❌ Error in startListening setup:', error);
+                updateStatus('❌ Setup error - Try clicking START TALKING again');
+            }
+        }
+        
+        // FIXED: Separate function for actual recognition start
+        function attemptStartRecognition() {
+            // FIXED: Final check before starting
+            if (isListening) {
+                console.log('🚫 FINAL CHECK: Already listening - aborting');
+                return;
+            }
+            
+            try {
+                console.log('🎤 ATTEMPTING TO START FRESH RECOGNITION');
+                recognition.start();
+                console.log('✅ Recognition start command sent');
+            } catch (error) {
+                console.error('❌ CRITICAL: Recognition start failed:', error.message);
                 isListening = false;
                 updateListenButton();
-                updateStatus('❌ Setup error - Try clicking START TALKING again');
+                
+                if (error.message.includes('already started')) {
+                    updateStatus('🔄 Recognition conflict - resetting in 2 seconds...');
+                    // FIXED: Force reset on "already started" error
+                    setTimeout(() => {
+                        forceResetRecognition();
+                    }, 2000);
+                } else {
+                    updateStatus('❌ Recognition error: ' + error.message + ' - Try again');
+                }
+            }
+        }
+        
+        // FIXED: Force reset recognition system
+        function forceResetRecognition() {
+            console.log('🔄 FORCE RESETTING RECOGNITION SYSTEM');
+            
+            try {
+                // FIXED: Force abort any existing recognition
+                if (recognition) {
+                    recognition.abort();
+                }
+                
+                // FIXED: Clear all flags
+                isListening = false;
+                isSpeaking = false;
+                
+                // FIXED: Wait and try fresh start
+                setTimeout(() => {
+                    if (currentPage === 'speech' && !isListening) {
+                        console.log('🔄 Attempting fresh recognition start after reset');
+                        updateStatus('🎤 Trying fresh start...');
+                        
+                        try {
+                            recognition.start();
+                            console.log('✅ Fresh recognition started after reset');
+                        } catch (e) {
+                            console.error('❌ Fresh start also failed:', e.message);
+                            updateStatus('❌ Recognition unavailable - refresh page if needed');
+                        }
+                    }
+                }, 1000);
+                
+            } catch (error) {
+                console.error('❌ Force reset failed:', error);
+                updateStatus('❌ Recognition reset failed - try refreshing page');
             }
         }
 
