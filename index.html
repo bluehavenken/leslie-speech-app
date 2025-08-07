@@ -1138,41 +1138,47 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // FIXED: Show interim results for immediate feedback
-                    let interimText = '';
-                    let finalText = '';
+                    // FIXED: Better complete phrase capture
+                    let finalTranscript = '';
+                    let interimTranscript = '';
                     let hasNewFinal = false;
                     
+                    // FIXED: Process all results to build complete transcript
                     for (let i = 0; i < event.results.length; i++) {
+                        const transcript = event.results[i][0].transcript;
+                        
                         if (event.results[i].isFinal) {
-                            // FIXED: Collect ALL final results to prevent word loss
-                            finalText += event.results[i][0].transcript + ' ';
+                            finalTranscript += transcript;
                             if (i >= event.resultIndex) {
                                 hasNewFinal = true;
                             }
                         } else {
-                            // Show interim results for user feedback
-                            interimText += event.results[i][0].transcript + ' ';
+                            interimTranscript += transcript;
                         }
                     }
                     
-                    // Show interim feedback
-                    if (interimText.trim()) {
-                        updateStatus(`🎤 Hearing: "${interimText.trim()}"`);
+                    // Show interim results for feedback
+                    if (interimTranscript.trim()) {
+                        updateStatus(`🎤 Hearing: "${interimTranscript.trim()}"`);
                     }
                     
-                    // Process final results
-                    if (hasNewFinal && finalText.trim() && finalText.trim().length > 1) {
-                        const completeFinalText = finalText.trim();
+                    // FIXED: Process complete final transcript when available
+                    if (hasNewFinal && finalTranscript.trim().length > 0) {
+                        const completePhrase = finalTranscript.trim();
                         
-                        // FIXED: Prevent duplicates but allow complete processing
-                        if (completeFinalText !== lastProcessedPhrase) {
-                            console.log('🎤 Complete final phrase captured:', completeFinalText);
-                            lastProcessedPhrase = completeFinalText;
-                            lastPhraseTime = Date.now();
-                            processFinalSpeech(completeFinalText);
+                        // FIXED: Better duplicate detection
+                        const now = Date.now();
+                        if (completePhrase !== lastProcessedPhrase || (now - lastPhraseTime) > 3000) {
+                            console.log('🎤 Complete phrase ready:', `"${completePhrase}"`);
+                            lastProcessedPhrase = completePhrase;
+                            lastPhraseTime = now;
+                            
+                            // FIXED: Small delay to ensure complete phrase is captured
+                            setTimeout(() => {
+                                processFinalSpeech(completePhrase);
+                            }, 100);
                         } else {
-                            console.log('🚫 Duplicate phrase ignored:', completeFinalText);
+                            console.log('🚫 Duplicate phrase ignored:', completePhrase);
                         }
                     }
                 };
@@ -1189,66 +1195,59 @@
             
             console.log('🎙️ Processing final speech:', `"${text}"`);
             
-            // FIXED: More aggressive Leslie command detection with word boundaries
+            // FIXED: More precise Leslie command detection
             const lowerText = text.toLowerCase().trim();
-            const leslieVariants = [
-                'hey leslie', 'leslie', 'less lee', 'lesley', 
-                'wesley', 'bessie', 'hey less', 'leslee'
-            ];
             
-            let containsLeslieCommand = false;
-            for (const variant of leslieVariants) {
-                if (lowerText.includes(variant)) {
-                    containsLeslieCommand = true;
-                    break;
-                }
-            }
+            // Check for Leslie command patterns
+            const isLeslieCommand = lowerText.startsWith('hey leslie') || 
+                                  lowerText.startsWith('leslie ') ||
+                                  lowerText.startsWith('less lee') ||
+                                  lowerText.startsWith('lesley ') ||
+                                  lowerText.includes('hey leslie') ||
+                                  lowerText === 'leslie' ||
+                                  lowerText === 'hey leslie';
             
-            if (containsLeslieCommand) {
-                console.log('🎯 Leslie command detected in speech');
+            if (isLeslieCommand) {
+                console.log('🎯 Leslie command detected in speech recognition');
                 
                 if (currentPage === 'speech') {
-                    // FIXED: On speech page, ONLY process as voice command, never display
-                    console.log('🚫 Leslie command on speech page - processing silently');
-                    updateStatus('🎤 Voice command processed - ready for next phrase...');
+                    // FIXED: On speech page, completely block from display and only process as voice command
+                    console.log('🚫 Leslie command on speech page - processing silently without display');
+                    updateStatus('🎤 Voice command processed - ready for next phrase');
                     
-                    // Process voice command in background without display
+                    // Process as voice command but don't display ANYTHING
                     setTimeout(() => {
                         processVoiceCommand(text);
-                    }, 100);
-                    return; // Don't display anything
+                        
+                        // FIXED: Clear any display that might have occurred
+                        setTimeout(() => {
+                            updateStatus('🎤 Ready for next phrase - speak clearly');
+                        }, 200);
+                    }, 50);
+                    
+                    return; // FIXED: Return early to prevent any display
                 } else {
-                    // On other pages, process normally
+                    // On other pages, process as voice command
                     processVoiceCommand(text);
                     return;
                 }
             }
             
-            // FIXED: Only process regular speech if it's NOT a Leslie command
-            console.log('✅ Regular speech detected - processing:', text);
+            // FIXED: Only process as regular speech if it's definitely NOT a Leslie command
+            console.log('✅ Regular speech confirmed - processing phrase:', text);
             processCompletePhrase(text);
         }
         
         function processCompletePhrase(text) {
-            // FIXED: Display the phrase first
+            console.log('🎙️ Processing complete phrase for display and speech:', text);
+            
+            // FIXED: Display the complete phrase immediately
             updateSpeechDisplaySingle(text);
             updateStatus(`✅ Captured: "${text}"`);
             
-            // FIXED: Temporarily disable listening while speaking to prevent feedback loop
-            console.log('🔊 Speaking phrase (disabling listening):', text);
-            
-            if (recognition && isListening) {
-                try {
-                    recognition.abort();
-                    console.log('🛑 Temporarily stopped listening for playback');
-                } catch (e) {
-                    console.log('Error stopping recognition for playback:', e);
-                }
-            }
-            
-            setTimeout(() => {
-                speakCompletePhraseWithRestart(text);
-            }, 100);
+            // FIXED: Speak the phrase with proper timing
+            console.log('🔊 Starting speech playback for complete phrase:', text);
+            speakCompletePhraseWithRestart(text);
         }
 
         // === VOICE COMMANDS ===
@@ -1620,19 +1619,28 @@
         }
 
         function speakCompletePhraseWithRestart(text) {
-            console.log('🔊 Starting speech synthesis for:', text);
+            console.log('🔊 Preparing to speak complete phrase:', text);
             
-            // FIXED: Aggressive speech cancellation to prevent repeating
+            // FIXED: Stop listening during speech to prevent feedback
+            if (recognition && isListening) {
+                try {
+                    recognition.abort();
+                    console.log('🛑 Stopped listening for speech playback');
+                } catch (e) {
+                    console.log('Error stopping recognition for playback:', e);
+                }
+            }
+            
+            // FIXED: Cancel any existing speech
             speechSynth.cancel();
             
-            // FIXED: Wait for cancellation to complete
+            // FIXED: Wait for systems to be ready
             setTimeout(() => {
                 if (speechSynth.speaking) {
                     speechSynth.cancel();
                 }
                 
                 try {
-                    // FIXED: Create clean utterance with exact text
                     const utterance = new SpeechSynthesisUtterance(text);
                     utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
                     utterance.pitch = 1.0;
@@ -1640,32 +1648,32 @@
                     utterance.lang = 'en-US';
                     
                     utterance.onstart = function() {
-                        console.log('✅ Speech started successfully for:', text);
-                        updateStatus('🔊 Speaking... (listening paused)');
+                        console.log('✅ Speech playback started for:', text);
+                        updateStatus('🔊 Speaking phrase... (listening paused)');
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ Speech completed successfully for:', text);
+                        console.log('✅ Speech playback completed for:', text);
                         
-                        // FIXED: Much shorter restart delay - 300ms instead of 500ms
+                        // FIXED: Restart listening after speech with appropriate delay
                         setTimeout(() => {
                             if (currentPage === 'speech' && !isListening) {
-                                console.log('🔄 Restarting listening after speech playback');
+                                console.log('🔄 Restarting listening after speech completion');
                                 try {
                                     recognition.start();
                                     updateStatus('🎤 Ready for next phrase - speak clearly');
                                 } catch (e) {
-                                    console.error('Error restarting recognition after speech:', e);
+                                    console.error('Error restarting recognition:', e);
                                     updateStatus('❌ Click START TALKING to restart');
                                     updateListenButton();
                                 }
                             }
-                        }, 300); // FIXED: Shorter delay for faster response
+                        }, 400); // FIXED: 400ms delay to prevent feedback
                     };
                     
                     utterance.onerror = function(event) {
                         console.error('❌ Speech synthesis error:', event.error);
-                        // FIXED: Quick restart even if speech fails
+                        // FIXED: Restart listening even on speech error
                         setTimeout(() => {
                             if (currentPage === 'speech' && !isListening) {
                                 try {
@@ -1676,20 +1684,20 @@
                                     updateListenButton();
                                 }
                             }
-                        }, 300);
+                        }, 400);
                     };
                     
-                    // FIXED: Ensure speech synthesis is ready
+                    // FIXED: Ensure speech system is ready
                     if (speechSynth.paused) {
                         speechSynth.resume();
                     }
                     
-                    console.log('🎤 Speaking with rate:', utterance.rate);
+                    console.log('🎤 Speaking phrase with rate:', utterance.rate, 'Text:', text);
                     speechSynth.speak(utterance);
                     
                 } catch (e) {
-                    console.error('❌ Speech synthesis error:', e);
-                    // FIXED: Quick restart if speech fails
+                    console.error('❌ Speech synthesis setup error:', e);
+                    // FIXED: Restart listening if speech setup fails
                     setTimeout(() => {
                         if (currentPage === 'speech' && !isListening) {
                             try {
@@ -1700,9 +1708,9 @@
                                 updateListenButton();
                             }
                         }
-                    }, 300);
+                    }, 400);
                 }
-            }, 100); // FIXED: Shorter initial delay
+            }, 150); // FIXED: Brief delay to ensure recognition is stopped
         }
 
         function speakTextInput() {
@@ -1807,14 +1815,48 @@
                     }
                     
                     if (pageId === 'textInput') {
-                        // FIXED: Always force keyboard on textInput page visits
-                        console.log('📱 Text input page - forcing keyboard every time');
-                        setTimeout(() => forceKeyboardOpen(), 50);
-                        setTimeout(() => forceKeyboardOpen(), 200);
-                        setTimeout(() => forceKeyboardOpen(), 500);
-                        setTimeout(() => forceKeyboardOpen(), 1000);
-                        setTimeout(() => forceKeyboardOpen(), 1500);
-                        setTimeout(() => forceKeyboardOpen(), 2000);
+                        console.log('📱 TEXTING PAGE - MAXIMUM KEYBOARD FORCE DEPLOYMENT');
+                        
+                        // FIXED: Immediate keyboard forcing with multiple methods
+                        setTimeout(() => {
+                            console.log('📱 Keyboard attempt 1 - immediate');
+                            forceKeyboardOpen();
+                        }, 10);
+                        
+                        setTimeout(() => {
+                            console.log('📱 Keyboard attempt 2 - 100ms');
+                            forceKeyboardOpen();
+                        }, 100);
+                        
+                        setTimeout(() => {
+                            console.log('📱 Keyboard attempt 3 - 300ms');
+                            forceKeyboardOpen();
+                        }, 300);
+                        
+                        setTimeout(() => {
+                            console.log('📱 Keyboard attempt 4 - 600ms');
+                            forceKeyboardOpen();
+                        }, 600);
+                        
+                        setTimeout(() => {
+                            console.log('📱 Keyboard attempt 5 - 1000ms');
+                            forceKeyboardOpen();
+                        }, 1000);
+                        
+                        setTimeout(() => {
+                            console.log('📱 Keyboard attempt 6 - 1500ms');
+                            forceKeyboardOpen();
+                        }, 1500);
+                        
+                        setTimeout(() => {
+                            console.log('📱 Keyboard attempt 7 - 2000ms');
+                            forceKeyboardOpen();
+                        }, 2000);
+                        
+                        setTimeout(() => {
+                            console.log('📱 Keyboard attempt 8 - FINAL - 3000ms');
+                            forceKeyboardOpenUltimate();
+                        }, 3000);
                     }
                 }
             } catch (error) {
@@ -2405,23 +2447,63 @@
             try {
                 const { lat, lon } = userLocation || { lat: 40.7128, lon: -74.0060 };
                 
-                // FIXED: Get both weather and location data
+                // FIXED: Get weather data
                 const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`);
                 const weatherData = await weatherResponse.json();
                 
-                // FIXED: Get city name from reverse geocoding
+                // FIXED: Get precise city name with multiple fallback methods
                 let cityName = 'Unknown Location';
                 try {
-                    const locationResponse = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
-                    const locationData = await locationResponse.json();
-                    cityName = locationData.city || locationData.locality || locationData.principalSubdivision || 'Unknown Location';
+                    // Method 1: Try BigDataCloud for most accurate city data
+                    const locationResponse1 = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+                    const locationData1 = await locationResponse1.json();
                     
-                    if (cityName === 'Unknown Location' && locationData.countryName) {
-                        cityName = locationData.countryName;
+                    // Try to get the most specific location
+                    if (locationData1.city) {
+                        cityName = locationData1.city;
+                    } else if (locationData1.locality) {
+                        cityName = locationData1.locality;
+                    } else if (locationData1.principalSubdivision) {
+                        cityName = locationData1.principalSubdivision;
                     }
+                    
+                    // If still not specific enough, try another service
+                    if (cityName === 'Unknown Location' || cityName === 'St. Louis' || cityName.includes('County') || cityName.includes('Metropolitan')) {
+                        try {
+                            // Method 2: Try OpenStreetMap Nominatim for more precise location
+                            const locationResponse2 = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=14&addressdetails=1`);
+                            const locationData2 = await locationResponse2.json();
+                            
+                            if (locationData2.address) {
+                                // Try to get the most specific location from OSM
+                                const addr = locationData2.address;
+                                if (addr.city) {
+                                    cityName = addr.city;
+                                } else if (addr.town) {
+                                    cityName = addr.town;
+                                } else if (addr.village) {
+                                    cityName = addr.village;
+                                } else if (addr.suburb && addr.county) {
+                                    cityName = `${addr.suburb}, ${addr.county}`;
+                                } else if (addr.neighbourhood && addr.city_district) {
+                                    cityName = `${addr.neighbourhood}, ${addr.city_district}`;
+                                } else if (addr.hamlet) {
+                                    cityName = addr.hamlet;
+                                }
+                            }
+                        } catch (osmError) {
+                            console.log('OSM geocoding failed:', osmError);
+                        }
+                    }
+                    
+                    // Final fallback
+                    if (cityName === 'Unknown Location') {
+                        cityName = `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
+                    }
+                    
                 } catch (locationError) {
-                    console.log('Could not get city name:', locationError);
-                    cityName = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+                    console.log('Could not get precise location:', locationError);
+                    cityName = `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
                 }
                 
                 const temperature = Math.round(weatherData.current.temperature_2m * 9/5 + 32);
