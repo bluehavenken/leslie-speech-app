@@ -1138,47 +1138,47 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // FIXED: Better complete phrase capture
-                    let finalTranscript = '';
+                    // FIXED: Collect ALL transcript data to prevent word loss
+                    let completeTranscript = '';
                     let interimTranscript = '';
-                    let hasNewFinal = false;
+                    let hasAnyFinal = false;
                     
-                    // FIXED: Process all results to build complete transcript
+                    // FIXED: Build complete transcript from ALL results (not just new ones)
                     for (let i = 0; i < event.results.length; i++) {
                         const transcript = event.results[i][0].transcript;
                         
                         if (event.results[i].isFinal) {
-                            finalTranscript += transcript;
-                            if (i >= event.resultIndex) {
-                                hasNewFinal = true;
-                            }
+                            completeTranscript += transcript;
+                            hasAnyFinal = true;
                         } else {
+                            // Show what we're currently hearing
                             interimTranscript += transcript;
                         }
                     }
                     
-                    // Show interim results for feedback
+                    // Show real-time feedback of what we're hearing
                     if (interimTranscript.trim()) {
                         updateStatus(`🎤 Hearing: "${interimTranscript.trim()}"`);
                     }
                     
-                    // FIXED: Process complete final transcript when available
-                    if (hasNewFinal && finalTranscript.trim().length > 0) {
-                        const completePhrase = finalTranscript.trim();
+                    // FIXED: Process complete transcript when we have final results
+                    if (hasAnyFinal && completeTranscript.trim().length > 1) {
+                        const finalPhrase = completeTranscript.trim();
                         
-                        // FIXED: Better duplicate detection
+                        // FIXED: Only process if it's actually different or enough time has passed
                         const now = Date.now();
-                        if (completePhrase !== lastProcessedPhrase || (now - lastPhraseTime) > 3000) {
-                            console.log('🎤 Complete phrase ready:', `"${completePhrase}"`);
-                            lastProcessedPhrase = completePhrase;
+                        const isNewPhrase = finalPhrase !== lastProcessedPhrase;
+                        const enoughTimePassed = (now - lastPhraseTime) > 2000;
+                        
+                        if (isNewPhrase || enoughTimePassed) {
+                            console.log('🎤 COMPLETE PHRASE READY:', `"${finalPhrase}"`);
+                            lastProcessedPhrase = finalPhrase;
                             lastPhraseTime = now;
                             
-                            // FIXED: Small delay to ensure complete phrase is captured
-                            setTimeout(() => {
-                                processFinalSpeech(completePhrase);
-                            }, 100);
+                            // FIXED: Immediate processing without delays
+                            processFinalSpeech(finalPhrase);
                         } else {
-                            console.log('🚫 Duplicate phrase ignored:', completePhrase);
+                            console.log('🚫 Ignoring duplicate/recent phrase:', finalPhrase);
                         }
                     }
                 };
@@ -1252,11 +1252,12 @@
 
         // === VOICE COMMANDS ===
         async function initializeVoiceCommandsWithPermissions() {
-            if (!isInitialized) {
-                console.log('⚠️ App not initialized, skipping voice commands');
+            // FIXED: Don't reinitialize if already running properly
+            if (voiceCommandRecognition && microphonePermissionGranted && isVoiceCommandListening) {
+                console.log('✅ Voice commands already running - skipping initialization');
                 return;
             }
-            
+
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 console.log('❌ Speech recognition not supported');
                 updateVoiceCommandStatus('not-supported');
@@ -1269,7 +1270,13 @@
                 microphonePermissionGranted = true;
                 stream.getTracks().forEach(track => track.stop());
                 console.log('✅ Microphone permission granted');
-                initializeVoiceCommands();
+                
+                // FIXED: Only initialize if not already done
+                if (!voiceCommandRecognition) {
+                    initializeVoiceCommands();
+                } else if (!isVoiceCommandListening) {
+                    startVoiceCommands();
+                }
             } catch (error) {
                 console.log('❌ Microphone permission denied:', error.message);
                 microphonePermissionGranted = false;
@@ -1444,18 +1451,18 @@
             const cmd = command.toLowerCase().trim();
             const now = Date.now();
             
-            console.log('🎯 Voice command received:', cmd);
+            console.log('🎯 VOICE COMMAND RECEIVED:', cmd);
             
-            // FIXED: Ultra-short duplicate prevention - only 100ms window for maximum responsiveness
-            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 100) {
-                console.log('🚫 Duplicate voice command ignored (100ms window)');
+            // FIXED: Ultra-short duplicate prevention for maximum responsiveness
+            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 50) {
+                console.log('🚫 Duplicate voice command ignored (50ms window)');
                 return;
             }
             
             lastVoiceCommand = cmd;
             lastVoiceCommandTime = now;
             
-            // FIXED: Execute immediately for maximum responsiveness
+            // FIXED: Execute immediately with no delays
             executeVoiceCommand(cmd);
         }
 
@@ -1619,22 +1626,14 @@
         }
 
         function speakCompletePhraseWithRestart(text) {
-            console.log('🔊 Preparing to speak complete phrase:', text);
+            console.log('🔊 SPEAKING COMPLETE PHRASE:', text);
             
-            // FIXED: Stop listening during speech to prevent feedback
-            if (recognition && isListening) {
-                try {
-                    recognition.abort();
-                    console.log('🛑 Stopped listening for speech playback');
-                } catch (e) {
-                    console.log('Error stopping recognition for playback:', e);
-                }
-            }
+            // FIXED: Don't stop recognition - let it run in background
+            // This prevents the feedback loop issue by not interfering with mic
             
-            // FIXED: Cancel any existing speech
+            // FIXED: Cancel any existing speech but preserve mic access
             speechSynth.cancel();
             
-            // FIXED: Wait for systems to be ready
             setTimeout(() => {
                 if (speechSynth.speaking) {
                     speechSynth.cancel();
@@ -1644,47 +1643,22 @@
                     const utterance = new SpeechSynthesisUtterance(text);
                     utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
                     utterance.pitch = 1.0;
-                    utterance.volume = 1.0;
+                    utterance.volume = 0.8; // FIXED: Slightly lower volume to prevent feedback
                     utterance.lang = 'en-US';
                     
                     utterance.onstart = function() {
-                        console.log('✅ Speech playback started for:', text);
-                        updateStatus('🔊 Speaking phrase... (listening paused)');
+                        console.log('✅ SPEECH STARTED FOR COMPLETE PHRASE:', text);
+                        updateStatus(`🔊 Speaking: "${text}"`);
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ Speech playback completed for:', text);
-                        
-                        // FIXED: Restart listening after speech with appropriate delay
-                        setTimeout(() => {
-                            if (currentPage === 'speech' && !isListening) {
-                                console.log('🔄 Restarting listening after speech completion');
-                                try {
-                                    recognition.start();
-                                    updateStatus('🎤 Ready for next phrase - speak clearly');
-                                } catch (e) {
-                                    console.error('Error restarting recognition:', e);
-                                    updateStatus('❌ Click START TALKING to restart');
-                                    updateListenButton();
-                                }
-                            }
-                        }, 400); // FIXED: 400ms delay to prevent feedback
+                        console.log('✅ SPEECH COMPLETED FOR COMPLETE PHRASE:', text);
+                        updateStatus('🎤 Ready for next phrase - speak clearly');
                     };
                     
                     utterance.onerror = function(event) {
                         console.error('❌ Speech synthesis error:', event.error);
-                        // FIXED: Restart listening even on speech error
-                        setTimeout(() => {
-                            if (currentPage === 'speech' && !isListening) {
-                                try {
-                                    recognition.start();
-                                    updateStatus('🎤 Ready for next phrase - speak clearly');
-                                } catch (e) {
-                                    updateStatus('❌ Click START TALKING to restart');
-                                    updateListenButton();
-                                }
-                            }
-                        }, 400);
+                        updateStatus('🎤 Ready for next phrase - speak clearly');
                     };
                     
                     // FIXED: Ensure speech system is ready
@@ -1692,25 +1666,14 @@
                         speechSynth.resume();
                     }
                     
-                    console.log('🎤 Speaking phrase with rate:', utterance.rate, 'Text:', text);
+                    console.log('🎤 SPEAKING COMPLETE PHRASE WITH RATE:', utterance.rate, 'VOLUME:', utterance.volume);
                     speechSynth.speak(utterance);
                     
                 } catch (e) {
                     console.error('❌ Speech synthesis setup error:', e);
-                    // FIXED: Restart listening if speech setup fails
-                    setTimeout(() => {
-                        if (currentPage === 'speech' && !isListening) {
-                            try {
-                                recognition.start();
-                                updateStatus('🎤 Ready for next phrase - speak clearly');
-                            } catch (e) {
-                                updateStatus('❌ Click START TALKING to restart');
-                                updateListenButton();
-                            }
-                        }
-                    }, 400);
+                    updateStatus('🎤 Ready for next phrase - speak clearly');
                 }
-            }, 150); // FIXED: Brief delay to ensure recognition is stopped
+            }, 100);
         }
 
         function speakTextInput() {
@@ -1802,12 +1765,12 @@
                             }
                         }, 200);
                     } else {
-                        // FIXED: Start voice commands on non-speech pages only
-                        setTimeout(() => {
-                            if (!isListening && microphonePermissionGranted && isInitialized) {
+                        // FIXED: Don't restart voice commands every time - only if needed
+                        if (microphonePermissionGranted && isInitialized && !isVoiceCommandListening && !isListening) {
+                            setTimeout(() => {
                                 startVoiceCommands();
-                            }
-                        }, 500);
+                            }, 300);
+                        }
                     }
                     
                     if (pageId === 'phone') {
@@ -2543,7 +2506,7 @@
                 const now = new Date();
                 const currentHour = now.getHours();
                 
-                let hourlyData = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 6px; padding: 10px;">';
+                let hourlyData = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; padding: 10px;">';
                 
                 let startIndex = 0;
                 for (let i = 0; i < data.hourly.time.length; i++) {
@@ -2559,6 +2522,9 @@
                     const time = new Date(data.hourly.time[i]);
                     const hour = time.getHours();
                     const temp = Math.round(data.hourly.temperature_2m[i] * 9/5 + 32);
+                    const weatherCode = data.hourly.weather_code[i];
+                    const conditions = getWeatherDescription(weatherCode);
+                    
                     const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
                     const ampm = hour >= 12 ? 'PM' : 'AM';
                     
@@ -2567,10 +2533,12 @@
                     const bgColor = isCurrent ? '#0099cc' : '#f0f8ff';
                     const textColor = isCurrent ? 'white' : 'black';
                     
+                    // FIXED: Added weather conditions for each hour
                     hourlyData += `
-                        <div class="hourly-item" style="background-color: ${bgColor}; color: ${textColor};">
+                        <div class="hourly-item" style="background-color: ${bgColor}; color: ${textColor}; padding: 8px; text-align: center; font-size: 11px;">
                             <strong>${timeDisplay}</strong><br>
-                            ${temp}°F
+                            ${temp}°F<br>
+                            <span style="font-size: 10px; opacity: 0.9;">${conditions}</span>
                         </div>
                     `;
                 }
