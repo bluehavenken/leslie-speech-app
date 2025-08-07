@@ -1277,15 +1277,15 @@
                 voiceCommandRecognition.onend = function() {
                     isVoiceCommandListening = false;
                     updateVoiceCommandStatus('ready');
-                    console.log('🎙️ Voice command session ended - restarting quickly');
+                    console.log('🎙️ Voice command session ended');
                     
-                    // FIXED: Restart voice commands on ALL pages including speech page
-                    if (microphonePermissionGranted && isInitialized) {
+                    // FIXED: Only restart if not on speech page and speech recognition isn't running
+                    if (microphonePermissionGranted && isInitialized && !isListening) {
                         setTimeout(() => {
-                            if (!isVoiceCommandListening) {
+                            if (!isVoiceCommandListening && !isListening) {
                                 startVoiceCommands();
                             }
-                        }, 100); // FIXED: Faster restart for better responsiveness
+                        }, 500); // FIXED: Longer delay to prevent conflicts
                     }
                 };
                 
@@ -1301,17 +1301,20 @@
                     
                     updateVoiceCommandStatus('ready');
                     
-                    // FIXED: Restart on all pages with shorter delay
-                    if (microphonePermissionGranted && isInitialized) {
+                    // FIXED: Only restart if conditions are right
+                    if (microphonePermissionGranted && isInitialized && !isListening) {
                         setTimeout(() => {
-                            if (!isVoiceCommandListening) {
+                            if (!isVoiceCommandListening && !isListening) {
                                 startVoiceCommands();
                             }
-                        }, 300); // FIXED: Shorter delay for faster recovery
+                        }, 1000); // FIXED: Longer delay after errors
                     }
                 };
                 
-                startVoiceCommands();
+                // FIXED: Only start voice commands if speech recognition isn't running
+                if (!isListening) {
+                    startVoiceCommands();
+                }
                 console.log('✅ Voice commands initialized successfully');
                 
             } catch (error) {
@@ -1320,8 +1323,9 @@
         }
 
         function startVoiceCommands() {
-            // FIXED: Allow voice commands on all pages including speech page
-            if (isVoiceCommandListening || !microphonePermissionGranted || !isInitialized) {
+            // FIXED: Don't start if speech recognition is running to prevent conflicts
+            if (isListening || isVoiceCommandListening || !microphonePermissionGranted || !isInitialized) {
+                console.log('🚫 Skipping voice commands - conditions not met');
                 return;
             }
             
@@ -1345,13 +1349,15 @@
             if (voiceCommandRecognition && isVoiceCommandListening) {
                 try {
                     voiceCommandRecognition.abort();
-                    console.log('🛑 Voice commands stopped');
+                    console.log('🛑 Voice commands stopped successfully');
                 } catch (e) {
                     console.log('🎙️ Error stopping voice commands:', e);
                 }
             }
+            
             isVoiceCommandListening = false;
             updateVoiceCommandStatus('ready');
+            
             if (voiceCommandRestartTimeout) {
                 clearTimeout(voiceCommandRestartTimeout);
                 voiceCommandRestartTimeout = null;
@@ -1397,16 +1403,16 @@
             
             console.log('🎯 Voice command received:', cmd);
             
-            // FIXED: More lenient duplicate prevention - only 250ms window
-            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 250) {
-                console.log('🚫 Duplicate voice command ignored (250ms window)');
+            // FIXED: Much shorter duplicate prevention - only 150ms window
+            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 150) {
+                console.log('🚫 Duplicate voice command ignored (150ms window)');
                 return;
             }
             
             lastVoiceCommand = cmd;
             lastVoiceCommandTime = now;
             
-            // FIXED: Execute immediately for better responsiveness
+            // FIXED: Execute immediately for maximum responsiveness
             executeVoiceCommand(cmd);
         }
 
@@ -1516,12 +1522,12 @@
                 updatePauseBetweenWords(newPause);
                 speakResponse(`Pause between words decreased to ${newPause} seconds`);
                 commandExecuted = true;
-            } else if (cmd.includes('voice commands off')) {
+            } else if (cmd.includes('voice commands off') || cmd.includes('voice command off')) {
                 settings.speakVoiceCommands = false;
                 updateVoiceCommandSetting(false);
                 // Don't speak this response since they just turned off voice responses
                 commandExecuted = true;
-            } else if (cmd.includes('voice commands on')) {
+            } else if (cmd.includes('voice commands on') || cmd.includes('voice command on')) {
                 settings.speakVoiceCommands = true;
                 updateVoiceCommandSetting(true);
                 speakResponse('Voice command speech enabled');
@@ -1698,23 +1704,17 @@
                                     if (currentPage === 'speech') {
                                         updateStatus('🎤 Listening - Speak clearly');
                                         startListening();
-                                        // FIXED: Start voice commands on speech page too
-                                        setTimeout(() => {
-                                            if (currentPage === 'speech' && microphonePermissionGranted && isInitialized) {
-                                                startVoiceCommands();
-                                            }
-                                        }, 500);
                                     }
                                 }, 1000);
                             }
                         }, 200);
                     } else {
-                        // FIXED: Always start voice commands on non-speech pages
+                        // FIXED: Start voice commands on non-speech pages only
                         setTimeout(() => {
-                            if (microphonePermissionGranted && isInitialized) {
+                            if (!isListening && microphonePermissionGranted && isInitialized) {
                                 startVoiceCommands();
                             }
-                        }, 300); // FIXED: Shorter delay
+                        }, 500);
                     }
                     
                     if (pageId === 'phone') {
@@ -1739,162 +1739,171 @@
             const textInput = document.getElementById('largeTextInputField');
             if (!textInput) return;
             
-            console.log('📱 ULTRA AGGRESSIVE KEYBOARD FORCING...');
+            console.log('📱 ULTRA AGGRESSIVE KEYBOARD FORCING - MAXIMUM EFFORT...');
             
-            // FIXED: Prevent default behaviors that might block keyboard
+            // FIXED: Remove all potential blocking attributes
             textInput.removeAttribute('readonly');
             textInput.removeAttribute('disabled');
             textInput.style.pointerEvents = 'auto';
             textInput.style.userSelect = 'text';
             textInput.style.webkitUserSelect = 'text';
+            textInput.style.touchAction = 'manipulation';
+            textInput.setAttribute('contenteditable', 'true');
             
-            // Method 1: Immediate focus chain
+            // Method 1: Immediate aggressive focus
             textInput.focus();
             textInput.click();
             textInput.select();
             
-            // Method 2: Force value change to trigger keyboard
-            const currentValue = textInput.value;
-            textInput.value = currentValue + '|TEMP|';
+            // Method 2: Create fake user interaction
+            const clickEvent = new MouseEvent('click', {
+                view: window,
+                bubbles: true,
+                cancelable: true,
+                clientX: textInput.offsetLeft + 10,
+                clientY: textInput.offsetTop + 10
+            });
+            textInput.dispatchEvent(clickEvent);
+            
+            // Method 3: Force input event with value change
+            const originalValue = textInput.value;
+            textInput.value = originalValue + '█'; // Special character to force keyboard
             textInput.focus();
             
-            // Method 3: Cursor positioning
-            const textLength = textInput.value.length;
-            textInput.setSelectionRange(textLength, textLength);
-            textInput.focus();
+            const inputEvent = new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                data: '█',
+                inputType: 'insertText'
+            });
+            textInput.dispatchEvent(inputEvent);
             
+            // Method 4: Position cursor at end
             setTimeout(() => {
-                // Restore original value
-                textInput.value = currentValue;
+                textInput.value = originalValue; // Restore value
                 textInput.focus();
-                
-                // Method 4: Multiple event simulation
-                const events = [
-                    new Event('focus', { bubbles: true }),
-                    new Event('click', { bubbles: true }),
-                    new Event('touchstart', { bubbles: true }),
-                    new Event('touchend', { bubbles: true }),
-                    new Event('mousedown', { bubbles: true }),
-                    new Event('mouseup', { bubbles: true }),
-                    new Event('pointerdown', { bubbles: true }),
-                    new Event('pointerup', { bubbles: true })
-                ];
-                
-                events.forEach(event => {
-                    try {
-                        textInput.dispatchEvent(event);
-                    } catch (e) {
-                        console.log('Event error:', e.message);
-                    }
-                });
-                
-                textInput.focus();
-                textInput.click();
-                
-            }, 50);
+                textInput.setSelectionRange(textInput.value.length, textInput.value.length);
+                textInput.scrollTop = textInput.scrollHeight;
+            }, 10);
             
-            // Method 5: iOS/Safari specific forcing
-            if (/iPad|iPhone|iPod/.test(navigator.userAgent) || /Safari/.test(navigator.userAgent)) {
+            // Method 5: iOS Safari nuclear option
+            if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
                 setTimeout(() => {
-                    // Create a temporary input to steal focus then give it back
+                    // Create temporary visible input to steal focus
                     const tempInput = document.createElement('input');
-                    tempInput.style.position = 'absolute';
-                    tempInput.style.left = '-9999px';
-                    tempInput.style.opacity = '0';
-                    document.body.appendChild(tempInput);
+                    tempInput.type = 'text';
+                    tempInput.style.position = 'fixed';
+                    tempInput.style.top = '50%';
+                    tempInput.style.left = '50%';
+                    tempInput.style.zIndex = '9999';
+                    tempInput.style.opacity = '0.01'; // Nearly invisible but not hidden
+                    tempInput.style.width = '1px';
+                    tempInput.style.height = '1px';
+                    tempInput.setAttribute('inputmode', 'text');
                     
+                    document.body.appendChild(tempInput);
                     tempInput.focus();
-                    setTimeout(() => {
-                        textInput.focus();
-                        textInput.click();
-                        document.body.removeChild(tempInput);
-                    }, 100);
-                }, 100);
-                
-                // Multiple focus attempts for iOS
-                for (let i = 0; i < 10; i++) {
+                    tempInput.click();
+                    
                     setTimeout(() => {
                         textInput.focus();
                         textInput.click();
                         textInput.select();
-                    }, 200 + (i * 100));
+                        document.body.removeChild(tempInput);
+                    }, 200);
+                }, 100);
+                
+                // Multiple aggressive attempts for iOS
+                for (let i = 0; i < 15; i++) {
+                    setTimeout(() => {
+                        textInput.focus();
+                        textInput.click();
+                        textInput.select();
+                        
+                        // Simulate touch for iOS
+                        const touchStartEvent = new TouchEvent('touchstart', {
+                            bubbles: true,
+                            cancelable: true,
+                            touches: [{
+                                identifier: 0,
+                                target: textInput,
+                                clientX: textInput.offsetLeft + textInput.offsetWidth / 2,
+                                clientY: textInput.offsetTop + textInput.offsetHeight / 2,
+                                pageX: textInput.offsetLeft + textInput.offsetWidth / 2,
+                                pageY: textInput.offsetTop + textInput.offsetHeight / 2,
+                                screenX: textInput.offsetLeft + textInput.offsetWidth / 2,
+                                screenY: textInput.offsetTop + textInput.offsetHeight / 2
+                            }]
+                        });
+                        
+                        textInput.dispatchEvent(touchStartEvent);
+                        
+                        setTimeout(() => {
+                            const touchEndEvent = new TouchEvent('touchend', {
+                                bubbles: true,
+                                cancelable: true,
+                                changedTouches: [{
+                                    identifier: 0,
+                                    target: textInput,
+                                    clientX: textInput.offsetLeft + textInput.offsetWidth / 2,
+                                    clientY: textInput.offsetTop + textInput.offsetHeight / 2
+                                }]
+                            });
+                            textInput.dispatchEvent(touchEndEvent);
+                        }, 50);
+                        
+                    }, 100 + (i * 200));
                 }
             }
             
-            // Method 6: Android Chrome specific
+            // Method 6: Android Chrome nuclear option
             if (/Android/.test(navigator.userAgent)) {
                 setTimeout(() => {
-                    // Manipulate viewport
+                    // Viewport manipulation for Android
                     const viewport = document.querySelector('meta[name=viewport]');
+                    const originalViewport = viewport ? viewport.content : '';
+                    
                     if (viewport) {
-                        const original = viewport.content;
-                        viewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes';
-                        
-                        textInput.scrollIntoView({ 
-                            behavior: 'instant', 
-                            block: 'center',
-                            inline: 'center'
-                        });
-                        
-                        textInput.focus();
-                        textInput.click();
-                        
-                        setTimeout(() => {
-                            viewport.content = original;
-                        }, 1000);
+                        viewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=10.0, user-scalable=yes';
                     }
-                }, 150);
-                
-                // Android-specific touch simulation
-                setTimeout(() => {
-                    const rect = textInput.getBoundingClientRect();
-                    const x = rect.left + rect.width / 2;
-                    const y = rect.top + rect.height / 2;
                     
-                    const touchStart = new TouchEvent('touchstart', {
-                        bubbles: true,
-                        cancelable: true,
-                        touches: [{
-                            clientX: x,
-                            clientY: y,
-                            target: textInput
-                        }]
+                    // Scroll element into perfect view
+                    textInput.scrollIntoView({ 
+                        behavior: 'instant', 
+                        block: 'center',
+                        inline: 'center'
                     });
                     
-                    const touchEnd = new TouchEvent('touchend', {
-                        bubbles: true,
-                        cancelable: true,
-                        changedTouches: [{
-                            clientX: x,
-                            clientY: y,
-                            target: textInput
-                        }]
-                    });
+                    // Multiple focus attempts
+                    for (let i = 0; i < 10; i++) {
+                        setTimeout(() => {
+                            textInput.focus();
+                            textInput.click();
+                            textInput.select();
+                        }, i * 100);
+                    }
                     
-                    textInput.dispatchEvent(touchStart);
+                    // Restore viewport after delay
                     setTimeout(() => {
-                        textInput.dispatchEvent(touchEnd);
-                        textInput.focus();
-                    }, 50);
-                }, 300);
+                        if (viewport && originalViewport) {
+                            viewport.content = originalViewport;
+                        }
+                    }, 2000);
+                    
+                }, 200);
             }
             
-            // Method 7: Final desperate attempts
-            setTimeout(() => {
-                textInput.focus();
-                textInput.click();
-                textInput.scrollIntoView();
-            }, 500);
-            
-            setTimeout(() => {
-                textInput.focus();
-                textInput.select();
-            }, 1000);
-            
-            setTimeout(() => {
-                textInput.focus();
-                textInput.click();
-            }, 1500);
+            // Method 7: Universal fallback attempts
+            const fallbackAttempts = [500, 1000, 1500, 2000, 2500, 3000];
+            fallbackAttempts.forEach((delay, index) => {
+                setTimeout(() => {
+                    console.log(`📱 Fallback keyboard attempt ${index + 1}`);
+                    textInput.focus();
+                    textInput.click();
+                    textInput.select();
+                    textInput.setSelectionRange(textInput.value.length, textInput.value.length);
+                }, delay);
+            });
         }
 
         function startTalkingFromHome() {
@@ -1920,6 +1929,8 @@
                 isListening = false;
                 updateListenButton();
                 updateStatus('🛑 Stopped listening. Click "START TALKING" to restart.');
+                
+                // FIXED: Start voice commands after stopping speech recognition
                 setTimeout(() => {
                     if (!isListening && microphonePermissionGranted && isInitialized) {
                         startVoiceCommands();
@@ -1932,16 +1943,39 @@
         }
 
         function startListening() {
-            if (recognition && !isListening) {
-                try {
-                    if (isVoiceCommandListening) {
-                        stopVoiceCommands();
-                    }
-                    recognition.start();
-                } catch (error) {
-                    console.error('❌ Error starting recognition:', error);
-                    updateStatus('❌ Error starting recognition: ' + error.message);
+            if (!recognition) return;
+            
+            // FIXED: Prevent starting if already running
+            if (isListening) {
+                console.log('🎤 Recognition already running, skipping start');
+                return;
+            }
+            
+            try {
+                // FIXED: Always stop voice commands first to prevent conflicts
+                if (isVoiceCommandListening) {
+                    console.log('🛑 Stopping voice commands to start speech recognition');
+                    stopVoiceCommands();
                 }
+                
+                // FIXED: Wait for voice commands to fully stop
+                setTimeout(() => {
+                    try {
+                        recognition.start();
+                        console.log('✅ Speech recognition started successfully');
+                    } catch (error) {
+                        console.error('❌ Error starting recognition:', error);
+                        updateStatus('❌ Error starting recognition: ' + error.message);
+                        isListening = false;
+                        updateListenButton();
+                    }
+                }, 200);
+                
+            } catch (error) {
+                console.error('❌ Error in startListening:', error);
+                updateStatus('❌ Error starting recognition: ' + error.message);
+                isListening = false;
+                updateListenButton();
             }
         }
 
