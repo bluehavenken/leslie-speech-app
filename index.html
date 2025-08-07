@@ -1133,44 +1133,26 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    let latestFinalText = '';
-                    let hasNewFinal = false;
-                    let allFinalText = '';
-                    
-                    for (let i = 0; i < event.results.length; i++) {
+                    // FIXED: Only process final results to prevent cascading display
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            allFinalText += event.results[i][0].transcript + ' ';
-                        }
-                    }
-                    
-                    allFinalText = allFinalText.trim();
-                    
-                    for (let i = event.results.length - 1; i >= 0; i--) {
-                        if (event.results[i].isFinal) {
-                            latestFinalText = event.results[i][0].transcript.trim();
-                            if (i >= event.resultIndex) {
-                                hasNewFinal = true;
+                            const finalText = event.results[i][0].transcript.trim();
+                            
+                            if (finalText && finalText.length > 1) {
+                                // Check for duplicates
+                                if (finalText !== lastProcessedPhrase) {
+                                    console.log('🎤 Final phrase captured:', finalText);
+                                    lastProcessedPhrase = finalText;
+                                    lastPhraseTime = Date.now();
+                                    processFinalSpeech(finalText);
+                                }
                             }
-                            break;
-                        }
-                    }
-                    
-                    if (event.results.length > 0) {
-                        const lastResult = event.results[event.results.length - 1];
-                        if (!lastResult.isFinal) {
-                            const interim = lastResult[0].transcript.trim();
-                            updateStatus(`🎤 Hearing: "${interim}"`);
-                        }
-                    }
-                    
-                    const textToProcess = allFinalText.length > latestFinalText.length ? allFinalText : latestFinalText;
-                    
-                    if (hasNewFinal && textToProcess && textToProcess.length > 1) {
-                        if (textToProcess !== lastProcessedPhrase) {
-                            console.log('🎤 Complete phrase with all words:', textToProcess);
-                            lastProcessedPhrase = textToProcess;
-                            lastPhraseTime = Date.now();
-                            processFinalSpeech(textToProcess);
+                        } else {
+                            // Show interim results for user feedback only
+                            const interim = event.results[i][0].transcript.trim();
+                            if (interim) {
+                                updateStatus(`🎤 Hearing: "${interim}"`);
+                            }
                         }
                     }
                 };
@@ -1203,8 +1185,9 @@
                 }
                 
                 if (containsLeslieCommand) {
-                    console.log('🚫 Leslie command detected on speech page - BLOCKED from display');
-                    updateStatus('🎤 Voice command not active on speech page - listening for speech...');
+                    console.log('🚫 Leslie command detected on speech page - FILTERED OUT');
+                    updateStatus('🎤 Leslie command filtered - continue speaking...');
+                    // Don't display or speak Leslie commands on speech page
                     return;
                 }
             }
@@ -1486,6 +1469,50 @@
                 speakResponse('Showing 7 day forecast');
                 commandExecuted = true;
             }
+            // Enhanced Recognition Commands
+            else if (cmd.includes('enhanced mode on') || cmd.includes('enhanced on')) {
+                settings.enhancedMode = true;
+                updateEnhancedMode(true);
+                speakResponse('Enhanced recognition mode enabled');
+                commandExecuted = true;
+            } else if (cmd.includes('enhanced mode off') || cmd.includes('enhanced off')) {
+                settings.enhancedMode = false;
+                updateEnhancedMode(false);
+                speakResponse('Enhanced recognition mode disabled');
+                commandExecuted = true;
+            }
+            // Speech Settings Commands
+            else if (cmd.includes('speak faster')) {
+                const newSpeed = Math.min(settings.speechSpeed + 0.2, 2.0);
+                updateSpeechSpeed(newSpeed);
+                speakResponse(`Speech speed increased to ${newSpeed.toFixed(1)}`);
+                commandExecuted = true;
+            } else if (cmd.includes('speak slower')) {
+                const newSpeed = Math.max(settings.speechSpeed - 0.2, 0.5);
+                updateSpeechSpeed(newSpeed);
+                speakResponse(`Speech speed decreased to ${newSpeed.toFixed(1)}`);
+                commandExecuted = true;
+            } else if (cmd.includes('pause more')) {
+                const newPause = Math.min(settings.pauseBetweenWords + 0.5, 5.0);
+                updatePauseBetweenWords(newPause);
+                speakResponse(`Pause between words increased to ${newPause} seconds`);
+                commandExecuted = true;
+            } else if (cmd.includes('pause less')) {
+                const newPause = Math.max(settings.pauseBetweenWords - 0.5, 0.5);
+                updatePauseBetweenWords(newPause);
+                speakResponse(`Pause between words decreased to ${newPause} seconds`);
+                commandExecuted = true;
+            } else if (cmd.includes('voice commands off')) {
+                settings.speakVoiceCommands = false;
+                updateVoiceCommandSetting(false);
+                // Don't speak this response since they just turned off voice responses
+                commandExecuted = true;
+            } else if (cmd.includes('voice commands on')) {
+                settings.speakVoiceCommands = true;
+                updateVoiceCommandSetting(true);
+                speakResponse('Voice command speech enabled');
+                commandExecuted = true;
+            }
             
             if (!commandExecuted) {
                 console.log('❌ Command not recognized:', cmd);
@@ -1678,17 +1705,12 @@
                     }
                     
                     if (pageId === 'textInput') {
-                        setTimeout(() => {
-                            forceKeyboardOpen();
-                        }, 100);
-                        
-                        setTimeout(() => {
-                            forceKeyboardOpen();
-                        }, 500);
-                        
-                        setTimeout(() => {
-                            forceKeyboardOpen();
-                        }, 1000);
+                        // FIXED: More aggressive keyboard forcing with better timing
+                        setTimeout(() => forceKeyboardOpen(), 50);
+                        setTimeout(() => forceKeyboardOpen(), 200);
+                        setTimeout(() => forceKeyboardOpen(), 500);
+                        setTimeout(() => forceKeyboardOpen(), 1000);
+                        setTimeout(() => forceKeyboardOpen(), 1500);
                     }
                 }
             } catch (error) {
@@ -1700,70 +1722,95 @@
             const textInput = document.getElementById('largeTextInputField');
             if (!textInput) return;
             
-            console.log('📱 FORCING KEYBOARD OPEN - Multiple methods...');
+            console.log('📱 FORCING KEYBOARD OPEN - Aggressive approach...');
             
+            // Method 1: Direct focus and interaction
             textInput.focus();
             textInput.click();
+            
+            // Method 2: Selection manipulation
             textInput.select();
-            textInput.setSelectionRange(0, 0);
+            textInput.setSelectionRange(textInput.value.length, textInput.value.length);
             
-            textInput.value = ' ';
+            // Method 3: Simulate typing to trigger mobile keyboards
+            const originalValue = textInput.value;
+            textInput.value = originalValue + ' ';
             textInput.focus();
-            setTimeout(() => {
-                textInput.value = '';
-                textInput.focus();
-            }, 50);
+            
+            // Dispatch input event
+            const inputEvent = new Event('input', { bubbles: true });
+            textInput.dispatchEvent(inputEvent);
             
             setTimeout(() => {
-                ['focus', 'click', 'touchstart', 'touchend', 'mousedown', 'mouseup'].forEach(eventType => {
-                    try {
-                        const event = new Event(eventType, { bubbles: true, cancelable: true });
-                        textInput.dispatchEvent(event);
-                    } catch (e) {
-                        console.log('Event dispatch error:', e);
-                    }
-                });
-                
+                textInput.value = originalValue;
                 textInput.focus();
-                textInput.click();
                 
-                try {
-                    const inputEvent = new InputEvent('input', {
+                // Method 4: Touch events for mobile
+                if ('ontouchstart' in window) {
+                    const touchStart = new TouchEvent('touchstart', {
                         bubbles: true,
                         cancelable: true,
-                        inputType: 'insertText',
-                        data: ' '
+                        touches: [new Touch({
+                            identifier: 0,
+                            target: textInput,
+                            clientX: textInput.offsetLeft + 10,
+                            clientY: textInput.offsetTop + 10
+                        })]
                     });
-                    textInput.dispatchEvent(inputEvent);
-                } catch (e) {
-                    console.log('Input event error:', e);
+                    
+                    const touchEnd = new TouchEvent('touchend', {
+                        bubbles: true,
+                        cancelable: true,
+                        changedTouches: [new Touch({
+                            identifier: 0,
+                            target: textInput,
+                            clientX: textInput.offsetLeft + 10,
+                            clientY: textInput.offsetTop + 10
+                        })]
+                    });
+                    
+                    textInput.dispatchEvent(touchStart);
+                    setTimeout(() => {
+                        textInput.dispatchEvent(touchEnd);
+                        textInput.focus();
+                    }, 50);
                 }
-                
-                setTimeout(() => {
-                    textInput.value = '';
-                    textInput.focus();
-                    textInput.click();
-                }, 100);
-                
+            }, 50);
+            
+            // Method 5: Scroll into view and refocus
+            setTimeout(() => {
+                textInput.scrollIntoView({ 
+                    behavior: 'smooth', 
+                    block: 'center',
+                    inline: 'center'
+                });
+                textInput.focus();
+                textInput.click();
             }, 100);
             
+            // Method 6: iOS specific - multiple focus attempts
             if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-                setTimeout(() => {
-                    textInput.style.transform = 'translateY(-1px)';
-                    textInput.focus();
-                    textInput.click();
+                for (let i = 0; i < 5; i++) {
                     setTimeout(() => {
-                        textInput.style.transform = '';
                         textInput.focus();
-                    }, 200);
-                }, 200);
+                        textInput.click();
+                        textInput.select();
+                    }, 200 + (i * 100));
+                }
             }
             
+            // Method 7: Android specific - viewport manipulation
             if (/Android/.test(navigator.userAgent)) {
                 setTimeout(() => {
-                    textInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    textInput.focus();
-                    textInput.select();
+                    const viewport = document.querySelector('meta[name=viewport]');
+                    if (viewport) {
+                        const originalContent = viewport.content;
+                        viewport.content = 'width=device-width, initial-scale=1.0, user-scalable=yes';
+                        textInput.focus();
+                        setTimeout(() => {
+                            viewport.content = originalContent;
+                        }, 1000);
+                    }
                 }, 300);
             }
         }
@@ -2410,8 +2457,13 @@
         function updateSpeechSpeed(value) {
             settings.speechSpeed = parseFloat(value);
             const label = document.getElementById('speechSpeedValue');
+            const slider = document.getElementById('speechSpeedSlider');
+            
             if (label) {
                 label.textContent = value == 1.0 ? 'Normal (1.0x)' : value + 'x';
+            }
+            if (slider) {
+                slider.value = value;
             }
             saveSettings();
         }
@@ -2419,8 +2471,13 @@
         function updatePauseBetweenWords(value) {
             settings.pauseBetweenWords = parseFloat(value);
             const label = document.getElementById('pauseBetweenWordsValue');
+            const slider = document.getElementById('pauseBetweenWordsSlider');
+            
             if (label) {
                 label.textContent = value + ' seconds';
+            }
+            if (slider) {
+                slider.value = value;
             }
             
             console.log(`🔧 Pause setting updated to: ${value} seconds`);
@@ -2466,8 +2523,13 @@
         function updateVoiceCommandSetting(checked) {
             settings.speakVoiceCommands = checked;
             const label = document.getElementById('speakVoiceCommandsLabel');
+            const switchEl = document.getElementById('speakVoiceCommandsSwitch');
+            
             if (label) {
                 label.textContent = 'Voice Command Speech: ' + (checked ? 'ON' : 'OFF');
+            }
+            if (switchEl) {
+                switchEl.checked = checked;
             }
             saveSettings();
         }
@@ -2480,8 +2542,13 @@
         function updateEnhancedMode(checked) {
             settings.enhancedMode = checked;
             const label = document.getElementById('enhancedModeLabel');
+            const switchEl = document.getElementById('enhancedModeSwitch');
+            
             if (label) {
                 label.textContent = 'Enhanced Mode: ' + (checked ? 'ON' : 'OFF');
+            }
+            if (switchEl) {
+                switchEl.checked = checked;
             }
             saveSettings();
         }
