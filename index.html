@@ -999,7 +999,7 @@
             document.getElementById('enhancedModeSwitch').addEventListener('change', (e) => updateEnhancedMode(e.target.checked));
         }
 
-        // === SPEECH RECOGNITION ===
+        // FIXED: Better speech recognition startup with warmup
         function setupSpeechRecognition() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
@@ -1013,6 +1013,7 @@
                 updateListenButton();
                 updateStatus(`🎤 Listening - Pause tolerance: ${settings.pauseBetweenWords}s between words`);
                 resetSessionTimeout();
+                console.log('🎤 Speech recognition started successfully');
             };
 
             recognition.onend = function() {
@@ -1028,6 +1029,7 @@
                             try {
                                 recognition.start();
                             } catch (e) {
+                                console.error('Failed to restart recognition:', e);
                                 updateListenButton();
                                 updateStatus('❌ Click "START TALKING" to restart');
                             }
@@ -1040,15 +1042,23 @@
             };
 
             recognition.onerror = function(event) {
+                console.error('🎤 Recognition error:', event.error);
                 isListening = false;
                 updateListenButton();
+                
+                if (event.error === 'not-allowed') {
+                    updateStatus('❌ Microphone permission denied');
+                    return;
+                }
+                
                 updateStatus('❌ Error: ' + event.error);
                 
                 // FIXED: Auto-restart on most errors (except permission)
                 if (event.error !== 'not-allowed' && currentPage === 'speech') {
-                    const restartDelay = (settings.pauseBetweenWords * 1000) + 500;
+                    const restartDelay = (settings.pauseBetweenWords * 1000) + 1000;
                     setTimeout(() => {
                         if (currentPage === 'speech' && !isListening) {
+                            console.log('🔄 Auto-restarting after error');
                             try {
                                 recognition.start();
                                 updateStatus('🔄 Restarted after error');
@@ -1064,87 +1074,79 @@
                 lastSpeechTime = Date.now();
                 resetSessionTimeout();
                 
-                // FIXED: Only process the LATEST final result to avoid cascading
-                let latestFinalText = '';
-                let latestInterimText = '';
+                // FIXED: Collect ALL speech from the beginning to avoid word loss
+                let completeText = '';
+                let hasNewFinal = false;
                 
-                // Find the most recent final result
-                for (let i = event.results.length - 1; i >= 0; i--) {
-                    if (event.results[i].isFinal && !latestFinalText) {
-                        latestFinalText = event.results[i][0].transcript.trim();
-                        break;
+                // Build complete transcript from all final results
+                for (let i = 0; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        completeText += event.results[i][0].transcript + ' ';
+                        if (i >= event.resultIndex) {
+                            hasNewFinal = true;
+                        }
                     }
                 }
                 
-                // Get the latest interim result
+                completeText = completeText.trim();
+                
+                // Show interim results
                 if (event.results.length > 0) {
                     const lastResult = event.results[event.results.length - 1];
                     if (!lastResult.isFinal) {
-                        latestInterimText = lastResult[0].transcript.trim();
+                        const interim = lastResult[0].transcript.trim();
+                        updateStatus(`🎤 Hearing: "${interim}"`);
                     }
                 }
                 
-                // Show interim feedback
-                if (latestInterimText && !latestFinalText) {
-                    updateStatus(`🎤 Hearing: "${latestInterimText}"`);
-                }
-                
-                // FIXED: Only process if we have a new, complete final result
-                if (latestFinalText && latestFinalText.length > 1) {
-                    // Prevent duplicate processing
-                    if (latestFinalText !== lastProcessedPhrase || (Date.now() - lastPhraseTime) > 3000) {
-                        console.log('🎤 New final result:', latestFinalText);
-                        lastProcessedPhrase = latestFinalText;
+                // FIXED: Process complete text only when we have new final results
+                if (hasNewFinal && completeText && completeText.length > 1) {
+                    // Avoid processing the same complete text multiple times
+                    if (completeText !== lastProcessedPhrase) {
+                        console.log('🎤 Complete final text:', completeText);
+                        lastProcessedPhrase = completeText;
                         lastPhraseTime = Date.now();
                         
-                        // Clear any existing timeout
-                        clearTimeout(speechTimeoutId);
-                        
-                        // Process immediately for better responsiveness
-                        processFinalSpeech(latestFinalText);
-                    } else {
-                        console.log('🚫 Duplicate result ignored:', latestFinalText);
+                        // FIXED: Immediate processing to avoid delays that cause word loss
+                        processFinalSpeech(completeText);
                     }
                 }
             };
         }
 
-        // FIXED: Simplified speech processing - no phrase holding, immediate processing
+        // FIXED: Completely block Leslie commands from speech recognition display
         function processFinalSpeech(text) {
             if (!text || text.length <= 1) return;
             
             console.log('🎙️ Processing final speech:', `"${text}"`);
             
-            // Check for Leslie commands first
+            // FIXED: More comprehensive Leslie command blocking
             const lowerText = text.toLowerCase().trim();
             const leslieVariants = [
                 'hey leslie', 'leslie', 'less lee', 'lesley', 
-                'wesley', 'bessie'
+                'wesley', 'bessie', 'hey less', 'leslee'
             ];
             
-            // Check if this is a Leslie command
-            let isLeslieCommand = false;
+            // Check if this contains ANY Leslie command
+            let containsLeslieCommand = false;
             for (const variant of leslieVariants) {
                 if (lowerText.includes(variant)) {
-                    isLeslieCommand = true;
+                    containsLeslieCommand = true;
                     break;
                 }
             }
             
-            if (isLeslieCommand) {
-                console.log('🚫 Leslie command detected - processing without display');
+            // FIXED: If it's a Leslie command, COMPLETELY block it from display
+            if (containsLeslieCommand) {
+                console.log('🚫 Leslie command detected - BLOCKED from speech display');
+                // Process as voice command but DO NOT display or speak
                 processVoiceCommand(text);
-                updateStatus('🎤 Voice command processed');
-                return;
+                updateStatus('🎤 Voice command processed - listening for speech...');
+                return; // Exit completely - don't display or speak
             }
             
-            // This is regular speech
+            // This is regular speech - process normally
             console.log('✅ Regular speech detected:', text);
-            
-            // Cancel any existing speech
-            speechSynth.cancel();
-            
-            // FIXED: Process immediately without delays or holding
             processCompletePhrase(text);
         }
         
@@ -1571,22 +1573,22 @@
             }, 50);
         }
 
-        // FIXED: Better speech synthesis to prevent stuttering
+        // FIXED: Better speech synthesis without stuttering
         function speakCompletePhrase(text) {
-            console.log('🔊 ATTEMPTING to speak:', text);
+            console.log('🔊 Speaking phrase:', text);
             
-            try {
-                // FIXED: Cancel ALL existing speech first
-                speechSynth.cancel();
+            // FIXED: Aggressive speech cancellation to prevent stuttering
+            speechSynth.cancel();
+            
+            // FIXED: Wait longer to ensure complete cancellation
+            setTimeout(() => {
+                // Double-check cancellation
+                if (speechSynth.speaking || speechSynth.pending) {
+                    speechSynth.cancel();
+                }
                 
-                // FIXED: Wait longer to ensure previous speech is fully cancelled
                 setTimeout(() => {
-                    // Double-check no speech is active
-                    if (speechSynth.speaking) {
-                        speechSynth.cancel();
-                    }
-                    
-                    setTimeout(() => {
+                    try {
                         const utterance = new SpeechSynthesisUtterance(text);
                         utterance.rate = settings.speechSpeed || 1.0;
                         utterance.pitch = 1.0;
@@ -1594,32 +1596,30 @@
                         utterance.lang = 'en-US';
                         
                         utterance.onstart = function() {
-                            console.log('✅ SPEECH STARTED for:', text);
+                            console.log('✅ Speech started cleanly:', text);
                         };
                         
                         utterance.onend = function() {
-                            console.log('✅ SPEECH COMPLETED for:', text);
+                            console.log('✅ Speech completed:', text);
                         };
                         
                         utterance.onerror = function(event) {
                             console.error('❌ Speech error:', event.error);
                         };
                         
-                        // FIXED: Ensure speech synthesis is ready
+                        // Ensure speech system is ready
                         if (speechSynth.paused) {
                             speechSynth.resume();
                         }
                         
-                        console.log('🎙️ Queuing speech synthesis...');
                         speechSynth.speak(utterance);
                         
-                    }, 100); // Additional delay to prevent stuttering
-                    
-                }, 300); // Longer delay to ensure clean slate
+                    } catch (e) {
+                        console.error('❌ Speech synthesis error:', e);
+                    }
+                }, 200);
                 
-            } catch (e) {
-                console.error('❌ Speech synthesis error:', e);
-            }
+            }, 500); // Longer delay for complete cancellation
         }
 
         function speakTextInput() {
@@ -1707,14 +1707,88 @@
                 }
                 
                 if (pageId === 'textInput') {
+                    // FIXED: Multiple aggressive keyboard opening methods
                     setTimeout(() => {
-                        const textInput = document.getElementById('largeTextInputField');
-                        if (textInput) {
-                            textInput.focus();
-                            textInput.click();
-                        }
+                        forceKeyboardOpen();
                     }, 300);
+                    
+                    // FIXED: Secondary attempt for stubborn devices
+                    setTimeout(() => {
+                        forceKeyboardOpen();
+                    }, 1000);
                 }
+            }
+        }
+        
+        // FIXED: More aggressive keyboard opening for mobile devices
+        function forceKeyboardOpen() {
+            const textInput = document.getElementById('largeTextInputField');
+            if (!textInput) return;
+            
+            console.log('📱 Attempting to open keyboard...');
+            
+            // Method 1: Direct focus and click
+            textInput.focus();
+            textInput.click();
+            
+            // Method 2: Simulate user interaction
+            setTimeout(() => {
+                const rect = textInput.getBoundingClientRect();
+                
+                // Create and dispatch a real click event
+                const clickEvent = new MouseEvent('click', {
+                    view: window,
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top + rect.height / 2,
+                    button: 0,
+                    buttons: 1
+                });
+                
+                textInput.dispatchEvent(clickEvent);
+                textInput.focus();
+                
+                // Method 3: Touch events for mobile
+                if ('ontouchstart' in window) {
+                    const touch = new Touch({
+                        identifier: Date.now(),
+                        target: textInput,
+                        clientX: rect.left + rect.width / 2,
+                        clientY: rect.top + rect.height / 2
+                    });
+                    
+                    const touchStart = new TouchEvent('touchstart', {
+                        touches: [touch],
+                        targetTouches: [touch],
+                        changedTouches: [touch],
+                        bubbles: true
+                    });
+                    
+                    const touchEnd = new TouchEvent('touchend', {
+                        changedTouches: [touch],
+                        bubbles: true
+                    });
+                    
+                    textInput.dispatchEvent(touchStart);
+                    setTimeout(() => {
+                        textInput.dispatchEvent(touchEnd);
+                        textInput.focus();
+                    }, 50);
+                }
+                
+                // Method 4: iOS Safari specific
+                if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                    setTimeout(() => {
+                        textInput.style.transform = 'translateY(-1px)';
+                        textInput.focus();
+                        setTimeout(() => {
+                            textInput.style.transform = '';
+                        }, 100);
+                    }, 100);
+                }
+                
+            }, 100);
             }
         }
 
