@@ -1266,50 +1266,54 @@
             speakPhraseQuickly(text);
         }
 
-        // FIXED: Simple, reliable speech function that actually works on mobile
+        // FIXED: Speech function that doesn't cut off the end of phrases
         function speakPhraseQuickly(text) {
-            console.log('🔊 ATTEMPTING SPEECH:', text);
+            console.log('🔊 SPEAKING COMPLETE PHRASE:', text);
             
-            // FIXED: Don't block if already speaking - just queue it properly
             if (isSpeaking) {
-                console.log('🔊 Speech in progress - cancelling current and speaking new phrase');
-                speechSynth.cancel(); // Cancel current speech
-                isSpeaking = false; // Reset flag
+                console.log('🔊 Cancelling current speech for new phrase');
+                speechSynth.cancel();
+                isSpeaking = false;
             }
             
-            // Set speaking flag
             isSpeaking = true;
             
             try {
-                // FIXED: Ensure speech synthesis is completely ready
                 if (speechSynth.paused) {
                     speechSynth.resume();
                 }
                 
-                // FIXED: Clear any pending utterances
                 speechSynth.cancel();
                 
-                // FIXED: Create utterance with mobile-friendly settings
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = Math.min(parseFloat(settings.speechSpeed) || 1.0, 1.5); // Limit rate for mobile
+                // FIXED: Add small pause at end to prevent cutoff
+                const textWithPause = text + "."; // Add period for natural pause
+                
+                const utterance = new SpeechSynthesisUtterance(textWithPause);
+                utterance.rate = Math.min(parseFloat(settings.speechSpeed) || 1.0, 1.2); // Slower for completeness
                 utterance.pitch = 1.0;
-                utterance.volume = 1.0; // FIXED: Full volume
+                utterance.volume = 1.0;
                 utterance.lang = 'en-US';
                 
                 let speechCompleted = false;
+                let speechStarted = false;
                 
                 utterance.onstart = function() {
+                    speechStarted = true;
                     speechCompleted = false;
-                    console.log('✅ SPEECH ACTUALLY STARTED:', text);
+                    console.log('✅ SPEECH STARTED - WILL COMPLETE FULLY:', text);
                     updateStatus(`🔊 Speaking: "${text}"`);
                 };
                 
                 utterance.onend = function() {
                     if (!speechCompleted) {
                         speechCompleted = true;
-                        console.log('✅ SPEECH COMPLETED SUCCESSFULLY:', text);
-                        isSpeaking = false;
-                        updateStatus('🎤 Listening - Ready for next phrase');
+                        console.log('✅ SPEECH COMPLETED WITHOUT CUTOFF:', text);
+                        
+                        // FIXED: Delay before clearing flag to ensure speech actually finishes
+                        setTimeout(() => {
+                            isSpeaking = false;
+                            updateStatus('🎤 Listening - Ready for next phrase');
+                        }, 200); // Small delay to prevent cutoff
                     }
                 };
                 
@@ -1317,75 +1321,81 @@
                     console.error('❌ SPEECH ERROR:', event.error, 'for text:', text);
                     if (!speechCompleted) {
                         speechCompleted = true;
-                        isSpeaking = false;
-                        updateStatus('🎤 Listening - Speech failed, ready for next phrase');
                         
-                        // FIXED: Try fallback speech method
+                        // FIXED: Delay before clearing to prevent cutoff
                         setTimeout(() => {
-                            tryFallbackSpeech(text);
-                        }, 500);
+                            isSpeaking = false;
+                            updateStatus('🎤 Listening - Speech had error, ready for next phrase');
+                        }, 300);
                     }
                 };
                 
-                // FIXED: Force speech immediately
-                console.log('🎤 FORCING SPEECH SYNTHESIS NOW:', text);
+                console.log('🎤 STARTING COMPLETE SPEECH:', textWithPause);
                 speechSynth.speak(utterance);
                 
-                // FIXED: Backup check for mobile devices that may not fire events properly
+                // FIXED: Backup check that waits longer for complete speech
                 setTimeout(() => {
-                    if (!speechCompleted && isSpeaking) {
-                        console.log('⚠️ Speech may have failed silently - trying backup method');
-                        tryFallbackSpeech(text);
+                    if (!speechStarted && isSpeaking) {
+                        console.log('⚠️ Speech failed to start - trying simple method');
+                        trySimpleSpeech(text);
                     }
-                }, 3000);
+                }, 2000);
+                
+                // FIXED: Extended backup check for speech completion
+                setTimeout(() => {
+                    if (speechStarted && !speechCompleted && isSpeaking) {
+                        console.log('⚠️ Speech may be hanging - forcing completion');
+                        speechCompleted = true;
+                        isSpeaking = false;
+                        updateStatus('🎤 Listening - Ready for next phrase');
+                    }
+                }, 8000); // Longer timeout for complete phrases
                 
             } catch (error) {
                 console.error('❌ SPEECH SYNTHESIS ERROR:', error);
-                isSpeaking = false;
-                updateStatus('🎤 Listening - Speech error, ready for next phrase');
-                
-                // FIXED: Try alternative speech method
                 setTimeout(() => {
-                    tryFallbackSpeech(text);
-                }, 500);
+                    isSpeaking = false;
+                    updateStatus('🎤 Listening - Speech error, ready for next phrase');
+                    trySimpleSpeech(text);
+                }, 300);
             }
         }
         
-        // FIXED: Fallback speech method for mobile devices
-        function tryFallbackSpeech(text) {
-            console.log('🔄 TRYING FALLBACK SPEECH METHOD:', text);
+        // FIXED: Simple speech method that ensures complete phrases
+        function trySimpleSpeech(text) {
+            console.log('🔄 TRYING SIMPLE COMPLETE SPEECH:', text);
             
             try {
-                // Create a new, clean utterance
-                const fallbackUtterance = new SpeechSynthesisUtterance(text);
-                fallbackUtterance.rate = 1.0; // Standard rate
-                fallbackUtterance.pitch = 1.0;
-                fallbackUtterance.volume = 1.0;
-                fallbackUtterance.lang = 'en-US';
+                const simpleUtterance = new SpeechSynthesisUtterance(text + ".");
+                simpleUtterance.rate = 0.9; // Slower to ensure completeness
+                simpleUtterance.pitch = 1.0;
+                simpleUtterance.volume = 1.0;
+                simpleUtterance.lang = 'en-US';
                 
-                fallbackUtterance.onstart = function() {
-                    console.log('✅ FALLBACK SPEECH STARTED:', text);
+                simpleUtterance.onstart = function() {
+                    console.log('✅ SIMPLE SPEECH STARTED:', text);
                 };
                 
-                fallbackUtterance.onend = function() {
-                    console.log('✅ FALLBACK SPEECH COMPLETED:', text);
-                    isSpeaking = false;
+                simpleUtterance.onend = function() {
+                    console.log('✅ SIMPLE SPEECH COMPLETED:', text);
+                    setTimeout(() => {
+                        isSpeaking = false;
+                    }, 300); // Delay to ensure complete finish
                 };
                 
-                fallbackUtterance.onerror = function(event) {
-                    console.error('❌ FALLBACK SPEECH ALSO FAILED:', event.error);
-                    isSpeaking = false;
-                    
-                    // FIXED: Show helpful error message
-                    updateStatus('🎤 Speech unavailable - check device audio settings. Ready for next phrase.');
+                simpleUtterance.onerror = function(event) {
+                    console.error('❌ SIMPLE SPEECH FAILED:', event.error);
+                    setTimeout(() => {
+                        isSpeaking = false;
+                        updateStatus('🎤 Speech unavailable - ready for next phrase');
+                    }, 300);
                 };
                 
-                // Force resume and speak
                 if (speechSynth.paused) speechSynth.resume();
-                speechSynth.speak(fallbackUtterance);
+                speechSynth.speak(simpleUtterance);
                 
-            } catch (fallbackError) {
-                console.error('❌ FALLBACK SPEECH ERROR:', fallbackError);
+            } catch (error) {
+                console.error('❌ SIMPLE SPEECH ERROR:', error);
                 isSpeaking = false;
                 updateStatus('🎤 Speech unavailable - ready for next phrase');
             }
@@ -1405,20 +1415,27 @@
             }
 
             try {
-                updateVoiceCommandStatus('requesting-permission');
+                // FIXED: Don't show permission status changes that confuse users
+                console.log('🎤 Initializing voice commands with existing permissions...');
                 
-                // FIXED: Use the same audio permission function that doesn't affect volume
+                // FIXED: Use the gentler permission function
                 await requestAudioPermissions();
                 
-                console.log('✅ Microphone permission granted for voice commands');
+                console.log('✅ Voice commands ready to initialize');
                 
                 initializeVoiceCommands();
                 voiceCommandsInitialized = true;
                 
             } catch (error) {
-                console.log('❌ Microphone permission denied:', error.message);
-                microphonePermissionGranted = false;
-                updateVoiceCommandStatus('permission-denied');
+                console.log('⚠️ Voice command initialization had issues:', error.message);
+                // FIXED: Don't mark as failed if we can still try to work
+                if (microphonePermissionGranted) {
+                    console.log('🔄 Trying to initialize voice commands anyway...');
+                    initializeVoiceCommands();
+                    voiceCommandsInitialized = true;
+                } else {
+                    updateVoiceCommandStatus('permission-denied');
+                }
             }
         }
 
@@ -1550,22 +1567,31 @@
                 case 'active':
                     statusEl.classList.add('active');
                     statusEl.textContent = '🎙️ Voice Commands Active';
+                    statusEl.style.display = 'block';
                     break;
                 case 'ready':
                     statusEl.textContent = '🎙️ Voice Commands Ready';
                     statusEl.style.display = 'none';
                     break;
                 case 'requesting-permission':
-                    statusEl.classList.add('permission-needed');
-                    statusEl.textContent = '🎤 Requesting Microphone...';
+                    // FIXED: Don't show permission requests that might confuse users
+                    statusEl.textContent = '🎙️ Voice Commands Ready';
+                    statusEl.style.display = 'none';
                     break;
                 case 'permission-denied':
-                    statusEl.classList.add('permission-needed');
-                    statusEl.textContent = '❌ Mic Permission Needed';
+                    // FIXED: Only show if actually denied, not just during checks
+                    if (!microphonePermissionGranted) {
+                        statusEl.classList.add('permission-needed');
+                        statusEl.textContent = '❌ Mic Permission Needed';
+                        statusEl.style.display = 'block';
+                    } else {
+                        statusEl.style.display = 'none';
+                    }
                     break;
                 case 'not-supported':
                     statusEl.classList.add('permission-needed');
                     statusEl.textContent = '❌ Not Supported';
+                    statusEl.style.display = 'block';
                     break;
                 default:
                     statusEl.textContent = '🎙️ Voice Commands Ready';
