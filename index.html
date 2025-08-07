@@ -1075,20 +1075,23 @@
                 lastSpeechTime = Date.now();
                 resetSessionTimeout();
                 
-                let completeText = '';
+                // FIXED: Only process the most recent final result to prevent cascading
+                let latestFinalText = '';
                 let hasNewFinal = false;
                 
-                for (let i = 0; i < event.results.length; i++) {
+                // Look for the most recent final result
+                for (let i = event.results.length - 1; i >= 0; i--) {
                     if (event.results[i].isFinal) {
-                        completeText += event.results[i][0].transcript + ' ';
+                        latestFinalText = event.results[i][0].transcript.trim();
+                        // Check if this is actually a new result
                         if (i >= event.resultIndex) {
                             hasNewFinal = true;
                         }
+                        break; // Take only the most recent final result
                     }
                 }
                 
-                completeText = completeText.trim();
-                
+                // Show interim results for feedback
                 if (event.results.length > 0) {
                     const lastResult = event.results[event.results.length - 1];
                     if (!lastResult.isFinal) {
@@ -1097,12 +1100,16 @@
                     }
                 }
                 
-                if (hasNewFinal && completeText && completeText.length > 1) {
-                    if (completeText !== lastProcessedPhrase) {
-                        console.log('🎤 Complete final text:', completeText);
-                        lastProcessedPhrase = completeText;
+                // FIXED: Process only new, complete, single phrases
+                if (hasNewFinal && latestFinalText && latestFinalText.length > 1) {
+                    // Prevent processing the same phrase multiple times
+                    if (latestFinalText !== lastProcessedPhrase) {
+                        console.log('🎤 New complete phrase:', latestFinalText);
+                        lastProcessedPhrase = latestFinalText;
                         lastPhraseTime = Date.now();
-                        processFinalSpeech(completeText);
+                        processFinalSpeech(latestFinalText);
+                    } else {
+                        console.log('🚫 Duplicate phrase ignored:', latestFinalText);
                     }
                 }
             };
@@ -1139,7 +1146,8 @@
         }
         
         function processCompletePhrase(text) {
-            phraseHistory = [text];
+            // FIXED: Add complete phrase to history instead of replacing
+            phraseHistory.push(text);
             updateSpeechDisplay();
             updateStatus(`✅ Captured: "${text}"`);
             console.log('🔊 Speaking phrase:', text);
@@ -1184,6 +1192,7 @@
             };
             
             voiceCommandRecognition.onresult = function(event) {
+                // FIXED: Process only new final results to prevent duplicate commands
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     if (event.results[i].isFinal) {
                         const transcript = event.results[i][0].transcript.trim();
@@ -1191,20 +1200,16 @@
                         
                         console.log(`🎙️ Voice command candidate: "${transcript}" (confidence: ${confidence?.toFixed(2) || 'unknown'})`);
                         
+                        // FIXED: Quick Leslie detection for immediate response
                         const lowerTranscript = transcript.toLowerCase();
-                        const leslieVariants = ['leslie', 'hey leslie', 'less lee', 'lesley'];
+                        const quickLeslieCheck = lowerTranscript.includes('leslie') || lowerTranscript.includes('hey leslie');
                         
-                        let foundLeslie = false;
-                        for (const variant of leslieVariants) {
-                            if (lowerTranscript.includes(variant)) {
-                                foundLeslie = true;
-                                break;
-                            }
-                        }
-                        
-                        if (foundLeslie) {
+                        if (quickLeslieCheck) {
                             console.log('🎯 Leslie command detected - processing immediately');
-                            processVoiceCommand(transcript);
+                            // FIXED: Process without additional delay
+                            setTimeout(() => {
+                                processVoiceCommand(transcript);
+                            }, 50); // Minimal delay for processing
                         }
                     }
                 }
@@ -1326,7 +1331,8 @@
             
             console.log('🎯 Voice command received:', cmd);
             
-            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 2000) {
+            // FIXED: Reduced duplicate prevention time to 1 second for better responsiveness
+            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 1000) {
                 console.log('🚫 Duplicate voice command ignored');
                 return;
             }
@@ -1340,11 +1346,13 @@
             lastVoiceCommandTime = now;
             isProcessingCommand = true;
             
+            // FIXED: Execute command immediately without delay
             executeVoiceCommand(cmd);
             
+            // FIXED: Reset processing flag faster
             setTimeout(() => {
                 isProcessingCommand = false;
-            }, 500);
+            }, 250);
         }
 
         function executeVoiceCommand(cmd) {
@@ -1761,13 +1769,17 @@
             lastPhraseTime = 0;
             pendingPhrase = null;
             
+            // FIXED: Also clear voice command history to prevent interference
+            lastVoiceCommand = '';
+            lastVoiceCommandTime = 0;
+            
             if (speechTimeoutId) {
                 clearTimeout(speechTimeoutId);
                 speechTimeoutId = null;
             }
             
             updateSpeechDisplay();
-            console.log('🗑️ Speech text cleared');
+            console.log('🗑️ Speech text and command history cleared');
         }
 
         function clearTextInput() {
