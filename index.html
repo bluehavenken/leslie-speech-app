@@ -906,10 +906,8 @@
         let microphonePermissionGranted = false;
         let isInitialized = false;
         
-        // Voice command management
-        let voiceCommandRestartTimeout = null;
-        let voiceCommandAttempts = 0;
-        const MAX_VOICE_COMMAND_ATTEMPTS = 10;
+        // FIXED: Global voice command initialization tracking
+        let voiceCommandsInitialized = false;
         
         // Session timeout
         let sessionTimeoutId = null;
@@ -1239,22 +1237,22 @@
         }
         
         function processCompletePhrase(text) {
-            console.log('🎙️ Processing complete phrase for display and speech:', text);
+            console.log('🎙️ PROCESSING COMPLETE PHRASE FOR DISPLAY AND SPEECH:', text);
             
             // FIXED: Display the complete phrase immediately
             updateSpeechDisplaySingle(text);
-            updateStatus(`✅ Captured: "${text}"`);
+            updateStatus(`✅ Captured: "${text}" - Now speaking...`);
             
-            // FIXED: Speak the phrase with proper timing
-            console.log('🔊 Starting speech playback for complete phrase:', text);
-            speakCompletePhraseWithRestart(text);
+            // FIXED: Force speech synthesis immediately
+            console.log('🔊 FORCING SPEECH SYNTHESIS FOR:', text);
+            forceSpeakPhrase(text);
         }
 
         // === VOICE COMMANDS ===
         async function initializeVoiceCommandsWithPermissions() {
-            // FIXED: Don't reinitialize if already running properly
-            if (voiceCommandRecognition && microphonePermissionGranted && isVoiceCommandListening) {
-                console.log('✅ Voice commands already running - skipping initialization');
+            // FIXED: Only initialize once globally
+            if (voiceCommandsInitialized) {
+                console.log('✅ Voice commands already initialized globally - skipping');
                 return;
             }
 
@@ -1271,12 +1269,9 @@
                 stream.getTracks().forEach(track => track.stop());
                 console.log('✅ Microphone permission granted');
                 
-                // FIXED: Only initialize if not already done
-                if (!voiceCommandRecognition) {
-                    initializeVoiceCommands();
-                } else if (!isVoiceCommandListening) {
-                    startVoiceCommands();
-                }
+                initializeVoiceCommands();
+                voiceCommandsInitialized = true; // FIXED: Mark as initialized
+                
             } catch (error) {
                 console.log('❌ Microphone permission denied:', error.message);
                 microphonePermissionGranted = false;
@@ -1551,33 +1546,37 @@
                 speakResponse('Enhanced recognition mode disabled');
                 commandExecuted = true;
             }
-            // Speech Settings Commands - FIXED: More variations and better speed adjustment
-            else if (cmd.includes('speak faster') || cmd.includes('faster speech') || cmd.includes('speed up')) {
-                const newSpeed = Math.min(parseFloat((settings.speechSpeed + 0.2).toFixed(1)), 2.0);
+            // Speech Settings Commands - FIXED: Added more command variations and better matching
+            else if (cmd.includes('speak faster') || cmd.includes('faster speech') || cmd.includes('speed up') || cmd.includes('talk faster')) {
+                const currentSpeed = parseFloat(settings.speechSpeed) || 1.0;
+                const newSpeed = Math.min(parseFloat((currentSpeed + 0.2).toFixed(1)), 2.0);
                 updateSpeechSpeed(newSpeed);
                 speakResponse(`Speech speed increased to ${newSpeed}`);
                 commandExecuted = true;
-            } else if (cmd.includes('speak slower') || cmd.includes('slower speech') || cmd.includes('slow down')) {
-                const newSpeed = Math.max(parseFloat((settings.speechSpeed - 0.2).toFixed(1)), 0.5);
+            } else if (cmd.includes('speak slower') || cmd.includes('slower speech') || cmd.includes('slow down') || cmd.includes('talk slower')) {
+                const currentSpeed = parseFloat(settings.speechSpeed) || 1.0;
+                const newSpeed = Math.max(parseFloat((currentSpeed - 0.2).toFixed(1)), 0.5);
                 updateSpeechSpeed(newSpeed);
                 speakResponse(`Speech speed decreased to ${newSpeed}`);
                 commandExecuted = true;
-            } else if (cmd.includes('pause more') || cmd.includes('longer pause') || cmd.includes('more pause')) {
-                const newPause = Math.min(parseFloat((settings.pauseBetweenWords + 0.5).toFixed(1)), 5.0);
+            } else if (cmd.includes('pause more') || cmd.includes('longer pause') || cmd.includes('more pause') || cmd.includes('wait longer')) {
+                const currentPause = parseFloat(settings.pauseBetweenWords) || 0.5;
+                const newPause = Math.min(parseFloat((currentPause + 0.5).toFixed(1)), 5.0);
                 updatePauseBetweenWords(newPause);
                 speakResponse(`Pause between words increased to ${newPause} seconds`);
                 commandExecuted = true;
-            } else if (cmd.includes('pause less') || cmd.includes('shorter pause') || cmd.includes('less pause')) {
-                const newPause = Math.max(parseFloat((settings.pauseBetweenWords - 0.5).toFixed(1)), 0.5);
+            } else if (cmd.includes('pause less') || cmd.includes('shorter pause') || cmd.includes('less pause') || cmd.includes('wait less')) {
+                const currentPause = parseFloat(settings.pauseBetweenWords) || 0.5;
+                const newPause = Math.max(parseFloat((currentPause - 0.5).toFixed(1)), 0.5);
                 updatePauseBetweenWords(newPause);
                 speakResponse(`Pause between words decreased to ${newPause} seconds`);
                 commandExecuted = true;
-            } else if (cmd.includes('voice commands off') || cmd.includes('voice command off') || cmd.includes('disable voice commands')) {
+            } else if (cmd.includes('voice commands off') || cmd.includes('voice command off') || cmd.includes('disable voice commands') || cmd.includes('turn off voice')) {
                 settings.speakVoiceCommands = false;
                 updateVoiceCommandSetting(false);
                 // Don't speak this response since they just turned off voice responses
                 commandExecuted = true;
-            } else if (cmd.includes('voice commands on') || cmd.includes('voice command on') || cmd.includes('enable voice commands')) {
+            } else if (cmd.includes('voice commands on') || cmd.includes('voice command on') || cmd.includes('enable voice commands') || cmd.includes('turn on voice')) {
                 settings.speakVoiceCommands = true;
                 updateVoiceCommandSetting(true);
                 speakResponse('Voice command speech enabled');
@@ -1625,55 +1624,64 @@
             }, 50);
         }
 
-        function speakCompletePhraseWithRestart(text) {
-            console.log('🔊 SPEAKING COMPLETE PHRASE:', text);
+        function forceSpeakPhrase(text) {
+            console.log('🔊 FORCE SPEAK PHRASE STARTING:', text);
             
-            // FIXED: Don't stop recognition - let it run in background
-            // This prevents the feedback loop issue by not interfering with mic
-            
-            // FIXED: Cancel any existing speech but preserve mic access
-            speechSynth.cancel();
-            
-            setTimeout(() => {
-                if (speechSynth.speaking) {
-                    speechSynth.cancel();
-                }
+            // FIXED: Aggressive speech synthesis forcing
+            try {
+                // Stop everything first
+                speechSynth.cancel();
                 
-                try {
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
-                    utterance.pitch = 1.0;
-                    utterance.volume = 0.8; // FIXED: Slightly lower volume to prevent feedback
-                    utterance.lang = 'en-US';
-                    
-                    utterance.onstart = function() {
-                        console.log('✅ SPEECH STARTED FOR COMPLETE PHRASE:', text);
-                        updateStatus(`🔊 Speaking: "${text}"`);
-                    };
-                    
-                    utterance.onend = function() {
-                        console.log('✅ SPEECH COMPLETED FOR COMPLETE PHRASE:', text);
-                        updateStatus('🎤 Ready for next phrase - speak clearly');
-                    };
-                    
-                    utterance.onerror = function(event) {
-                        console.error('❌ Speech synthesis error:', event.error);
-                        updateStatus('🎤 Ready for next phrase - speak clearly');
-                    };
-                    
-                    // FIXED: Ensure speech system is ready
-                    if (speechSynth.paused) {
-                        speechSynth.resume();
+                // Wait a moment then speak
+                setTimeout(() => {
+                    try {
+                        speechSynth.cancel(); // Double cancel
+                        
+                        const utterance = new SpeechSynthesisUtterance(text);
+                        utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
+                        utterance.pitch = 1.2; // Slightly higher pitch for clarity
+                        utterance.volume = 1.0; // Full volume
+                        utterance.lang = 'en-US';
+                        
+                        utterance.onstart = function() {
+                            console.log('✅ FORCE SPEECH STARTED:', text);
+                            updateStatus(`🔊 Speaking: "${text}"`);
+                        };
+                        
+                        utterance.onend = function() {
+                            console.log('✅ FORCE SPEECH COMPLETED:', text);
+                            updateStatus('🎤 Ready for next phrase - speak clearly');
+                        };
+                        
+                        utterance.onerror = function(event) {
+                            console.error('❌ FORCE SPEECH ERROR:', event.error);
+                            updateStatus(`❌ Speech error: ${event.error} - Try again`);
+                        };
+                        
+                        // FIXED: Multiple attempts to ensure speech works
+                        if (speechSynth.paused) speechSynth.resume();
+                        
+                        console.log('🎤 FORCE SPEAKING NOW:', text);
+                        speechSynth.speak(utterance);
+                        
+                        // FIXED: Backup attempt if first fails
+                        setTimeout(() => {
+                            if (!speechSynth.speaking) {
+                                console.log('🔄 BACKUP SPEECH ATTEMPT');
+                                speechSynth.speak(new SpeechSynthesisUtterance(text));
+                            }
+                        }, 500);
+                        
+                    } catch (innerError) {
+                        console.error('❌ INNER SPEECH ERROR:', innerError);
+                        updateStatus('❌ Speech synthesis failed - check audio settings');
                     }
-                    
-                    console.log('🎤 SPEAKING COMPLETE PHRASE WITH RATE:', utterance.rate, 'VOLUME:', utterance.volume);
-                    speechSynth.speak(utterance);
-                    
-                } catch (e) {
-                    console.error('❌ Speech synthesis setup error:', e);
-                    updateStatus('🎤 Ready for next phrase - speak clearly');
-                }
-            }, 100);
+                }, 200);
+                
+            } catch (outerError) {
+                console.error('❌ OUTER SPEECH ERROR:', outerError);
+                updateStatus('❌ Speech system error - check browser audio permissions');
+            }
         }
 
         function speakTextInput() {
@@ -1765,8 +1773,14 @@
                             }
                         }, 200);
                     } else {
-                        // FIXED: Don't restart voice commands every time - only if needed
-                        if (microphonePermissionGranted && isInitialized && !isVoiceCommandListening && !isListening) {
+                        // FIXED: Only start voice commands if not already initialized
+                        if (microphonePermissionGranted && isInitialized && !voiceCommandsInitialized && !isListening) {
+                            console.log('🎙️ Starting voice commands for first time');
+                            setTimeout(() => {
+                                initializeVoiceCommandsWithPermissions();
+                            }, 300);
+                        } else if (voiceCommandsInitialized && !isVoiceCommandListening && !isListening) {
+                            console.log('🎙️ Restarting existing voice commands');
                             setTimeout(() => {
                                 startVoiceCommands();
                             }, 300);
@@ -2394,13 +2408,23 @@
                             lat: position.coords.latitude,
                             lon: position.coords.longitude
                         };
+                        console.log('✅ Got precise location:', userLocation);
                     },
                     function(error) {
-                        userLocation = { lat: 40.7128, lon: -74.0060 }; // NYC fallback
+                        console.log('❌ Location error, using Wentzville, MO:', error);
+                        // FIXED: Use actual Wentzville, MO coordinates
+                        userLocation = { lat: 38.8117, lon: -90.8529 };
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 300000 // 5 minutes
                     }
                 );
             } else {
-                userLocation = { lat: 40.7128, lon: -74.0060 };
+                // FIXED: Default to Wentzville, MO (your location)
+                userLocation = { lat: 38.8117, lon: -90.8529 };
+                console.log('📍 Using default Wentzville, MO location');
             }
         }
 
