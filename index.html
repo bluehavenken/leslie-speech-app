@@ -1168,36 +1168,40 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    let finalTranscript = '';
-                    let interimTranscript = '';
+                    // FIXED: Only process the very last final result to prevent cascading
+                    let finalResult = null;
+                    let interimText = '';
                     
-                    // FIXED: Process ALL results to get complete transcript
-                    for (let i = 0; i < event.results.length; i++) {
-                        if (event.results[i].isFinal) {
-                            finalTranscript += event.results[i][0].transcript;
-                        } else {
-                            interimTranscript += event.results[i][0].transcript;
+                    // Get the most recent final result only
+                    for (let i = event.results.length - 1; i >= 0; i--) {
+                        if (event.results[i].isFinal && !finalResult) {
+                            finalResult = event.results[i][0].transcript.trim();
                         }
                     }
                     
                     // Show interim results for feedback
-                    if (interimTranscript.trim()) {
-                        updateStatus(`🎤 Hearing: "${interimTranscript.trim()}"`);
+                    for (let i = 0; i < event.results.length; i++) {
+                        if (!event.results[i].isFinal) {
+                            interimText += event.results[i][0].transcript;
+                        }
                     }
                     
-                    // FIXED: Only process when we get a complete final transcript
-                    if (finalTranscript.trim()) {
-                        const completeText = finalTranscript.trim();
+                    if (interimText.trim()) {
+                        updateStatus(`🎤 Hearing: "${interimText.trim()}"`);
+                    }
+                    
+                    // FIXED: Only process final results and prevent duplicates
+                    if (finalResult && finalResult.length > 2) {
                         const now = Date.now();
                         
-                        // FIXED: Simple duplicate prevention - only check if exactly the same
-                        if (completeText !== lastProcessedPhrase || (now - lastPhraseTime) > 2000) {
-                            console.log('🎤 PROCESSING COMPLETE TRANSCRIPT:', `"${completeText}"`);
-                            lastProcessedPhrase = completeText;
+                        // FIXED: Strict duplicate prevention
+                        if (finalResult !== lastProcessedPhrase || (now - lastPhraseTime) > 5000) {
+                            console.log('🎤 PROCESSING FINAL RESULT ONCE:', `"${finalResult}"`);
+                            lastProcessedPhrase = finalResult;
                             lastPhraseTime = now;
-                            processFinalSpeech(completeText);
+                            processFinalSpeech(finalResult);
                         } else {
-                            console.log('🚫 Duplicate ignored:', completeText);
+                            console.log('🚫 Ignoring duplicate:', finalResult);
                         }
                     }
                 };
@@ -1216,26 +1220,27 @@
             
             const lowerText = text.toLowerCase().trim();
             
-            // FIXED: Better Leslie command detection - don't block on speech page
+            // FIXED: Better Leslie command detection
             const isLeslieCommand = lowerText.startsWith('hey leslie') || 
-                                  lowerText.includes('hey leslie') ||
-                                  lowerText.startsWith('leslie ');
+                                  lowerText.includes('hey leslie');
             
             if (isLeslieCommand) {
-                console.log('🎯 LESLIE COMMAND DETECTED:', text);
+                console.log('🎯 LESLIE COMMAND DETECTED - BLOCKING FROM DISPLAY:', text);
                 
-                // FIXED: Don't display Leslie commands but do process them
+                // FIXED: Completely prevent Leslie commands from appearing in display
+                updateStatus('🎤 Processing voice command...');
+                
+                // Process command immediately
                 setTimeout(() => {
                     processVoiceCommand(text);
-                }, 50);
-                
-                // Clear display for Leslie commands
-                setTimeout(() => {
-                    updateSpeechDisplaySingle('');
-                    updateStatus('🎤 Voice command processed - ready for next phrase');
                 }, 100);
                 
-                return;
+                // FIXED: Don't update display at all for Leslie commands
+                setTimeout(() => {
+                    updateStatus('🎤 Ready for next phrase');
+                }, 500);
+                
+                return; // Exit early - don't process as regular speech
             }
             
             console.log('✅ REGULAR SPEECH - PROCESSING:', text);
@@ -1243,80 +1248,87 @@
         }
         
         function processCompletePhrase(text) {
-            console.log('🎙️ PROCESSING COMPLETE PHRASE FOR DISPLAY AND SPEECH:', text);
+            console.log('🎙️ PROCESSING COMPLETE PHRASE:', text);
             
-            // FIXED: Clear any existing display first to prevent cascading
-            updateSpeechDisplaySingle('');
+            // FIXED: Completely clear display first
+            const recognizedTextEl = document.getElementById('recognizedText');
+            if (recognizedTextEl) {
+                recognizedTextEl.innerHTML = '';
+            }
             
-            // FIXED: Display the complete phrase immediately
+            // FIXED: Add phrase to display with single update
             setTimeout(() => {
                 updateSpeechDisplaySingle(text);
                 updateStatus(`✅ Captured: "${text}" - Now speaking...`);
                 
-                // FIXED: Speak the phrase after display is updated
-                setTimeout(() => {
-                    speakPhraseQuickly(text);
-                }, 200);
+                // FIXED: Speak immediately after display update
+                speakPhraseQuickly(text);
             }, 100);
         }
 
-        // FIXED: Simple, working speech function
+        // FIXED: Reliable speech function that will actually speak
         function speakPhraseQuickly(text) {
-            console.log('🔊 SPEAKING PHRASE:', text);
+            console.log('🔊 ATTEMPTING TO SPEAK:', text);
             
+            // FIXED: Force stop any existing speech
             if (isSpeaking) {
-                console.log('🔊 Stopping current speech for new phrase');
                 speechSynth.cancel();
                 isSpeaking = false;
             }
             
+            // Set speaking flag
             isSpeaking = true;
             
             try {
-                // FIXED: Clear speech queue
-                speechSynth.cancel();
+                // FIXED: Force speech synthesis to be ready
+                if (speechSynth.paused) {
+                    speechSynth.resume();
+                }
                 
-                // FIXED: Small delay to ensure cancel completes
+                // Create speech utterance
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
+                utterance.pitch = 1.0;
+                utterance.volume = 1.0;
+                utterance.lang = 'en-US';
+                
+                let hasStarted = false;
+                
+                utterance.onstart = function() {
+                    hasStarted = true;
+                    console.log('✅ SPEECH STARTED SUCCESSFULLY:', text);
+                    updateStatus(`🔊 Speaking: "${text}"`);
+                };
+                
+                utterance.onend = function() {
+                    console.log('✅ SPEECH COMPLETED SUCCESSFULLY:', text);
+                    isSpeaking = false;
+                    updateStatus('🎤 Listening - Ready for next phrase');
+                };
+                
+                utterance.onerror = function(event) {
+                    console.error('❌ SPEECH ERROR:', event.error);
+                    isSpeaking = false;
+                    updateStatus('❌ Speech failed - ready for next phrase');
+                };
+                
+                // FIXED: Start speech immediately
+                console.log('🎤 STARTING SPEECH NOW:', text);
+                speechSynth.speak(utterance);
+                
+                // FIXED: Backup check in case speech fails silently
                 setTimeout(() => {
-                    if (!isSpeaking) return; // Check if still should speak
-                    
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    utterance.rate = parseFloat(settings.speechSpeed) || 1.0;
-                    utterance.pitch = 1.0;
-                    utterance.volume = 1.0;
-                    utterance.lang = 'en-US';
-                    
-                    utterance.onstart = function() {
-                        console.log('✅ SPEECH STARTED:', text);
-                        updateStatus(`🔊 Speaking: "${text}"`);
-                    };
-                    
-                    utterance.onend = function() {
-                        console.log('✅ SPEECH COMPLETED:', text);
+                    if (!hasStarted && isSpeaking) {
+                        console.log('⚠️ Speech failed to start - clearing flag and showing error');
                         isSpeaking = false;
-                        updateStatus('🎤 Listening - Ready for next phrase');
-                    };
-                    
-                    utterance.onerror = function(event) {
-                        console.error('❌ SPEECH ERROR:', event.error);
-                        isSpeaking = false;
-                        updateStatus('🎤 Listening - Speech error, ready for next phrase');
-                    };
-                    
-                    // FIXED: Ensure speech synthesis is ready
-                    if (speechSynth.paused) {
-                        speechSynth.resume();
+                        updateStatus('❌ Speech failed to start - ready for next phrase');
                     }
-                    
-                    console.log('🎤 STARTING SPEECH SYNTHESIS:', text);
-                    speechSynth.speak(utterance);
-                    
-                }, 100);
+                }, 2000);
                 
             } catch (error) {
-                console.error('❌ SPEECH SYNTHESIS ERROR:', error);
+                console.error('❌ SPEECH SETUP ERROR:', error);
                 isSpeaking = false;
-                updateStatus('🎤 Listening - Speech failed, ready for next phrase');
+                updateStatus('❌ Speech setup failed - ready for next phrase');
             }
         }
 
