@@ -1171,63 +1171,79 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    let allInterimText = '';
-                    let allFinalText = '';
-                    
-                    // Collect all results
-                    for (let i = 0; i < event.results.length; i++) {
-                        const transcript = event.results[i][0].transcript;
-                        if (event.results[i].isFinal) {
-                            allFinalText += transcript + ' ';
-                        } else {
-                            allInterimText += transcript;
-                        }
+                    // Skip if already processing a phrase
+                    if (isProcessingCurrentPhrase) {
+                        return;
                     }
                     
-                    // Show interim results while speaking
-                    if (allInterimText) {
-                        const combinedText = (allFinalText + allInterimText).trim();
-                        updateStatus(`🎤 Listening: "${combinedText}"...`);
+                    // Get the most recent, complete result
+                    let latestTranscript = '';
+                    let isLatestFinal = false;
+                    
+                    if (event.results.length > 0) {
+                        const latestResult = event.results[event.results.length - 1];
+                        latestTranscript = latestResult[0].transcript.trim();
+                        isLatestFinal = latestResult.isFinal;
                     }
                     
-                    // Handle final results
-                    if (allFinalText) {
-                        allFinalText = allFinalText.trim();
-                        console.log('🎤 Final result received:', allFinalText);
-                        
-                        // Use pauseBetweenWords setting as the time to wait for next word
-                        const waitTime = settings.pauseBetweenWords * 1000; // Convert to milliseconds
-                        updateStatus(`🎤 Heard: "${allFinalText}" - Waiting ${settings.pauseBetweenWords}s for next word...`);
-                        
-                        // Clear existing timeout
-                        if (speechTimeout) {
-                            clearTimeout(speechTimeout);
-                        }
-                        
-                        // Wait for the pause between words duration
-                        speechTimeout = setTimeout(() => {
-                            if (!isSpeaking && !isProcessingCurrentPhrase) {
-                                isProcessingCurrentPhrase = true;
-                                console.log('🎯 No more words detected, processing phrase:', allFinalText);
-                                processCompletePhrase(allFinalText);
-                                
-                                setTimeout(() => {
-                                    isProcessingCurrentPhrase = false;
-                                    if (currentPage === 'speech' && isListening) {
+                    if (latestTranscript) {
+                        if (isLatestFinal) {
+                            // Final result - start the pause timer
+                            console.log('🎤 Final result received:', latestTranscript);
+                            const waitTime = settings.pauseBetweenWords * 1000;
+                            updateStatus(`🎤 Phrase: "${latestTranscript}" - Waiting ${settings.pauseBetweenWords}s for next word...`);
+                            
+                            // Clear existing timeout
+                            if (speechTimeout) {
+                                clearTimeout(speechTimeout);
+                            }
+                            
+                            // Wait for pause between words duration
+                            speechTimeout = setTimeout(() => {
+                                if (!isSpeaking && !isProcessingCurrentPhrase) {
+                                    // Check for duplicates before processing
+                                    const now = Date.now();
+                                    const isDuplicate = latestTranscript.toLowerCase() === lastProcessedPhrase.toLowerCase() && 
+                                                       (now - lastPhraseTime) < 3000;
+                                    
+                                    if (!isDuplicate) {
+                                        isProcessingCurrentPhrase = true;
+                                        console.log('🎯 Processing unique phrase:', latestTranscript);
+                                        lastProcessedPhrase = latestTranscript;
+                                        lastPhraseTime = now;
+                                        
+                                        updateSpeechDisplay(latestTranscript);
+                                        updateStatus(`✅ Speaking: "${latestTranscript}"`);
+                                        speakText(latestTranscript);
+                                        
+                                        setTimeout(() => {
+                                            isProcessingCurrentPhrase = false;
+                                            if (currentPage === 'speech' && isListening) {
+                                                updateStatus('🎤 Ready for next phrase!');
+                                            }
+                                        }, 500);
+                                    } else {
+                                        console.log('🚫 Ignoring duplicate phrase:', latestTranscript);
                                         updateStatus('🎤 Ready for next phrase!');
                                     }
-                                }, 500);
-                            }
-                        }, waitTime);
+                                }
+                            }, waitTime);
+                            
+                        } else {
+                            // Interim result - just show we're listening
+                            updateStatus(`🎤 Listening: "${latestTranscript}"...`);
+                        }
                     }
                 };
                 
                 function processCompletePhrase(text) {
+                    // This function is no longer needed since we handle everything in onresult
+                    // But keeping it for any voice command processing
                     if (!text || text.length <= 2 || isSpeaking) return;
                     
-                    console.log('🎯 Processing complete phrase:', `"${text}"`);
+                    console.log('🎯 Processing phrase for voice commands:', `"${text}"`);
                     
-                    // Check for voice commands
+                    // Check for voice commands only
                     const lowerText = text.toLowerCase();
                     const isLeslieCommand = lowerText.includes('hey leslie') || 
                                           lowerText.includes('hey less') ||
@@ -1240,26 +1256,10 @@
                         return;
                     }
                     
-                    // Check for duplicates - be more strict about duplicates
-                    const now = Date.now();
-                    const isDuplicate = text.toLowerCase() === lastProcessedPhrase.toLowerCase() && 
-                                       (now - lastPhraseTime) < 5000; // 5 second window
-                    
-                    if (!isDuplicate) {
-                        console.log('✅ Processing new complete phrase:', text);
-                        lastProcessedPhrase = text;
-                        lastPhraseTime = now;
-                        
-                        updateSpeechDisplay(text);
-                        updateStatus(`✅ Speaking: "${text}"`);
-                        
-                        // Speak the complete phrase back immediately
-                        speakText(text);
-                        
-                    } else {
-                        console.log('🚫 Ignoring duplicate phrase:', text);
-                        updateStatus('🎤 Ready for next phrase');
-                    }
+                    // For regular phrases, just update display and speak
+                    updateSpeechDisplay(text);
+                    updateStatus(`✅ Speaking: "${text}"`);
+                    speakText(text);
                 }
                 
                 console.log('✅ Speech recognition set up successfully');
@@ -2000,7 +2000,7 @@
                 if (!text || text === '') {
                     recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for your next phrase...</div>';
                 } else {
-                    // Simply show the current phrase - no cascading, no history accumulation
+                    // Clear previous content and show only the current phrase
                     const html = `<div class="final-phrase" style="font-size: 18px; font-weight: bold; border: 2px solid #0099cc; padding: 12px; margin-bottom: 8px; background-color: #e3f2fd;">
                                     ✅ CAPTURED: ${text}
                                  </div>
