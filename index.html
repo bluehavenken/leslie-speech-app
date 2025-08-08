@@ -1176,46 +1176,53 @@
                         return;
                     }
                     
-                    // Get the latest result
-                    let interimTranscript = '';
-                    let finalTranscript = '';
+                    // Build complete transcript from all results
+                    let completeTranscript = '';
+                    let hasNewFinal = false;
                     
-                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                    for (let i = 0; i < event.results.length; i++) {
                         const transcript = event.results[i][0].transcript;
                         if (event.results[i].isFinal) {
-                            finalTranscript += transcript;
+                            completeTranscript += transcript + ' ';
+                            hasNewFinal = true;
                         } else {
-                            interimTranscript += transcript;
+                            // Show interim results
+                            const interimText = completeTranscript + transcript;
+                            if (interimText.trim()) {
+                                updateStatus(`🎤 Listening: "${interimText.trim()}" - Keep speaking...`);
+                            }
                         }
                     }
                     
-                    // Show interim results as user speaks
-                    if (interimTranscript) {
-                        updateStatus(`🎤 Listening: "${interimTranscript}" - Keep speaking...`);
-                    }
-                    
-                    // Handle final results
-                    if (finalTranscript) {
-                        finalTranscript = finalTranscript.trim();
-                        console.log('🎤 Final transcript received:', finalTranscript);
+                    // If we have new final results, start/restart the completion timer
+                    if (hasNewFinal) {
+                        completeTranscript = completeTranscript.trim();
+                        
+                        // Store the current accumulated phrase
+                        completePhraseBuffer = completeTranscript;
+                        
+                        console.log('🎤 Adding to phrase buffer:', completeTranscript);
+                        updateStatus(`🎤 Building phrase: "${completeTranscript}" - Continue speaking or pause 4 seconds to finish...`);
                         
                         // Clear existing timeout
                         if (speechTimeout) {
                             clearTimeout(speechTimeout);
                         }
                         
-                        // Wait 2 seconds after final result for complete phrase
+                        // Wait 4 seconds after the last final result
                         speechTimeout = setTimeout(() => {
-                            if (finalTranscript && !isSpeaking && !isProcessingCurrentPhrase) {
+                            if (completePhraseBuffer && !isSpeaking && !isProcessingCurrentPhrase) {
                                 isProcessingCurrentPhrase = true;
                                 
-                                console.log('🎯 Processing complete phrase:', finalTranscript);
-                                updateStatus(`✅ Complete phrase: "${finalTranscript}" - Speaking back...`);
+                                const finalPhrase = completePhraseBuffer.trim();
+                                console.log('🎯 Processing accumulated phrase after 4 second pause:', finalPhrase);
+                                updateStatus(`✅ Complete phrase: "${finalPhrase}" - Speaking back...`);
                                 
                                 // Process the complete phrase
-                                processCompletePhrase(finalTranscript);
+                                processCompletePhrase(finalPhrase);
                                 
-                                // Reset for next phrase after processing
+                                // Reset everything for next phrase
+                                completePhraseBuffer = '';
                                 setTimeout(() => {
                                     isProcessingCurrentPhrase = false;
                                     if (currentPage === 'speech' && isListening) {
@@ -1223,7 +1230,7 @@
                                     }
                                 }, 1500);
                             }
-                        }, 2000); // 2 second delay after final result
+                        }, 4000); // 4 second delay to catch complete phrases
                     }
                 };
                 
@@ -1924,6 +1931,7 @@
                 // Reset all state variables before starting
                 isListening = false;
                 isProcessingCurrentPhrase = false;
+                completePhraseBuffer = '';
                 if (speechTimeout) {
                     clearTimeout(speechTimeout);
                     speechTimeout = null;
@@ -2031,6 +2039,7 @@
             
             // Clear speech recognition state
             isProcessingCurrentPhrase = false;
+            completePhraseBuffer = '';
             if (speechTimeout) {
                 clearTimeout(speechTimeout);
                 speechTimeout = null;
