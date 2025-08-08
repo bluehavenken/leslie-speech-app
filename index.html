@@ -899,7 +899,7 @@
                 </div>
                 <div class="settings-section">
                     <div class="settings-title">Pause Between Words</div>
-                    <div class="settings-description">How long to wait after you finish speaking before processing your phrase (helps with slower speech patterns and thinking pauses)</div>
+                    <div class="settings-description">How long to wait between individual words before considering the phrase complete (helps with slower speech patterns where there are longer pauses between words)</div>
                     <input type="range" class="slider" id="pauseBetweenWordsSlider" min="0.5" max="5" step="0.5" value="0.5">
                     <div class="setting-value" id="pauseBetweenWordsValue">0.5 seconds</div>
                 </div>
@@ -1171,56 +1171,54 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // Skip if already processing a phrase
-                    if (isProcessingCurrentPhrase) {
-                        return;
-                    }
+                    let allInterimText = '';
+                    let allFinalText = '';
                     
-                    // Get the most recent result
-                    let currentTranscript = '';
-                    let isFinal = false;
-                    
-                    // Just get the latest, most complete result
-                    if (event.results.length > 0) {
-                        const latestResult = event.results[event.results.length - 1];
-                        currentTranscript = latestResult[0].transcript.trim();
-                        isFinal = latestResult.isFinal;
-                    }
-                    
-                    // Show what we're hearing in real-time
-                    if (currentTranscript) {
-                        if (isFinal) {
-                            // Final result - use the pauseBetweenWords setting for timing
-                            console.log('🎤 Final result received:', currentTranscript);
-                            const pauseTime = (settings.pauseBetweenWords * 1000); // Convert to milliseconds
-                            updateStatus(`🎤 Heard: "${currentTranscript}" - Waiting ${settings.pauseBetweenWords}s for more...`);
-                            
-                            // Clear any existing timeout
-                            if (speechTimeout) {
-                                clearTimeout(speechTimeout);
-                            }
-                            
-                            // Use the pauseBetweenWords setting to determine wait time
-                            speechTimeout = setTimeout(() => {
-                                if (currentTranscript && !isSpeaking && !isProcessingCurrentPhrase) {
-                                    isProcessingCurrentPhrase = true;
-                                    console.log('🎯 Processing phrase after pause:', currentTranscript);
-                                    processCompletePhrase(currentTranscript);
-                                    
-                                    // Quick reset
-                                    setTimeout(() => {
-                                        isProcessingCurrentPhrase = false;
-                                        if (currentPage === 'speech' && isListening) {
-                                            updateStatus('🎤 Ready for next phrase!');
-                                        }
-                                    }, 500); // Much faster reset
-                                }
-                            }, pauseTime); // Use the pauseBetweenWords setting
-                            
+                    // Collect all results
+                    for (let i = 0; i < event.results.length; i++) {
+                        const transcript = event.results[i][0].transcript;
+                        if (event.results[i].isFinal) {
+                            allFinalText += transcript + ' ';
                         } else {
-                            // Interim result - show we're listening
-                            updateStatus(`🎤 Listening: "${currentTranscript}"...`);
+                            allInterimText += transcript;
                         }
+                    }
+                    
+                    // Show interim results while speaking
+                    if (allInterimText) {
+                        const combinedText = (allFinalText + allInterimText).trim();
+                        updateStatus(`🎤 Listening: "${combinedText}"...`);
+                    }
+                    
+                    // Handle final results
+                    if (allFinalText) {
+                        allFinalText = allFinalText.trim();
+                        console.log('🎤 Final result received:', allFinalText);
+                        
+                        // Use pauseBetweenWords setting as the time to wait for next word
+                        const waitTime = settings.pauseBetweenWords * 1000; // Convert to milliseconds
+                        updateStatus(`🎤 Heard: "${allFinalText}" - Waiting ${settings.pauseBetweenWords}s for next word...`);
+                        
+                        // Clear existing timeout
+                        if (speechTimeout) {
+                            clearTimeout(speechTimeout);
+                        }
+                        
+                        // Wait for the pause between words duration
+                        speechTimeout = setTimeout(() => {
+                            if (!isSpeaking && !isProcessingCurrentPhrase) {
+                                isProcessingCurrentPhrase = true;
+                                console.log('🎯 No more words detected, processing phrase:', allFinalText);
+                                processCompletePhrase(allFinalText);
+                                
+                                setTimeout(() => {
+                                    isProcessingCurrentPhrase = false;
+                                    if (currentPage === 'speech' && isListening) {
+                                        updateStatus('🎤 Ready for next phrase!');
+                                    }
+                                }, 500);
+                            }
+                        }, waitTime);
                     }
                 };
                 
@@ -2636,7 +2634,7 @@
                 slider.value = value;
             }
             
-            console.log(`🔧 Pause Between Words setting updated to: ${value} seconds (for speech recognition timing)`);
+            console.log(`🔧 Pause Between Words setting updated to: ${value} seconds (time between individual words)`);
             saveSettings();
         }
 
