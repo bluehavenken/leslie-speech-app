@@ -1296,108 +1296,76 @@
         function processCompletePhrase(text) {
             console.log('🎙️ *** PROCESSING COMPLETE PHRASE ***:', text);
             
-            // Clear display first
-            const recognizedTextEl = document.getElementById('recognizedText');
-            if (recognizedTextEl) {
-                recognizedTextEl.innerHTML = '';
-                console.log('✅ Display cleared for new phrase');
-            }
+            // FIXED: Single display update - no flickering
+            updateSpeechDisplaySingle(text);
+            updateStatus(`✅ Captured: "${text}" - Attempting speech...`);
             
-            // Update display and attempt speech
-            setTimeout(() => {
-                console.log('🎙️ *** UPDATING DISPLAY AND ATTEMPTING SPEECH ***');
-                updateSpeechDisplaySingle(text);
-                updateStatus(`✅ Captured: "${text}" - Attempting speech...`);
-                
-                // FIXED: Direct speech attempt with logging
-                console.log('🔊 *** CALLING speakPhraseQuickly ***');
-                speakPhraseQuickly(text);
-                console.log('🔊 *** speakPhraseQuickly CALL COMPLETED ***');
-            }, 100);
+            // FIXED: Immediate speech attempt
+            console.log('🔊 *** CALLING speakPhraseQuickly ***');
+            speakPhraseQuickly(text);
+            console.log('🔊 *** speakPhraseQuickly CALL COMPLETED ***');
         }
 
-        // FIXED: Simple debugging speech function
+        // FIXED: Click-to-speak button approach for browser restrictions
         function speakPhraseQuickly(text) {
             console.log('🔊 SPEECH ATTEMPT - TEXT:', text);
             console.log('🔊 SPEECH ATTEMPT - isSpeaking:', isSpeaking);
-            console.log('🔊 SPEECH ATTEMPT - lastSpokenText:', lastSpokenText);
             console.log('🔊 SPEECH ATTEMPT - speechSynth available:', !!speechSynth);
             
-            // FIXED: Simpler blocking logic
+            // FIXED: Try direct speech first, fallback to user interaction
             if (isSpeaking && lastSpokenText === text) {
                 console.log('🚫 EXACT SAME TEXT ALREADY SPEAKING');
                 return;
             }
             
-            // Clear any existing speech
-            try {
-                speechSynth.cancel();
-                console.log('✅ Speech queue cancelled');
-            } catch (e) {
-                console.error('❌ Error cancelling speech:', e);
-            }
-            
-            // Set flags
+            // Clear existing speech
+            speechSynth.cancel();
             isSpeaking = true;
             lastSpokenText = text;
-            console.log('🔊 FLAGS SET - isSpeaking: true, lastSpokenText:', text);
+            
+            // FIXED: Try automatic speech first
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            utterance.lang = 'en-US';
+            
+            let speechWorked = false;
+            
+            utterance.onstart = function() {
+                speechWorked = true;
+                console.log('✅ *** AUTOMATIC SPEECH STARTED ***:', text);
+                updateStatus(`🔊 Speaking: "${text}"`);
+            };
+            
+            utterance.onend = function() {
+                console.log('✅ *** SPEECH COMPLETED ***:', text);
+                isSpeaking = false;
+                lastSpokenText = '';
+                updateStatus('🎤 Listening - Ready for next phrase');
+            };
+            
+            utterance.onerror = function(event) {
+                console.error('❌ *** AUTOMATIC SPEECH FAILED ***:', event.error);
+                speechWorked = false;
+                isSpeaking = false;
+                lastSpokenText = '';
+                // FIXED: Show click-to-speak button on error
+                showClickToSpeakButton(text);
+            };
             
             try {
-                // FIXED: Direct speech synthesis
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = 1.0;
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
-                utterance.lang = 'en-US';
-                
-                console.log('🔊 UTTERANCE CREATED:', utterance);
-                
-                utterance.onstart = function() {
-                    console.log('✅ *** SPEECH ACTUALLY STARTED ***:', text);
-                    updateStatus(`🔊 Speaking: "${text}"`);
-                };
-                
-                utterance.onend = function() {
-                    console.log('✅ *** SPEECH COMPLETED ***:', text);
-                    isSpeaking = false;
-                    lastSpokenText = '';
-                    updateStatus('🎤 Listening - Ready for next phrase');
-                };
-                
-                utterance.onerror = function(event) {
-                    console.error('❌ *** SPEECH ERROR ***:', event.error, 'for text:', text);
-                    isSpeaking = false;
-                    lastSpokenText = '';
-                    updateStatus('🎤 Speech error - ready for next phrase');
-                };
-                
-                // FIXED: Check speech synthesis state
-                console.log('🔊 speechSynth.speaking:', speechSynth.speaking);
-                console.log('🔊 speechSynth.pending:', speechSynth.pending);
-                console.log('🔊 speechSynth.paused:', speechSynth.paused);
-                
-                if (speechSynth.paused) {
-                    speechSynth.resume();
-                    console.log('✅ Speech synthesis resumed');
-                }
-                
-                // FIXED: Attempt speech
-                console.log('🔊 *** CALLING speechSynth.speak() ***');
+                if (speechSynth.paused) speechSynth.resume();
                 speechSynth.speak(utterance);
-                console.log('✅ speechSynth.speak() called successfully');
+                console.log('✅ speechSynth.speak() called');
                 
-                // FIXED: Check if speech was queued
+                // FIXED: Check if automatic speech worked
                 setTimeout(() => {
-                    console.log('🔊 POST-SPEAK CHECK:');
-                    console.log('  - speechSynth.speaking:', speechSynth.speaking);
-                    console.log('  - speechSynth.pending:', speechSynth.pending);
-                    console.log('  - isSpeaking flag:', isSpeaking);
-                    
-                    if (!speechSynth.speaking && !speechSynth.pending && isSpeaking) {
-                        console.log('⚠️ *** SPEECH FAILED TO START - CLEARING FLAGS ***');
+                    if (!speechWorked && isSpeaking) {
+                        console.log('⚠️ *** AUTOMATIC SPEECH FAILED - SHOWING BUTTON ***');
                         isSpeaking = false;
                         lastSpokenText = '';
-                        updateStatus('❌ Speech failed to start - ready for next phrase');
+                        showClickToSpeakButton(text);
                     }
                 }, 1000);
                 
@@ -1405,8 +1373,83 @@
                 console.error('❌ *** SPEECH SETUP FAILED ***:', error);
                 isSpeaking = false;
                 lastSpokenText = '';
-                updateStatus('❌ Speech setup failed - ready for next phrase');
+                showClickToSpeakButton(text);
             }
+        }
+        
+        // FIXED: Show click-to-speak button for browser restrictions
+        function showClickToSpeakButton(text) {
+            console.log('🔊 *** SHOWING CLICK-TO-SPEAK BUTTON ***:', text);
+            
+            // Remove any existing button
+            const existingButton = document.getElementById('clickToSpeakBtn');
+            if (existingButton) {
+                existingButton.remove();
+            }
+            
+            // Create click-to-speak button
+            const speakBtn = document.createElement('button');
+            speakBtn.id = 'clickToSpeakBtn';
+            speakBtn.textContent = `🔊 CLICK TO SPEAK: "${text}"`;
+            speakBtn.style.cssText = `
+                position: fixed;
+                top: 20%;
+                left: 50%;
+                transform: translateX(-50%);
+                background: #0099cc;
+                color: white;
+                border: none;
+                padding: 15px 25px;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+                z-index: 10000;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                max-width: 90%;
+                text-align: center;
+            `;
+            
+            speakBtn.onclick = function() {
+                console.log('✅ *** USER CLICKED SPEAK BUTTON ***');
+                speakBtn.remove();
+                
+                // FIXED: User interaction speech
+                const userUtterance = new SpeechSynthesisUtterance(text);
+                userUtterance.rate = 1.0;
+                userUtterance.pitch = 1.0;
+                userUtterance.volume = 1.0;
+                userUtterance.lang = 'en-US';
+                
+                userUtterance.onstart = function() {
+                    console.log('✅ *** USER INTERACTION SPEECH STARTED ***');
+                    updateStatus(`🔊 Speaking: "${text}"`);
+                };
+                
+                userUtterance.onend = function() {
+                    console.log('✅ *** USER INTERACTION SPEECH COMPLETED ***');
+                    updateStatus('🎤 Listening - Ready for next phrase');
+                };
+                
+                userUtterance.onerror = function(event) {
+                    console.error('❌ *** USER INTERACTION SPEECH FAILED ***:', event.error);
+                    updateStatus('❌ Speech unavailable - ready for next phrase');
+                };
+                
+                if (speechSynth.paused) speechSynth.resume();
+                speechSynth.speak(userUtterance);
+            };
+            
+            document.body.appendChild(speakBtn);
+            updateStatus('🔊 Click the button above to speak the phrase');
+            
+            // FIXED: Auto-remove button after 10 seconds
+            setTimeout(() => {
+                if (document.body.contains(speakBtn)) {
+                    speakBtn.remove();
+                    updateStatus('🎤 Listening - Ready for next phrase');
+                }
+            }, 10000);
         }
 
         // === VOICE COMMANDS ===
