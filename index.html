@@ -1091,11 +1091,11 @@
                 recognition.maxAlternatives = 1;
 
                 recognition.onstart = function() {
+                    console.log('🎤 *** RECOGNITION STARTED SUCCESSFULLY ***');
                     isListening = true;
                     updateListenButton();
-                    updateStatus(`🎤 Listening - Speak now!`);
+                    updateStatus(`🎤 Listening - Speak clearly now!`);
                     resetSessionTimeout();
-                    console.log('🎤 Speech recognition started successfully');
                 };
 
                 recognition.onend = function() {
@@ -1755,11 +1755,12 @@
                     }
                     
                     if (pageId === 'speech') {
+                        console.log('📄 Entering speech page - setting up recognition');
                         stopVoiceCommands();
                         clearSpeechText();
                         isSpeaking = false;
                         
-                        // Reset recognition state
+                        // Reset all recognition state
                         if (recognition) {
                             try {
                                 recognition.abort();
@@ -1769,46 +1770,25 @@
                             isListening = false;
                         }
                         
-                        // Auto-start listening when entering speech page
+                        // Simple auto-start sequence
                         setTimeout(() => {
                             if (currentPage === 'speech') {
+                                console.log('🎤 Auto-starting recognition...');
                                 const listenButton = document.getElementById('listenButton');
                                 if (listenButton) {
-                                    // Set button to show "STOP LISTENING" immediately
                                     listenButton.textContent = 'STOP LISTENING';
                                     listenButton.className = 'control-btn btn-stop';
                                 }
-                                updateStatus('🎤 Requesting microphone access...');
+                                updateStatus('🎤 Initializing speech recognition...');
                                 
-                                // Request microphone permission and start
-                                navigator.mediaDevices.getUserMedia({ audio: true })
-                                    .then(stream => {
-                                        // Permission granted
-                                        microphonePermissionGranted = true;
-                                        stream.getTracks().forEach(track => track.stop());
-                                        console.log('✅ Microphone permission granted');
-                                        
-                                        // Now start recognition
-                                        setTimeout(() => {
-                                            if (currentPage === 'speech') {
-                                                updateStatus('🎤 Starting recognition...');
-                                                startListening();
-                                            }
-                                        }, 500);
-                                    })
-                                    .catch(error => {
-                                        console.error('❌ Microphone permission denied:', error);
-                                        microphonePermissionGranted = false;
-                                        updateStatus('❌ Microphone permission denied - please allow access and try again');
-                                        
-                                        // Reset button
-                                        if (listenButton) {
-                                            listenButton.textContent = 'START TALKING';
-                                            listenButton.className = 'control-btn btn-listen';
-                                        }
-                                    });
+                                // Just start recognition directly
+                                setTimeout(() => {
+                                    if (currentPage === 'speech') {
+                                        startListening();
+                                    }
+                                }, 1000);
                             }
-                        }, 300);
+                        }, 500);
                     } else {
                         if (microphonePermissionGranted && isInitialized && !voiceCommandsInitialized && !isListening) {
                             setTimeout(() => {
@@ -1902,9 +1882,11 @@
         }
 
         function startListening() {
+            console.log('🎤 startListening() called');
+            
             if (!recognition) {
-                console.log('❌ No recognition object available');
-                updateStatus('❌ Speech recognition not available');
+                console.error('❌ No recognition object available');
+                updateStatus('❌ Speech recognition not available - refresh page');
                 return;
             }
             
@@ -1913,57 +1895,95 @@
                 return;
             }
             
-            try {
-                if (isVoiceCommandListening) {
-                    console.log('🛑 Stopping voice commands');
-                    stopVoiceCommands();
+            // Stop voice commands if running
+            if (isVoiceCommandListening) {
+                console.log('🛑 Stopping voice commands to start main recognition');
+                stopVoiceCommands();
+            }
+            
+            // Request microphone permission first
+            console.log('🎤 Requesting microphone permission...');
+            updateStatus('🎤 Requesting microphone access...');
+            
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    console.log('✅ Microphone permission granted');
+                    microphonePermissionGranted = true;
+                    stream.getTracks().forEach(track => track.stop());
                     
+                    // Now start recognition
+                    updateStatus('🎤 Starting speech recognition...');
                     setTimeout(() => {
                         attemptStartRecognition();
                     }, 500);
-                } else {
-                    attemptStartRecognition();
-                }
-                
-            } catch (error) {
-                console.error('❌ Error in startListening:', error);
-                updateStatus('❌ Setup error - Try clicking START TALKING again');
-            }
+                })
+                .catch(error => {
+                    console.error('❌ Microphone permission denied:', error);
+                    microphonePermissionGranted = false;
+                    updateStatus('❌ Microphone permission denied - please allow access');
+                    
+                    // Reset button state
+                    const listenButton = document.getElementById('listenButton');
+                    if (listenButton) {
+                        listenButton.textContent = 'START TALKING';
+                        listenButton.className = 'control-btn btn-listen';
+                    }
+                });
         }
         
         function attemptStartRecognition() {
+            console.log('🎤 attemptStartRecognition called');
+            
             if (isListening) {
                 console.log('🚫 Already listening - aborting');
                 return;
             }
             
-            // Ensure we have microphone permission first
-            if (!microphonePermissionGranted) {
-                console.log('❌ No microphone permission');
-                updateStatus('❌ Microphone permission required');
+            // Check if recognition object exists
+            if (!recognition) {
+                console.error('❌ No recognition object available');
+                updateStatus('❌ Speech recognition not initialized');
                 return;
             }
             
             try {
                 console.log('🎤 Attempting to start recognition...');
                 updateStatus('🎤 Starting speech recognition...');
+                
+                // Force reset recognition state
+                isListening = false;
+                
                 recognition.start();
-                console.log('✅ Recognition start command sent');
+                console.log('✅ Recognition.start() called successfully');
+                
             } catch (error) {
                 console.error('❌ Recognition start failed:', error.message);
                 isListening = false;
                 updateListenButton();
                 
-                if (error.message.includes('already started')) {
+                if (error.message.includes('already started') || error.message.includes('already-started')) {
+                    console.log('🔄 Recognition already started, forcing reset...');
                     updateStatus('🔄 Recognition conflict - resetting...');
-                    setTimeout(() => {
-                        forceResetRecognition();
-                    }, 1000);
+                    try {
+                        recognition.abort();
+                        setTimeout(() => {
+                            try {
+                                recognition.start();
+                                console.log('✅ Recognition restarted after abort');
+                            } catch (e) {
+                                console.error('❌ Restart after abort failed:', e.message);
+                                updateStatus('❌ Recognition restart failed - try refreshing page');
+                            }
+                        }, 500);
+                    } catch (abortError) {
+                        console.error('❌ Abort failed:', abortError.message);
+                        updateStatus('❌ Recognition reset failed - try refreshing page');
+                    }
                 } else if (error.message.includes('not-allowed')) {
                     updateStatus('❌ Microphone permission denied - please allow access');
                     microphonePermissionGranted = false;
                 } else {
-                    updateStatus('❌ Recognition error: ' + error.message + ' - Try again');
+                    updateStatus('❌ Recognition error: ' + error.message);
                 }
             }
         }
