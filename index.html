@@ -927,7 +927,7 @@
     </div>
 
     <script>
-        // === GLOBAL VARIABLES ===
+        // Global variables
         let recognition = null;
         let voiceCommandRecognition = null;
         let isListening = false;
@@ -955,11 +955,12 @@
         let lastPhraseTime = 0;
         let lastVoiceCommand = '';
         let lastVoiceCommandTime = 0;
-        const DUPLICATE_TIMEOUT = 2000; // Reduced for faster response
-        const COMMAND_TIMEOUT = 1000; // Reduced for faster response
+        const DUPLICATE_TIMEOUT = 2000;
+        const COMMAND_TIMEOUT = 1000;
         let speechTimeoutId = null;
         let pendingPhrase = null;
-        let isSpeaking = false; // FIXED: Track speech state
+        let isSpeaking = false;
+        let lastSpokenText = ''; // FIXED: Track last spoken text to prevent cascading
         
         // Settings
         let settings = {
@@ -1201,13 +1202,6 @@
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // FIXED: Don't process any results if currently speaking (prevents cascading)
-                    if (isSpeaking) {
-                        console.log('🚫 SPEAKING IN PROGRESS - IGNORING RESULT TO PREVENT CASCADE');
-                        return;
-                    }
-                    
-                    // FIXED: Only process the very last final result to prevent cascading
                     let finalResult = null;
                     let interimText = '';
                     
@@ -1218,31 +1212,29 @@
                         }
                     }
                     
-                    // Show interim results for feedback (only if not speaking)
-                    if (!isSpeaking) {
-                        for (let i = 0; i < event.results.length; i++) {
-                            if (!event.results[i].isFinal) {
-                                interimText += event.results[i][0].transcript;
-                            }
-                        }
-                        
-                        if (interimText.trim()) {
-                            updateStatus(`🎤 Hearing: "${interimText.trim()}"`);
+                    // Show interim results for feedback
+                    for (let i = 0; i < event.results.length; i++) {
+                        if (!event.results[i].isFinal) {
+                            interimText += event.results[i][0].transcript;
                         }
                     }
                     
-                    // FIXED: Only process final results and prevent duplicates
-                    if (finalResult && finalResult.length > 2 && !isSpeaking) {
+                    if (interimText.trim()) {
+                        updateStatus(`🎤 Hearing: "${interimText.trim()}"`);
+                    }
+                    
+                    // FIXED: Process final results (allow new phrases to interrupt speech)
+                    if (finalResult && finalResult.length > 2) {
                         const now = Date.now();
                         
-                        // FIXED: Strict duplicate prevention
-                        if (finalResult !== lastProcessedPhrase || (now - lastPhraseTime) > 5000) {
-                            console.log('🎤 PROCESSING SINGLE FINAL RESULT:', `"${finalResult}"`);
+                        // FIXED: Only prevent exact duplicates, allow new phrases
+                        if (finalResult !== lastProcessedPhrase || (now - lastPhraseTime) > 3000) {
+                            console.log('🎤 PROCESSING NEW FINAL RESULT:', `"${finalResult}"`);
                             lastProcessedPhrase = finalResult;
                             lastPhraseTime = now;
                             processFinalSpeech(finalResult);
                         } else {
-                            console.log('🚫 Ignoring duplicate:', finalResult);
+                            console.log('🚫 Ignoring exact duplicate:', finalResult);
                         }
                     }
                 };
@@ -1302,48 +1294,51 @@
         }
         
         function processCompletePhrase(text) {
-            console.log('🎙️ PROCESSING SINGLE COMPLETE PHRASE:', text);
+            console.log('🎙️ PROCESSING COMPLETE PHRASE FOR SPEECH:', text);
             
-            // FIXED: Only process if not already speaking to prevent cascading
-            if (isSpeaking) {
-                console.log('🚫 ALREADY SPEAKING - BLOCKING PHRASE PROCESSING');
-                return;
-            }
+            // FIXED: Don't block processing - allow new phrases to interrupt old speech
             
-            // FIXED: Clear display first, then update once
+            // Clear display first
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
                 recognizedTextEl.innerHTML = '';
             }
             
-            // FIXED: Single display update
+            // Update display
             setTimeout(() => {
                 updateSpeechDisplaySingle(text);
                 updateStatus(`✅ Captured: "${text}" - Now speaking...`);
                 
-                // FIXED: Single speech attempt
+                // FIXED: Always attempt speech for new phrases
                 speakPhraseQuickly(text);
             }, 100);
         }
 
-        // FIXED: Single, non-cascading speech function
+        // FIXED: Speech function that actually speaks without cascading
         function speakPhraseQuickly(text) {
-            console.log('🔊 SINGLE SPEECH ATTEMPT:', text);
+            console.log('🔊 ATTEMPTING SPEECH:', text);
             
-            // FIXED: Absolutely prevent multiple speech attempts
-            if (isSpeaking) {
-                console.log('🚫 ALREADY SPEAKING - BLOCKING CASCADING SPEECH');
-                return; // Critical: Exit early to prevent cascading
+            // FIXED: Only block if the SAME text is already being spoken
+            if (isSpeaking && lastSpokenText === text) {
+                console.log('🚫 SAME TEXT ALREADY SPEAKING - PREVENTING DUPLICATE');
+                return;
             }
             
-            // Set flag immediately
-            isSpeaking = true;
+            // FIXED: Cancel any existing speech and start new one
+            if (isSpeaking) {
+                console.log('🔊 CANCELLING PREVIOUS SPEECH FOR NEW PHRASE');
+                speechSynth.cancel();
+            }
             
-            // FIXED: Force clear speech queue completely
-            speechSynth.cancel();
+            // Set flags
+            isSpeaking = true;
+            lastSpokenText = text;
             
             try {
-                // FIXED: Single utterance creation
+                // FIXED: Force clear speech queue
+                speechSynth.cancel();
+                
+                // FIXED: Create and speak utterance
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.rate = 1.0;
                 utterance.pitch = 1.0;
@@ -1354,32 +1349,35 @@
                 
                 utterance.onstart = function() {
                     speechStarted = true;
-                    console.log('✅ SINGLE SPEECH STARTED:', text);
+                    console.log('✅ SPEECH STARTED:', text);
                     updateStatus(`🔊 Speaking: "${text}"`);
                 };
                 
                 utterance.onend = function() {
-                    console.log('✅ SINGLE SPEECH ENDED:', text);
-                    isSpeaking = false; // Clear flag when done
+                    console.log('✅ SPEECH COMPLETED:', text);
+                    isSpeaking = false;
+                    lastSpokenText = '';
                     updateStatus('🎤 Listening - Ready for next phrase');
                 };
                 
                 utterance.onerror = function(event) {
                     console.error('❌ SPEECH ERROR:', event.error);
-                    isSpeaking = false; // Clear flag on error
+                    isSpeaking = false;
+                    lastSpokenText = '';
                     updateStatus('🎤 Listening - Ready for next phrase');
                 };
                 
-                // FIXED: Speak once only
+                // FIXED: Ensure synth is ready and speak
                 if (speechSynth.paused) speechSynth.resume();
                 speechSynth.speak(utterance);
-                console.log('🎤 SINGLE UTTERANCE QUEUED:', text);
+                console.log('🎤 SPEECH QUEUED SUCCESSFULLY:', text);
                 
-                // FIXED: Backup check if speech fails to start
+                // FIXED: Check if speech started
                 setTimeout(() => {
                     if (!speechStarted && isSpeaking) {
-                        console.log('⚠️ Speech failed to start - clearing flag');
+                        console.log('⚠️ Speech may have failed to start');
                         isSpeaking = false;
+                        lastSpokenText = '';
                         updateStatus('🎤 Speech failed - ready for next phrase');
                     }
                 }, 2000);
@@ -1387,6 +1385,7 @@
             } catch (error) {
                 console.error('❌ SPEECH SETUP ERROR:', error);
                 isSpeaking = false;
+                lastSpokenText = '';
                 updateStatus('🎤 Speech failed - ready for next phrase');
             }
         }
@@ -2144,9 +2143,10 @@
             lastPhraseTime = 0;
             pendingPhrase = null;
             
-            // FIXED: Force stop ALL speech to prevent cascading
+            // FIXED: Clear speech but don't prevent future speech
             speechSynth.cancel();
             isSpeaking = false;
+            lastSpokenText = '';
             
             lastVoiceCommand = '';
             lastVoiceCommandTime = 0;
@@ -2161,7 +2161,7 @@
                 recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Say something and your phrase will appear here...</div>';
             }
             
-            console.log('🗑️ ALL SPEECH CLEARED - CASCADING PREVENTED');
+            console.log('🗑️ SPEECH DATA CLEARED - READY FOR NEW SPEECH');
         }
 
         function clearTextInput() {
