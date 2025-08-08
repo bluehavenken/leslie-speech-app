@@ -1203,21 +1203,18 @@
                     }
                 };
 
-        // FIXED: Nuclear anti-cascade system - completely block all recognition during speech
+        // FIXED: Echo detection system - detect and filter out our own speech
         let phraseFragments = [];
         let fragmentTimer = null;
         let lastFragmentTime = 0;
-        let isSpeechBlocked = false; // NEW: Complete speech blocking flag
+        let currentlySpokenText = ''; // Track what we're currently saying
+        let lastSpokenText = ''; // Track what we just said
+        let speechStartTime = 0;
         const FRAGMENT_COLLECTION_TIME = 2000;
         const MAX_FRAGMENT_GAP = 800;
+        const ECHO_SIMILARITY_THRESHOLD = 0.7; // 70% similarity = echo
 
                 recognition.onresult = function(event) {
-                    // NUCLEAR: Block ALL recognition results if speech is in progress OR blocked
-                    if (speechInProgress || isSpeechBlocked) {
-                        console.log('🚫 NUCLEAR BLOCK: Completely ignoring ALL recognition during speech');
-                        return;
-                    }
-                    
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
@@ -1228,20 +1225,37 @@
                     for (let i = event.resultIndex; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
                             newFinalResult = event.results[i][0].transcript.trim();
-                            console.log('🎤 NEW FRAGMENT:', `"${newFinalResult}"`);
+                            console.log('🎤 RAW RESULT:', `"${newFinalResult}"`);
                         } else {
                             latestInterim += event.results[i][0].transcript;
                         }
                     }
                     
-                    // Show interim feedback
-                    if (latestInterim.trim() && !speechInProgress && !isSpeechBlocked) {
-                        const currentPhrase = phraseFragments.join(' ') + ' ' + latestInterim.trim();
-                        updateStatus(`🎤 Speaking: "${currentPhrase.trim()}" - Continue or pause...`);
+                    // FIXED: Echo detection - check if this matches what we're speaking
+                    if (newFinalResult) {
+                        const similarity = calculateTextSimilarity(newFinalResult, currentlySpokenText);
+                        const recentSimilarity = calculateTextSimilarity(newFinalResult, lastSpokenText);
+                        
+                        if (similarity > ECHO_SIMILARITY_THRESHOLD || recentSimilarity > ECHO_SIMILARITY_THRESHOLD) {
+                            console.log('🚫 ECHO DETECTED - FILTERING OUT:', `"${newFinalResult}"`, 'Similarity:', similarity.toFixed(2));
+                            updateStatus('🚫 Echo filtered - Ready for your voice');
+                            return; // Skip this result completely
+                        }
+                        
+                        console.log('✅ REAL USER SPEECH:', `"${newFinalResult}"`, 'Similarity:', similarity.toFixed(2));
                     }
                     
-                    // FIXED: Collect final result fragments for complete phrases
-                    if (newFinalResult && newFinalResult.length > 0 && !speechInProgress && !isSpeechBlocked) {
+                    // Show interim feedback for real speech
+                    if (latestInterim.trim() && !speechInProgress) {
+                        const interimSimilarity = calculateTextSimilarity(latestInterim.trim(), currentlySpokenText);
+                        if (interimSimilarity < ECHO_SIMILARITY_THRESHOLD) {
+                            const currentPhrase = phraseFragments.join(' ') + ' ' + latestInterim.trim();
+                            updateStatus(`🎤 Speaking: "${currentPhrase.trim()}" - Continue or pause...`);
+                        }
+                    }
+                    
+                    // FIXED: Process verified real speech only
+                    if (newFinalResult && newFinalResult.length > 0 && !speechInProgress) {
                         const now = Date.now();
                         
                         // Check if this fragment belongs to current phrase
@@ -1251,7 +1265,7 @@
                             lastFragmentTime = now;
                             
                             const buildingPhrase = phraseFragments.join(' ');
-                            console.log('🎤 FRAGMENT ADDED:', `"${newFinalResult}"`, 'BUILDING:', `"${buildingPhrase}"`);
+                            console.log('🎤 REAL FRAGMENT ADDED:', `"${newFinalResult}"`, 'BUILDING:', `"${buildingPhrase}"`);
                             updateStatus(`🎤 Building: "${buildingPhrase}" - Continue or pause to complete...`);
                             
                             // Reset completion timer
@@ -1261,9 +1275,9 @@
                             
                             // Set timer to process complete phrase after pause
                             fragmentTimer = setTimeout(() => {
-                                if (phraseFragments.length > 0 && !speechInProgress && !isSpeechBlocked) {
+                                if (phraseFragments.length > 0 && !speechInProgress) {
                                     const completePhrase = phraseFragments.join(' ').trim();
-                                    console.log('🎤 COMPLETE PHRASE FROM FRAGMENTS:', `"${completePhrase}"`);
+                                    console.log('🎤 COMPLETE REAL PHRASE:', `"${completePhrase}"`);
                                     
                                     // Clear fragments before processing
                                     phraseFragments = [];
@@ -1280,7 +1294,7 @@
                             // Gap too large - process previous phrase and start new one
                             if (phraseFragments.length > 0) {
                                 const previousPhrase = phraseFragments.join(' ').trim();
-                                console.log('🎤 PROCESSING PREVIOUS PHRASE:', `"${previousPhrase}"`);
+                                console.log('🎤 PROCESSING PREVIOUS REAL PHRASE:', `"${previousPhrase}"`);
                                 
                                 if (previousPhrase.length > 2) {
                                     processCompletedPhrase(previousPhrase);
@@ -1291,11 +1305,38 @@
                             phraseFragments = [newFinalResult];
                             lastFragmentTime = now;
                             
-                            console.log('🎤 STARTING NEW PHRASE:', `"${newFinalResult}"`);
+                            console.log('🎤 STARTING NEW REAL PHRASE:', `"${newFinalResult}"`);
                             updateStatus(`🎤 New phrase: "${newFinalResult}" - Continue...`);
                         }
                     }
                 };
+                
+                // FIXED: Text similarity calculation function
+                function calculateTextSimilarity(text1, text2) {
+                    if (!text1 || !text2) return 0;
+                    
+                    const str1 = text1.toLowerCase().trim();
+                    const str2 = text2.toLowerCase().trim();
+                    
+                    if (str1 === str2) return 1.0;
+                    
+                    // Simple word-based similarity
+                    const words1 = str1.split(/\s+/);
+                    const words2 = str2.split(/\s+/);
+                    
+                    let matches = 0;
+                    const maxLength = Math.max(words1.length, words2.length);
+                    
+                    if (maxLength === 0) return 0;
+                    
+                    for (let word of words1) {
+                        if (words2.includes(word)) {
+                            matches++;
+                        }
+                    }
+                    
+                    return matches / maxLength;
+                }
                 
                 console.log('✅ Speech recognition set up successfully');
                 
@@ -1354,11 +1395,12 @@
                 lastPhraseTime = now;
                 
                 updateSpeechDisplaySingle(text);
-                updateStatus(`✅ Captured complete phrase: "${text}" - Speaking...`);
+                updateStatus(`✅ Captured: "${text}"`);
                 
-                // FIXED: Use new clean speech system
-                console.log('🔊 *** CALLING speakTextCleanly for complete phrase ***');
-                speakTextCleanly(text);
+                // FIXED: NO AUTOMATIC SPEECH - Only show manual button to prevent cascading
+                console.log('🔊 SHOWING MANUAL SPEAK BUTTON TO PREVENT CASCADE');
+                showManualSpeakButton(text);
+                
             } else if (isDuplicate) {
                 console.log('🚫 IGNORING DUPLICATE PHRASE:', text);
             } else {
@@ -1536,9 +1578,9 @@
             }, 150); // Small delay for complete cancel
         }
         
-        // FIXED: Enhanced manual speak button with recognition management
+        // FIXED: Manual-only speak button to eliminate cascading
         function showManualSpeakButton(text) {
-            console.log('🔊 SHOWING ANTI-CASCADE MANUAL SPEAK BUTTON:', text);
+            console.log('🔊 SHOWING MANUAL-ONLY SPEAK BUTTON:', text);
             
             // Remove any existing button
             const existingButton = document.getElementById('manualSpeakBtn');
@@ -1548,44 +1590,33 @@
             
             const speakBtn = document.createElement('button');
             speakBtn.id = 'manualSpeakBtn';
-            speakBtn.textContent = `🔊 TAP TO SPEAK: "${text}"`;
+            speakBtn.textContent = `🔊 CLICK TO HEAR: "${text}"`;
             speakBtn.style.cssText = `
                 position: fixed;
-                top: 25%;
+                top: 30%;
                 left: 50%;
                 transform: translateX(-50%);
                 background: #28a745;
                 color: white;
                 border: none;
-                padding: 15px 25px;
-                border-radius: 10px;
-                font-size: 16px;
+                padding: 20px 30px;
+                border-radius: 12px;
+                font-size: 18px;
                 font-weight: bold;
                 cursor: pointer;
                 z-index: 10000;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                box-shadow: 0 6px 20px rgba(0,0,0,0.3);
                 max-width: 90%;
                 text-align: center;
+                animation: pulse 2s infinite;
             `;
             
             speakBtn.onclick = function() {
-                console.log('✅ USER CLICKED ANTI-CASCADE MANUAL SPEAK');
+                console.log('✅ USER CLICKED - MANUAL SPEECH ONLY');
                 speakBtn.remove();
                 
-                // CRITICAL: Stop recognition during manual speech
-                let wasListening = isListening;
-                if (isListening && recognition) {
-                    try {
-                        recognition.abort();
-                        isListening = false;
-                    } catch (e) {
-                        console.log('Error stopping recognition for manual speech:', e);
-                    }
-                }
-                
-                // FIXED: Force clean manual speech
+                // FIXED: Simple manual speech without any automatic cascading
                 speechSynth.cancel();
-                speechInProgress = false;
                 
                 setTimeout(() => {
                     const manualUtterance = new SpeechSynthesisUtterance(text);
@@ -1595,52 +1626,17 @@
                     manualUtterance.lang = 'en-US';
                     
                     manualUtterance.onstart = function() {
-                        console.log('✅ ANTI-CASCADE MANUAL SPEECH STARTED');
-                        updateStatus(`🔊 Speaking: "${text}" - Recognition paused`);
+                        console.log('✅ MANUAL SPEECH STARTED');
+                        updateStatus(`🔊 Speaking: "${text}"`);
                     };
                     
                     manualUtterance.onend = function() {
-                        console.log('✅ ANTI-CASCADE MANUAL SPEECH COMPLETED');
-                        
-                        // CRITICAL: Restart recognition after manual speech
-                        if (wasListening && currentPage === 'speech' && recognition) {
-                            setTimeout(() => {
-                                if (currentPage === 'speech' && !isListening && !speechInProgress) {
-                                    try {
-                                        recognition.start();
-                                        isListening = true;
-                                        updateListenButton();
-                                        updateStatus('🎤 Listening - Ready for next phrase');
-                                    } catch (e) {
-                                        updateStatus('❌ Click START TALKING to continue');
-                                        updateListenButton();
-                                    }
-                                }
-                            }, 500);
-                        } else {
-                            updateStatus('🎤 Ready for next phrase');
-                        }
+                        console.log('✅ MANUAL SPEECH COMPLETED');
+                        updateStatus('🎤 Listening - Ready for your next phrase');
                     };
                     
                     manualUtterance.onerror = function(event) {
-                        console.error('❌ ANTI-CASCADE MANUAL SPEECH FAILED:', event.error);
-                        
-                        // Restart recognition on error
-                        if (wasListening && currentPage === 'speech' && recognition) {
-                            setTimeout(() => {
-                                if (currentPage === 'speech' && !isListening) {
-                                    try {
-                                        recognition.start();
-                                        isListening = true;
-                                        updateListenButton();
-                                    } catch (e) {
-                                        updateStatus('❌ Click START TALKING to continue');
-                                        updateListenButton();
-                                    }
-                                }
-                            }, 500);
-                        }
-                        
+                        console.error('❌ MANUAL SPEECH FAILED:', event.error);
                         updateStatus('❌ Speech unavailable - ready for next phrase');
                     };
                     
@@ -1651,15 +1647,15 @@
             };
             
             document.body.appendChild(speakBtn);
-            updateStatus('🔊 Click the button above to hear the phrase');
+            updateStatus('🔊 Click the green button to hear your phrase');
             
-            // Auto-remove after 10 seconds
+            // Auto-remove after 15 seconds
             setTimeout(() => {
                 if (document.body.contains(speakBtn)) {
                     speakBtn.remove();
-                    updateStatus('🎤 Listening - Ready for next phrase');
+                    updateStatus('🎤 Listening - Ready for your next phrase');
                 }
-            }, 10000);
+            }, 15000);
         }
 
         // === VOICE COMMANDS ===
@@ -2384,14 +2380,16 @@
             lastProcessedPhrase = '';
             lastPhraseTime = 0;
             
-            // FIXED: Clear nuclear anti-cascade system
+            // FIXED: Clear echo detection system
             if (fragmentTimer) {
                 clearTimeout(fragmentTimer);
                 fragmentTimer = null;
             }
             phraseFragments = [];
             lastFragmentTime = 0;
-            isSpeechBlocked = false; // Clear nuclear block
+            currentlySpokenText = '';
+            lastSpokenText = '';
+            speechStartTime = 0;
             
             // FIXED: Clear speech cleanly
             speechSynth.cancel();
@@ -2412,7 +2410,7 @@
                 existingButton.remove();
             }
             
-            console.log('🗑️ SPEECH DATA CLEARED - NUCLEAR SYSTEM RESET');
+            console.log('🗑️ SPEECH DATA CLEARED - ECHO DETECTION SYSTEM RESET');
         }
 
         function clearTextInput() {
