@@ -960,8 +960,7 @@
         // Speech recognition state
         let isProcessingCurrentPhrase = false;
         let speechTimeout = null;
-        let lastFinalTranscript = '';
-        let isWaitingForComplete = false;
+        let lastResultLength = 0;
         
         // Settings
         let settings = {
@@ -1167,66 +1166,62 @@
                     updateStatus('❌ Error: ' + event.error);
                 };
 
-                // FIXED: Clean phrase capture with no cascading
+                // FIXED: Wait much longer for complete phrases
                 let speechTimeout = null;
-                let lastFinalTranscript = '';
-                let isWaitingForComplete = false;
+                let allTranscriptParts = [];
+                let lastResultLength = 0;
 
                 recognition.onresult = function(event) {
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // Skip if we're already processing
-                    if (isProcessingCurrentPhrase || isWaitingForComplete) {
+                    // Skip if already processing a phrase
+                    if (isProcessingCurrentPhrase) {
                         return;
                     }
                     
-                    // Get only the most recent final result to avoid cascading
-                    let latestFinal = '';
-                    for (let i = event.results.length - 1; i >= 0; i--) {
+                    // Collect ALL final results from this session
+                    let fullTranscript = '';
+                    for (let i = 0; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            latestFinal = event.results[i][0].transcript.trim();
-                            break;
+                            fullTranscript += event.results[i][0].transcript + ' ';
                         }
                     }
                     
-                    // Only process if we have a completely new final result
-                    if (latestFinal && latestFinal !== lastFinalTranscript) {
-                        lastFinalTranscript = latestFinal;
-                        isWaitingForComplete = true;
+                    fullTranscript = fullTranscript.trim();
+                    
+                    // Only update if we have more content than before
+                    if (fullTranscript && fullTranscript.length > lastResultLength) {
+                        lastResultLength = fullTranscript.length;
+                        console.log('🎤 Building complete phrase:', fullTranscript);
+                        updateStatus(`🎤 Listening: "${fullTranscript}" - Keep speaking or pause 5 seconds when done...`);
                         
-                        console.log('🎤 Latest final result:', latestFinal);
-                        updateStatus(`🎤 Got: "${latestFinal}" - Waiting for complete phrase...`);
-                        
-                        // Clear any existing timeout
+                        // Clear existing timeout
                         if (speechTimeout) {
                             clearTimeout(speechTimeout);
                         }
                         
-                        // Wait longer for the complete phrase
+                        // Wait 5 seconds for complete phrase - much longer delay
                         speechTimeout = setTimeout(() => {
-                            if (lastFinalTranscript && !isSpeaking && !isProcessingCurrentPhrase) {
+                            if (fullTranscript && !isSpeaking && !isProcessingCurrentPhrase) {
                                 isProcessingCurrentPhrase = true;
-                                isWaitingForComplete = false;
                                 
-                                console.log('🎯 Processing complete phrase:', lastFinalTranscript);
-                                updateStatus(`✅ Complete: "${lastFinalTranscript}" - Speaking back...`);
+                                console.log('🎯 Processing complete phrase after 5 second pause:', fullTranscript);
+                                updateStatus(`✅ Complete phrase: "${fullTranscript}" - Speaking back...`);
                                 
                                 // Process the complete phrase
-                                processCompletePhrase(lastFinalTranscript);
+                                processCompletePhrase(fullTranscript);
                                 
-                                // Reset for next phrase
+                                // Reset for next phrase after processing
                                 setTimeout(() => {
-                                    lastFinalTranscript = '';
                                     isProcessingCurrentPhrase = false;
+                                    lastResultLength = 0;
                                     if (currentPage === 'speech' && isListening) {
-                                        updateStatus('🎤 Ready for next phrase!');
+                                        updateStatus('🎤 Ready for next phrase - Speak clearly!');
                                     }
-                                }, 1000);
-                            } else {
-                                isWaitingForComplete = false;
+                                }, 2000);
                             }
-                        }, 3500); // Longer delay to ensure complete phrases
+                        }, 5000); // 5 second delay to ensure complete phrases
                     }
                 };
                 
