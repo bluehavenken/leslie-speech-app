@@ -1176,61 +1176,50 @@
                         return;
                     }
                     
-                    // Build complete transcript from all results
-                    let completeTranscript = '';
-                    let hasNewFinal = false;
+                    // Get the most recent result
+                    let currentTranscript = '';
+                    let isFinal = false;
                     
-                    for (let i = 0; i < event.results.length; i++) {
-                        const transcript = event.results[i][0].transcript;
-                        if (event.results[i].isFinal) {
-                            completeTranscript += transcript + ' ';
-                            hasNewFinal = true;
-                        } else {
-                            // Show interim results
-                            const interimText = completeTranscript + transcript;
-                            if (interimText.trim()) {
-                                updateStatus(`🎤 Listening: "${interimText.trim()}" - Keep speaking...`);
-                            }
-                        }
+                    // Just get the latest, most complete result
+                    if (event.results.length > 0) {
+                        const latestResult = event.results[event.results.length - 1];
+                        currentTranscript = latestResult[0].transcript.trim();
+                        isFinal = latestResult.isFinal;
                     }
                     
-                    // If we have new final results, start/restart the completion timer
-                    if (hasNewFinal) {
-                        completeTranscript = completeTranscript.trim();
-                        
-                        // Store the current accumulated phrase
-                        completePhraseBuffer = completeTranscript;
-                        
-                        console.log('🎤 Adding to phrase buffer:', completeTranscript);
-                        updateStatus(`🎤 Building phrase: "${completeTranscript}" - Continue speaking or pause 4 seconds to finish...`);
-                        
-                        // Clear existing timeout
-                        if (speechTimeout) {
-                            clearTimeout(speechTimeout);
-                        }
-                        
-                        // Wait 4 seconds after the last final result
-                        speechTimeout = setTimeout(() => {
-                            if (completePhraseBuffer && !isSpeaking && !isProcessingCurrentPhrase) {
-                                isProcessingCurrentPhrase = true;
-                                
-                                const finalPhrase = completePhraseBuffer.trim();
-                                console.log('🎯 Processing accumulated phrase after 4 second pause:', finalPhrase);
-                                updateStatus(`✅ Complete phrase: "${finalPhrase}" - Speaking back...`);
-                                
-                                // Process the complete phrase
-                                processCompletePhrase(finalPhrase);
-                                
-                                // Reset everything for next phrase
-                                completePhraseBuffer = '';
-                                setTimeout(() => {
-                                    isProcessingCurrentPhrase = false;
-                                    if (currentPage === 'speech' && isListening) {
-                                        updateStatus('🎤 Ready for next phrase - Speak clearly!');
-                                    }
-                                }, 1500);
+                    // Show what we're hearing in real-time
+                    if (currentTranscript) {
+                        if (isFinal) {
+                            // Final result - start quick processing timer
+                            console.log('🎤 Final result received:', currentTranscript);
+                            updateStatus(`🎤 Heard: "${currentTranscript}" - Processing...`);
+                            
+                            // Clear any existing timeout
+                            if (speechTimeout) {
+                                clearTimeout(speechTimeout);
                             }
-                        }, 4000); // 4 second delay to catch complete phrases
+                            
+                            // Quick 1.5 second processing after final result
+                            speechTimeout = setTimeout(() => {
+                                if (currentTranscript && !isSpeaking && !isProcessingCurrentPhrase) {
+                                    isProcessingCurrentPhrase = true;
+                                    console.log('🎯 Processing phrase:', currentTranscript);
+                                    processCompletePhrase(currentTranscript);
+                                    
+                                    // Quick reset
+                                    setTimeout(() => {
+                                        isProcessingCurrentPhrase = false;
+                                        if (currentPage === 'speech' && isListening) {
+                                            updateStatus('🎤 Ready for next phrase!');
+                                        }
+                                    }, 1000);
+                                }
+                            }, 1500); // Just 1.5 seconds
+                            
+                        } else {
+                            // Interim result - show we're listening
+                            updateStatus(`🎤 Listening: "${currentTranscript}"...`);
+                        }
                     }
                 };
                 
@@ -1255,7 +1244,7 @@
                     // Check for duplicates - be more strict about duplicates
                     const now = Date.now();
                     const isDuplicate = text.toLowerCase() === lastProcessedPhrase.toLowerCase() && 
-                                       (now - lastPhraseTime) < 10000; // 10 second window
+                                       (now - lastPhraseTime) < 5000; // 5 second window
                     
                     if (!isDuplicate) {
                         console.log('✅ Processing new complete phrase:', text);
@@ -1263,9 +1252,9 @@
                         lastPhraseTime = now;
                         
                         updateSpeechDisplay(text);
-                        updateStatus(`✅ Complete phrase captured: "${text}" - Speaking back...`);
+                        updateStatus(`✅ Speaking: "${text}"`);
                         
-                        // Speak the complete phrase back
+                        // Speak the complete phrase back immediately
                         speakText(text);
                         
                     } else {
@@ -1931,7 +1920,6 @@
                 // Reset all state variables before starting
                 isListening = false;
                 isProcessingCurrentPhrase = false;
-                completePhraseBuffer = '';
                 if (speechTimeout) {
                     clearTimeout(speechTimeout);
                     speechTimeout = null;
@@ -2039,7 +2027,6 @@
             
             // Clear speech recognition state
             isProcessingCurrentPhrase = false;
-            completePhraseBuffer = '';
             if (speechTimeout) {
                 clearTimeout(speechTimeout);
                 speechTimeout = null;
