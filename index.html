@@ -1294,99 +1294,118 @@
         }
         
         function processCompletePhrase(text) {
-            console.log('🎙️ PROCESSING COMPLETE PHRASE FOR SPEECH:', text);
-            
-            // FIXED: Don't block processing - allow new phrases to interrupt old speech
+            console.log('🎙️ *** PROCESSING COMPLETE PHRASE ***:', text);
             
             // Clear display first
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
                 recognizedTextEl.innerHTML = '';
+                console.log('✅ Display cleared for new phrase');
             }
             
-            // Update display
+            // Update display and attempt speech
             setTimeout(() => {
+                console.log('🎙️ *** UPDATING DISPLAY AND ATTEMPTING SPEECH ***');
                 updateSpeechDisplaySingle(text);
-                updateStatus(`✅ Captured: "${text}" - Now speaking...`);
+                updateStatus(`✅ Captured: "${text}" - Attempting speech...`);
                 
-                // FIXED: Always attempt speech for new phrases
+                // FIXED: Direct speech attempt with logging
+                console.log('🔊 *** CALLING speakPhraseQuickly ***');
                 speakPhraseQuickly(text);
+                console.log('🔊 *** speakPhraseQuickly CALL COMPLETED ***');
             }, 100);
         }
 
-        // FIXED: Speech function that actually speaks without cascading
+        // FIXED: Simple debugging speech function
         function speakPhraseQuickly(text) {
-            console.log('🔊 ATTEMPTING SPEECH:', text);
+            console.log('🔊 SPEECH ATTEMPT - TEXT:', text);
+            console.log('🔊 SPEECH ATTEMPT - isSpeaking:', isSpeaking);
+            console.log('🔊 SPEECH ATTEMPT - lastSpokenText:', lastSpokenText);
+            console.log('🔊 SPEECH ATTEMPT - speechSynth available:', !!speechSynth);
             
-            // FIXED: Only block if the SAME text is already being spoken
+            // FIXED: Simpler blocking logic
             if (isSpeaking && lastSpokenText === text) {
-                console.log('🚫 SAME TEXT ALREADY SPEAKING - PREVENTING DUPLICATE');
+                console.log('🚫 EXACT SAME TEXT ALREADY SPEAKING');
                 return;
             }
             
-            // FIXED: Cancel any existing speech and start new one
-            if (isSpeaking) {
-                console.log('🔊 CANCELLING PREVIOUS SPEECH FOR NEW PHRASE');
+            // Clear any existing speech
+            try {
                 speechSynth.cancel();
+                console.log('✅ Speech queue cancelled');
+            } catch (e) {
+                console.error('❌ Error cancelling speech:', e);
             }
             
             // Set flags
             isSpeaking = true;
             lastSpokenText = text;
+            console.log('🔊 FLAGS SET - isSpeaking: true, lastSpokenText:', text);
             
             try {
-                // FIXED: Force clear speech queue
-                speechSynth.cancel();
-                
-                // FIXED: Create and speak utterance
+                // FIXED: Direct speech synthesis
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.rate = 1.0;
                 utterance.pitch = 1.0;
                 utterance.volume = 1.0;
                 utterance.lang = 'en-US';
                 
-                let speechStarted = false;
+                console.log('🔊 UTTERANCE CREATED:', utterance);
                 
                 utterance.onstart = function() {
-                    speechStarted = true;
-                    console.log('✅ SPEECH STARTED:', text);
+                    console.log('✅ *** SPEECH ACTUALLY STARTED ***:', text);
                     updateStatus(`🔊 Speaking: "${text}"`);
                 };
                 
                 utterance.onend = function() {
-                    console.log('✅ SPEECH COMPLETED:', text);
+                    console.log('✅ *** SPEECH COMPLETED ***:', text);
                     isSpeaking = false;
                     lastSpokenText = '';
                     updateStatus('🎤 Listening - Ready for next phrase');
                 };
                 
                 utterance.onerror = function(event) {
-                    console.error('❌ SPEECH ERROR:', event.error);
+                    console.error('❌ *** SPEECH ERROR ***:', event.error, 'for text:', text);
                     isSpeaking = false;
                     lastSpokenText = '';
-                    updateStatus('🎤 Listening - Ready for next phrase');
+                    updateStatus('🎤 Speech error - ready for next phrase');
                 };
                 
-                // FIXED: Ensure synth is ready and speak
-                if (speechSynth.paused) speechSynth.resume();
-                speechSynth.speak(utterance);
-                console.log('🎤 SPEECH QUEUED SUCCESSFULLY:', text);
+                // FIXED: Check speech synthesis state
+                console.log('🔊 speechSynth.speaking:', speechSynth.speaking);
+                console.log('🔊 speechSynth.pending:', speechSynth.pending);
+                console.log('🔊 speechSynth.paused:', speechSynth.paused);
                 
-                // FIXED: Check if speech started
+                if (speechSynth.paused) {
+                    speechSynth.resume();
+                    console.log('✅ Speech synthesis resumed');
+                }
+                
+                // FIXED: Attempt speech
+                console.log('🔊 *** CALLING speechSynth.speak() ***');
+                speechSynth.speak(utterance);
+                console.log('✅ speechSynth.speak() called successfully');
+                
+                // FIXED: Check if speech was queued
                 setTimeout(() => {
-                    if (!speechStarted && isSpeaking) {
-                        console.log('⚠️ Speech may have failed to start');
+                    console.log('🔊 POST-SPEAK CHECK:');
+                    console.log('  - speechSynth.speaking:', speechSynth.speaking);
+                    console.log('  - speechSynth.pending:', speechSynth.pending);
+                    console.log('  - isSpeaking flag:', isSpeaking);
+                    
+                    if (!speechSynth.speaking && !speechSynth.pending && isSpeaking) {
+                        console.log('⚠️ *** SPEECH FAILED TO START - CLEARING FLAGS ***');
                         isSpeaking = false;
                         lastSpokenText = '';
-                        updateStatus('🎤 Speech failed - ready for next phrase');
+                        updateStatus('❌ Speech failed to start - ready for next phrase');
                     }
-                }, 2000);
+                }, 1000);
                 
             } catch (error) {
-                console.error('❌ SPEECH SETUP ERROR:', error);
+                console.error('❌ *** SPEECH SETUP FAILED ***:', error);
                 isSpeaking = false;
                 lastSpokenText = '';
-                updateStatus('🎤 Speech failed - ready for next phrase');
+                updateStatus('❌ Speech setup failed - ready for next phrase');
             }
         }
 
