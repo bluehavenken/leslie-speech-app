@@ -899,8 +899,8 @@
                 </div>
                 <div class="settings-section">
                     <div class="settings-title">Pause Between Words</div>
-                    <div class="settings-description">How long to wait between individual words before considering the phrase complete (helps with slower speech patterns where there are longer pauses between words)</div>
-                    <input type="range" class="slider" id="pauseBetweenWordsSlider" min="0.5" max="5" step="0.5" value="0.5">
+                    <div class="settings-description">How long to wait between individual words before considering the phrase complete (0.5s recommended for normal speech, increase for slower speech patterns)</div>
+                    <input type="range" class="slider" id="pauseBetweenWordsSlider" min="0.3" max="3" step="0.1" value="0.5">
                     <div class="setting-value" id="pauseBetweenWordsValue">0.5 seconds</div>
                 </div>
                 <div class="settings-section">
@@ -1194,49 +1194,52 @@
                     
                     if (latestTranscript) {
                         if (isLatestFinal) {
-                            // Final result - start the pause timer
+                            // Final result - use much shorter processing time
                             console.log('🎤 Final result received:', latestTranscript);
-                            const waitTime = settings.pauseBetweenWords * 1000;
-                            updateStatus(`🎤 Phrase: "${latestTranscript}" - Waiting ${settings.pauseBetweenWords}s for next word...`);
+                            
+                            // Use minimum of 0.8 seconds or the setting (much faster)
+                            const baseWaitTime = Math.min(settings.pauseBetweenWords * 1000, 800);
+                            updateStatus(`🎤 Processing "${latestTranscript}"...`);
                             
                             // Clear existing timeout
                             if (speechTimeout) {
                                 clearTimeout(speechTimeout);
                             }
                             
-                            // Wait for pause between words duration
+                            // Much faster processing
                             speechTimeout = setTimeout(() => {
                                 if (!isSpeaking && !isProcessingCurrentPhrase) {
-                                    // Check for duplicates before processing
+                                    // Quick duplicate check
                                     const now = Date.now();
                                     const isDuplicate = latestTranscript.toLowerCase() === lastProcessedPhrase.toLowerCase() && 
-                                                       (now - lastPhraseTime) < 3000;
+                                                       (now - lastPhraseTime) < 2000; // 2 second window
                                     
                                     if (!isDuplicate) {
                                         isProcessingCurrentPhrase = true;
-                                        console.log('🎯 Processing unique phrase:', latestTranscript);
+                                        console.log('🎯 Processing phrase:', latestTranscript);
                                         lastProcessedPhrase = latestTranscript;
                                         lastPhraseTime = now;
                                         
                                         updateSpeechDisplay(latestTranscript);
-                                        updateStatus(`✅ Speaking: "${latestTranscript}"`);
+                                        updateStatus(`🔊 Speaking: "${latestTranscript}"`);
                                         speakText(latestTranscript);
                                         
+                                        // Very quick reset
                                         setTimeout(() => {
                                             isProcessingCurrentPhrase = false;
                                             if (currentPage === 'speech' && isListening) {
                                                 updateStatus('🎤 Ready for next phrase!');
                                             }
-                                        }, 500);
+                                        }, 300); // Just 300ms reset
                                     } else {
                                         console.log('🚫 Ignoring duplicate phrase:', latestTranscript);
                                         updateStatus('🎤 Ready for next phrase!');
                                     }
                                 }
-                            }, waitTime);
+                            }, baseWaitTime); // Much faster processing
                             
                         } else {
-                            // Interim result - just show we're listening
+                            // Interim result - show we're listening
                             updateStatus(`🎤 Listening: "${latestTranscript}"...`);
                         }
                     }
