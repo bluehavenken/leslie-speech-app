@@ -1099,36 +1099,44 @@
                 };
 
                 recognition.onend = function() {
-                    console.log('🎤 Recognition ended unexpectedly');
+                    console.log('🎤 Recognition ended - attempting immediate restart for continuous mode');
                     isListening = false;
-                    updateListenButton();
                     
-                    // Only restart if we're still on speech page and button shows "STOP LISTENING"
+                    // Always restart immediately if we're in continuous listening mode
                     const listenButton = document.getElementById('listenButton');
                     if (currentPage === 'speech' && 
                         listenButton && 
-                        listenButton.textContent === 'STOP LISTENING' && 
-                        !isSpeaking) {
+                        listenButton.textContent === 'STOP LISTENING') {
                         
-                        console.log('🔄 Auto-restarting recognition to maintain continuous listening');
-                        setTimeout(() => {
-                            if (currentPage === 'speech' && 
-                                listenButton.textContent === 'STOP LISTENING' && 
-                                !isSpeaking && 
-                                !isListening) {
-                                
-                                try {
-                                    recognition.start();
-                                    isListening = true;
-                                    console.log('✅ Recognition restarted for continuous listening');
-                                } catch (e) {
-                                    console.error('❌ Auto-restart failed:', e.message);
-                                    updateListenButton();
-                                    updateStatus('❌ Continuous listening interrupted - click "START TALKING" to restart');
+                        console.log('🔄 Immediately restarting recognition for continuous listening');
+                        
+                        // Start immediately - no delay
+                        try {
+                            recognition.start();
+                            isListening = true;
+                            console.log('✅ Recognition immediately restarted');
+                        } catch (e) {
+                            console.error('❌ Immediate restart failed, retrying:', e.message);
+                            // If immediate restart fails, try again after brief delay
+                            setTimeout(() => {
+                                if (currentPage === 'speech' && 
+                                    listenButton.textContent === 'STOP LISTENING' && 
+                                    !isListening) {
+                                    
+                                    try {
+                                        recognition.start();
+                                        isListening = true;
+                                        console.log('✅ Recognition restarted after retry');
+                                    } catch (e2) {
+                                        console.error('❌ Restart failed completely:', e2.message);
+                                        updateListenButton();
+                                        updateStatus('❌ Continuous listening failed - click "START TALKING" to restart');
+                                    }
                                 }
-                            }
-                        }, 500);
+                            }, 200);
+                        }
                     } else {
+                        updateListenButton();
                         updateStatus('✅ Stopped listening - Click "START TALKING" to restart');
                     }
                 };
@@ -1153,58 +1161,61 @@
                     updateStatus('❌ Error: ' + event.error);
                 };
 
-                // FIXED: Continuous listening with proper phrase separation
+                // FIXED: True continuous listening with complete phrase capture
                 let currentPhrase = '';
                 let speechTimeout = null;
                 let isProcessingCurrentPhrase = false;
-                const SPEECH_COMPLETION_DELAY = 2500; // Wait 2.5 seconds for phrase completion
+                let lastProcessedText = '';
+                const SPEECH_COMPLETION_DELAY = 2500;
 
                 recognition.onresult = function(event) {
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // Skip processing if we're already processing a phrase
+                    // Skip if currently processing a phrase
                     if (isProcessingCurrentPhrase) {
                         return;
                     }
                     
-                    // Only get the LATEST final result to avoid cascading
-                    let latestFinalResult = '';
-                    
-                    // Look for the most recent final result
-                    for (let i = event.results.length - 1; i >= 0; i--) {
+                    // Build complete transcript from ALL final results in this event
+                    let completeText = '';
+                    for (let i = 0; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            latestFinalResult = event.results[i][0].transcript.trim();
-                            break;
+                            completeText += event.results[i][0].transcript + ' ';
                         }
                     }
                     
-                    // Only process if we have a new final result
-                    if (latestFinalResult && latestFinalResult !== currentPhrase) {
-                        currentPhrase = latestFinalResult;
-                        console.log('🎤 New phrase captured:', currentPhrase);
-                        updateStatus(`🎤 Captured: "${currentPhrase}" - Processing...`);
+                    completeText = completeText.trim();
+                    
+                    // Only process if we have new text that's different from last processed
+                    if (completeText && completeText !== lastProcessedText && completeText !== currentPhrase) {
+                        currentPhrase = completeText;
+                        console.log('🎤 Complete phrase building:', currentPhrase);
+                        updateStatus(`🎤 Captured: "${currentPhrase}" - Pause to finish or keep speaking...`);
                         
                         // Clear existing timeout
                         if (speechTimeout) {
                             clearTimeout(speechTimeout);
                         }
                         
-                        // Process this phrase after a brief delay
+                        // Set timeout to process complete phrase
                         speechTimeout = setTimeout(() => {
                             if (currentPhrase && !isSpeaking && !isProcessingCurrentPhrase) {
                                 isProcessingCurrentPhrase = true;
-                                console.log('🎤 Processing individual phrase:', currentPhrase);
+                                lastProcessedText = currentPhrase;
+                                console.log('🎯 Processing complete phrase:', currentPhrase);
+                                
+                                // Process the phrase
                                 processCompletePhrase(currentPhrase);
                                 
-                                // Clear for next phrase after processing
+                                // Reset for next phrase but keep listening
                                 setTimeout(() => {
                                     currentPhrase = '';
                                     isProcessingCurrentPhrase = false;
                                     if (currentPage === 'speech' && isListening) {
-                                        updateStatus('🎤 Ready for next phrase - Speak now!');
+                                        updateStatus('🎤 Continuous listening - Say your next phrase!');
                                     }
-                                }, 1000);
+                                }, 500);
                             }
                         }, SPEECH_COMPLETION_DELAY);
                     }
@@ -1259,7 +1270,7 @@
         // FIXED: Speech function that maintains continuous listening
         function speakText(text) {
             if (isSpeaking) {
-                console.log('🚫 Already speaking, skipping:', text);
+                console.log('🚫 Already speaking, queuing next:', text);
                 return;
             }
             
@@ -1268,71 +1279,63 @@
                 return;
             }
             
-            console.log('🔊 Speaking text:', text);
+            console.log('🔊 Speaking text while maintaining continuous listening:', text);
             isSpeaking = true;
             
-            // DO NOT stop recognition - keep it running continuously
-            // Just mark that we're speaking to prevent interference
+            // IMPORTANT: Do NOT stop or restart recognition - let it keep running
+            // The recognition should stay active throughout the speech
             
             // Cancel any previous speech
             speechSynth.cancel();
             
-            // Give a moment for cancellation to take effect
             setTimeout(() => {
                 try {
                     const utterance = new SpeechSynthesisUtterance(text);
                     utterance.rate = settings.speechSpeed || 1.0;
                     utterance.pitch = 1.0;
-                    utterance.volume = 1.0;
+                    utterance.volume = 0.8; // Slightly lower volume to avoid feedback
                     utterance.lang = 'en-US';
                     
                     utterance.onstart = function() {
-                        console.log('✅ Speech started:', text);
-                        updateStatus(`🔊 Speaking: "${text}" - Continue listening after...`);
+                        console.log('✅ Speaking while listening continues:', text);
+                        updateStatus(`🔊 Speaking: "${text}" (continuous listening active)`);
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ Speech completed:', text);
+                        console.log('✅ Speech finished, continuous listening continues');
                         isSpeaking = false;
                         
-                        // Resume listening status - recognition should still be running
+                        // Just update status - recognition should still be running
                         if (currentPage === 'speech' && isListening) {
-                            updateStatus('🎤 Ready for next phrase - Speak now!');
+                            setTimeout(() => {
+                                if (!isProcessingCurrentPhrase) {
+                                    updateStatus('🎤 Continuous listening - Say your next phrase!');
+                                }
+                            }, 200);
                         }
                     };
                     
                     utterance.onerror = function(event) {
-                        console.error('❌ Speech synthesis error:', event.error);
+                        console.error('❌ Speech error:', event.error);
                         isSpeaking = false;
                         
-                        // Resume listening status
                         if (currentPage === 'speech' && isListening) {
-                            updateStatus('🎤 Ready for next phrase - Speak now!');
+                            updateStatus('🎤 Continuous listening - Say your next phrase!');
                         }
                     };
                     
-                    // Ensure speech synthesis is ready
-                    if (speechSynth.paused) {
-                        speechSynth.resume();
-                    }
-                    
-                    // Start speech
+                    // Start speech synthesis
+                    if (speechSynth.paused) speechSynth.resume();
                     speechSynth.speak(utterance);
                     
-                    // Backup check to ensure speech starts
-                    setTimeout(() => {
-                        if (isSpeaking && !speechSynth.speaking) {
-                            console.log('🔄 Speech didn\'t start, retrying...');
-                            speechSynth.speak(utterance);
-                        }
-                    }, 200);
-                    
                 } catch (error) {
-                    console.error('❌ Speech synthesis creation error:', error);
+                    console.error('❌ Speech synthesis error:', error);
                     isSpeaking = false;
-                    updateStatus('❌ Speech synthesis unavailable - but still listening');
+                    if (currentPage === 'speech' && isListening) {
+                        updateStatus('🎤 Continuous listening - Say your next phrase!');
+                    }
                 }
-            }, 150);
+            }, 100);
         }
 
         // === VOICE COMMANDS ===
