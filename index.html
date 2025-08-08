@@ -1151,44 +1151,40 @@
                     updateStatus('❌ Error: ' + event.error);
                 };
 
-                // FIXED: Simple speech capture with proper timeout
-                let completeTranscript = '';
+                // FIXED: Only process final results, no cascading text
+                let finalTranscript = '';
                 let speechTimeout = null;
-                const SPEECH_COMPLETION_DELAY = 2500; // Wait 2.5 seconds after speech stops
+                const SPEECH_COMPLETION_DELAY = 1500; // Wait 1.5 seconds after final result
 
                 recognition.onresult = function(event) {
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // Build complete transcript from all final results
-                    completeTranscript = '';
-                    
-                    for (let i = 0; i < event.results.length; i++) {
+                    // Only process the LATEST final result to prevent cascading
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            completeTranscript += event.results[i][0].transcript;
-                        }
-                    }
-                    
-                    completeTranscript = completeTranscript.trim();
-                    
-                    // Show live transcript for the latest final result
-                    if (completeTranscript) {
-                        updateStatus(`🎤 "${completeTranscript}" - Continue speaking or pause to complete...`);
-                    }
-                    
-                    // Clear existing timeout
-                    if (speechTimeout) {
-                        clearTimeout(speechTimeout);
-                    }
-                    
-                    // Set timeout to process complete phrase after speech pause
-                    if (completeTranscript) {
-                        speechTimeout = setTimeout(() => {
-                            if (completeTranscript && completeTranscript.length > 2 && !isSpeaking) {
-                                console.log('🎤 Processing complete phrase:', completeTranscript);
-                                processCompletePhrase(completeTranscript);
+                            const latestFinal = event.results[i][0].transcript.trim();
+                            if (latestFinal && latestFinal !== finalTranscript) {
+                                finalTranscript = latestFinal;
+                                console.log('🎤 Final result received:', finalTranscript);
+                                
+                                // Clear any existing timeout
+                                if (speechTimeout) {
+                                    clearTimeout(speechTimeout);
+                                }
+                                
+                                // Show status but don't update display yet
+                                updateStatus(`🎤 Processing: "${finalTranscript}"`);
+                                
+                                // Process after brief delay
+                                speechTimeout = setTimeout(() => {
+                                    if (finalTranscript && !isSpeaking) {
+                                        processCompletePhrase(finalTranscript);
+                                        finalTranscript = ''; // Clear after processing
+                                    }
+                                }, SPEECH_COMPLETION_DELAY);
                             }
-                        }, SPEECH_COMPLETION_DELAY);
+                        }
                     }
                 };
                 
@@ -1238,30 +1234,36 @@
             }
         }
 
-        // FIXED: Simple, reliable speech function
+        // FIXED: Reliable speech function that always speaks back
         function speakText(text) {
             if (isSpeaking) {
                 console.log('🚫 Already speaking, skipping:', text);
                 return;
             }
             
+            if (!text || text.trim() === '') {
+                console.log('🚫 No text to speak');
+                return;
+            }
+            
             console.log('🔊 Speaking text:', text);
             isSpeaking = true;
             
-            // Stop recognition during speech
+            // Stop recognition during speech to prevent interference
             const wasListening = isListening;
             if (isListening && recognition) {
                 try {
                     recognition.abort();
                     isListening = false;
                 } catch (e) {
-                    console.log('Error stopping recognition:', e);
+                    console.log('Error stopping recognition for speech:', e);
                 }
             }
             
             // Cancel any previous speech
             speechSynth.cancel();
             
+            // Give a moment for cancellation to take effect
             setTimeout(() => {
                 try {
                     const utterance = new SpeechSynthesisUtterance(text);
@@ -1271,12 +1273,12 @@
                     utterance.lang = 'en-US';
                     
                     utterance.onstart = function() {
-                        console.log('✅ Speech started:', text);
+                        console.log('✅ Speech started successfully:', text);
                         updateStatus(`🔊 Speaking: "${text}"`);
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ Speech ended:', text);
+                        console.log('✅ Speech completed:', text);
                         isSpeaking = false;
                         
                         // Restart recognition if it was listening
@@ -1287,25 +1289,25 @@
                                         recognition.start();
                                         isListening = true;
                                         updateListenButton();
-                                        updateStatus('🎤 Listening - Ready for next phrase');
+                                        updateStatus('🎤 Ready for next phrase - Speak clearly');
                                     } catch (e) {
-                                        console.error('❌ Failed to restart:', e);
+                                        console.error('❌ Failed to restart recognition:', e);
                                         updateStatus('❌ Click START TALKING to continue');
                                         updateListenButton();
                                     }
                                 }
-                            }, 500);
+                            }, 800);
                         } else {
                             updateStatus('🎤 Ready for next phrase');
                         }
                     };
                     
                     utterance.onerror = function(event) {
-                        console.error('❌ Speech error:', event.error);
+                        console.error('❌ Speech synthesis error:', event.error);
                         isSpeaking = false;
                         updateStatus('❌ Speech failed - ready for next phrase');
                         
-                        // Restart recognition on error
+                        // Restart recognition on error if it was listening
                         if (wasListening && currentPage === 'speech') {
                             setTimeout(() => {
                                 if (currentPage === 'speech' && !isListening && !isSpeaking) {
@@ -1317,19 +1319,47 @@
                                         updateListenButton();
                                     }
                                 }
-                            }, 500);
+                            }, 800);
                         }
                     };
                     
-                    if (speechSynth.paused) speechSynth.resume();
+                    // Ensure speech synthesis is ready
+                    if (speechSynth.paused) {
+                        speechSynth.resume();
+                    }
+                    
+                    // Force speech to start
                     speechSynth.speak(utterance);
                     
+                    // Backup check to ensure speech starts
+                    setTimeout(() => {
+                        if (isSpeaking && !speechSynth.speaking) {
+                            console.log('🔄 Speech didn\'t start, retrying...');
+                            speechSynth.speak(utterance);
+                        }
+                    }, 200);
+                    
                 } catch (error) {
-                    console.error('❌ Speech creation error:', error);
+                    console.error('❌ Speech synthesis creation error:', error);
                     isSpeaking = false;
-                    updateStatus('❌ Speech unavailable - ready for next phrase');
+                    updateStatus('❌ Speech synthesis unavailable');
+                    
+                    // Restart recognition if it was listening
+                    if (wasListening && currentPage === 'speech') {
+                        setTimeout(() => {
+                            if (currentPage === 'speech' && !isListening && !isSpeaking) {
+                                try {
+                                    recognition.start();
+                                    isListening = true;
+                                    updateListenButton();
+                                } catch (e) {
+                                    updateListenButton();
+                                }
+                            }
+                        }, 500);
+                    }
                 }
-            }, 100);
+            }, 150);
         }
 
         // === VOICE COMMANDS ===
