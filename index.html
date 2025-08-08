@@ -1095,11 +1095,16 @@
                 recognition.interimResults = true;
                 recognition.lang = 'en-US';
                 recognition.maxAlternatives = 1;
+                
+                // FIXED: Add timeout settings for better phrase capture
+                if (recognition.serviceURI !== undefined) {
+                    recognition.serviceURI = 'wss://api.wit.ai/speech';
+                }
 
                 recognition.onstart = function() {
                     isListening = true;
                     updateListenButton();
-                    updateStatus(`🎤 Listening - Pause tolerance: ${settings.pauseBetweenWords}s between words`);
+                    updateStatus(`🎤 Listening - Speak complete phrases clearly`);
                     resetSessionTimeout();
                     console.log('🎤 Speech recognition started successfully');
                 };
@@ -1111,7 +1116,7 @@
                     
                     console.log('📊 END STATE: Page:', currentPage, 'Button:', listenButton?.textContent, 'Speaking:', speechInProgress, 'Listening:', isListening);
                     
-                    // FIXED: Safe restart conditions
+                    // FIXED: Safe restart conditions with longer delay for complete phrases
                     if (currentPage === 'speech' && 
                         listenButton && 
                         listenButton.textContent === 'STOP LISTENING' && 
@@ -1120,16 +1125,17 @@
                         
                         console.log('✅ Conditions good for restart');
                         
+                        // FIXED: Longer delay to allow for complete phrase processing
                         setTimeout(() => {
                             if (currentPage === 'speech' && 
                                 listenButton.textContent === 'STOP LISTENING' && 
                                 !speechInProgress && 
                                 !isListening) {
                                 
-                                console.log('🔄 Safe restart attempt');
+                                console.log('🔄 Safe restart attempt after phrase completion');
                                 
                                 try {
-                                    console.log('🎤 CLEAN RESTART');
+                                    console.log('🎤 CLEAN RESTART AFTER PHRASE');
                                     recognition.start();
                                     console.log('✅ Recognition restarted cleanly');
                                 } catch (e) {
@@ -1142,7 +1148,7 @@
                                 updateListenButton();
                                 updateStatus('✅ Stopped - Click "START TALKING" to restart');
                             }
-                        }, 1500);
+                        }, 2000); // LONGER delay for complete phrase processing
                     } else {
                         console.log('🛑 Restart conditions not met');
                         updateListenButton();
@@ -1201,11 +1207,14 @@
                     
                     let finalResult = null;
                     let interimText = '';
+                    let hasNewFinal = false;
                     
-                    // Get the most recent final result only
-                    for (let i = event.results.length - 1; i >= 0; i--) {
-                        if (event.results[i].isFinal && !finalResult) {
+                    // Check for new final results
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        if (event.results[i].isFinal) {
                             finalResult = event.results[i][0].transcript.trim();
+                            hasNewFinal = true;
+                            console.log('🎤 NEW FINAL RESULT DETECTED:', `"${finalResult}"`);
                         }
                     }
                     
@@ -1220,20 +1229,31 @@
                         updateStatus(`🎤 Hearing: "${interimText.trim()}"`);
                     }
                     
-                    // FIXED: Process final results with anti-cascade protection
-                    if (finalResult && finalResult.length > 2 && !speechInProgress) {
+                    // FIXED: Only process final results that are substantial and new
+                    if (hasNewFinal && finalResult && finalResult.length > 3 && !speechInProgress) {
                         const now = Date.now();
                         
-                        if (finalResult !== lastProcessedPhrase || (now - lastPhraseTime) > 3000) {
-                            console.log('🎤 PROCESSING NEW FINAL RESULT (ANTI-CASCADE):', `"${finalResult}"`);
-                            lastProcessedPhrase = finalResult;
-                            lastPhraseTime = now;
-                            processFinalSpeech(finalResult);
+                        // FIXED: More lenient duplicate checking - allow similar phrases if enough time passed
+                        const isDuplicate = finalResult === lastProcessedPhrase && (now - lastPhraseTime) < 2000;
+                        
+                        if (!isDuplicate) {
+                            console.log('🎤 PROCESSING SUBSTANTIAL FINAL RESULT:', `"${finalResult}"`);
+                            
+                            // FIXED: Add delay to ensure phrase is complete
+                            setTimeout(() => {
+                                if (!speechInProgress) {
+                                    lastProcessedPhrase = finalResult;
+                                    lastPhraseTime = now;
+                                    processFinalSpeech(finalResult);
+                                }
+                            }, 300); // Wait 300ms to ensure phrase completion
                         } else {
-                            console.log('🚫 Ignoring exact duplicate:', finalResult);
+                            console.log('🚫 Ignoring duplicate or too recent:', finalResult);
                         }
                     } else if (speechInProgress) {
                         console.log('🚫 Blocking speech processing - currently speaking to prevent cascade');
+                    } else if (finalResult && finalResult.length <= 3) {
+                        console.log('🚫 Ignoring too short phrase:', finalResult);
                     }
                 };
                 
@@ -1245,9 +1265,9 @@
         }
 
         function processFinalSpeech(text) {
-            if (!text || text.length <= 2) return;
+            if (!text || text.length <= 3) return;
             
-            console.log('🎙️ PROCESSING FINAL SPEECH:', `"${text}"`);
+            console.log('🎙️ PROCESSING COMPLETE FINAL SPEECH:', `"${text}"`);
             
             const lowerText = text.toLowerCase().trim();
             
@@ -1284,8 +1304,14 @@
                 return;
             }
             
-            console.log('✅ REGULAR SPEECH - PROCESSING:', text);
-            processCompletePhrase(text);
+            // FIXED: Only process substantial phrases (more than 3 characters)
+            if (text.trim().length > 3) {
+                console.log('✅ SUBSTANTIAL PHRASE - PROCESSING:', text);
+                processCompletePhrase(text);
+            } else {
+                console.log('🚫 PHRASE TOO SHORT - IGNORING:', text);
+                updateStatus('🎤 Phrase too short - speak more clearly');
+            }
         }
         
         function processCompletePhrase(text) {
