@@ -957,11 +957,6 @@
         let lastVoiceCommandTime = 0;
         let isSpeaking = false;
         
-        // Speech recognition state
-        let isProcessingCurrentPhrase = false;
-        let speechTimeout = null;
-        let lastResultLength = 0;
-        
         // Settings
         let settings = {
             speechSpeed: 1.0,
@@ -1271,75 +1266,39 @@
             }
         }
 
-        // FIXED: Speech function that maintains continuous listening
+        // Simple, reliable speech function
         function speakText(text) {
-            if (isSpeaking) {
-                console.log('🚫 Already speaking, queuing next:', text);
+            if (isSpeaking || !text || text.trim() === '') {
                 return;
             }
             
-            if (!text || text.trim() === '') {
-                console.log('🚫 No text to speak');
-                return;
-            }
-            
-            console.log('🔊 Speaking text while maintaining continuous listening:', text);
+            console.log('🔊 Speaking:', text);
             isSpeaking = true;
             
-            // IMPORTANT: Do NOT stop or restart recognition - let it keep running
-            // The recognition should stay active throughout the speech
-            
-            // Cancel any previous speech
             speechSynth.cancel();
             
-            setTimeout(() => {
-                try {
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    utterance.rate = settings.speechSpeed || 1.0;
-                    utterance.pitch = 1.0;
-                    utterance.volume = 0.8; // Slightly lower volume to avoid feedback
-                    utterance.lang = 'en-US';
-                    
-                    utterance.onstart = function() {
-                        console.log('✅ Speaking while listening continues:', text);
-                        updateStatus(`🔊 Speaking: "${text}" (continuous listening active)`);
-                    };
-                    
-                    utterance.onend = function() {
-                        console.log('✅ Speech finished, continuous listening continues');
-                        isSpeaking = false;
-                        
-                        // Just update status - recognition should still be running
-                        if (currentPage === 'speech' && isListening) {
-                            setTimeout(() => {
-                                if (!isProcessingCurrentPhrase) {
-                                    updateStatus('🎤 Continuous listening - Say your next phrase!');
-                                }
-                            }, 200);
-                        }
-                    };
-                    
-                    utterance.onerror = function(event) {
-                        console.error('❌ Speech error:', event.error);
-                        isSpeaking = false;
-                        
-                        if (currentPage === 'speech' && isListening) {
-                            updateStatus('🎤 Continuous listening - Say your next phrase!');
-                        }
-                    };
-                    
-                    // Start speech synthesis
-                    if (speechSynth.paused) speechSynth.resume();
-                    speechSynth.speak(utterance);
-                    
-                } catch (error) {
-                    console.error('❌ Speech synthesis error:', error);
-                    isSpeaking = false;
-                    if (currentPage === 'speech' && isListening) {
-                        updateStatus('🎤 Continuous listening - Say your next phrase!');
-                    }
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = settings.speechSpeed || 1.0;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            utterance.lang = 'en-US';
+            
+            utterance.onend = function() {
+                console.log('✅ Speech finished');
+                isSpeaking = false;
+                if (currentPage === 'speech' && isListening) {
+                    updateStatus('🎤 Ready for next phrase!');
                 }
-            }, 100);
+            };
+            
+            utterance.onerror = function() {
+                isSpeaking = false;
+                if (currentPage === 'speech' && isListening) {
+                    updateStatus('🎤 Ready for next phrase!');
+                }
+            };
+            
+            speechSynth.speak(utterance);
         }
 
         // === VOICE COMMANDS ===
