@@ -957,6 +957,12 @@
         let lastVoiceCommandTime = 0;
         let isSpeaking = false;
         
+        // Speech recognition state variables
+        let isProcessingCurrentPhrase = false;
+        let speechTimeout = null;
+        let completePhraseBuffer = '';
+        let lastResultLength = 0;
+        
         // Settings
         let settings = {
             speechSpeed: 1.0,
@@ -1161,11 +1167,6 @@
                     updateStatus('❌ Error: ' + event.error);
                 };
 
-                // FIXED: Wait much longer for complete phrases
-                let speechTimeout = null;
-                let allTranscriptParts = [];
-                let lastResultLength = 0;
-
                 recognition.onresult = function(event) {
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
@@ -1189,19 +1190,19 @@
                     if (fullTranscript && fullTranscript.length > lastResultLength) {
                         lastResultLength = fullTranscript.length;
                         console.log('🎤 Building complete phrase:', fullTranscript);
-                        updateStatus(`🎤 Listening: "${fullTranscript}" - Keep speaking or pause 5 seconds when done...`);
+                        updateStatus(`🎤 Listening: "${fullTranscript}" - Keep speaking or pause 3 seconds when done...`);
                         
                         // Clear existing timeout
                         if (speechTimeout) {
                             clearTimeout(speechTimeout);
                         }
                         
-                        // Wait 5 seconds for complete phrase - much longer delay
+                        // Wait 3 seconds for complete phrase
                         speechTimeout = setTimeout(() => {
                             if (fullTranscript && !isSpeaking && !isProcessingCurrentPhrase) {
                                 isProcessingCurrentPhrase = true;
                                 
-                                console.log('🎯 Processing complete phrase after 5 second pause:', fullTranscript);
+                                console.log('🎯 Processing complete phrase after 3 second pause:', fullTranscript);
                                 updateStatus(`✅ Complete phrase: "${fullTranscript}" - Speaking back...`);
                                 
                                 // Process the complete phrase
@@ -1216,7 +1217,7 @@
                                     }
                                 }, 2000);
                             }
-                        }, 5000); // 5 second delay to ensure complete phrases
+                        }, 3000); // 3 second delay for complete phrases
                     }
                 };
                 
@@ -1916,8 +1917,7 @@
                 // Reset all state variables before starting
                 isListening = false;
                 isProcessingCurrentPhrase = false;
-                isWaitingForComplete = false;
-                lastFinalTranscript = '';
+                lastResultLength = 0;
                 if (speechTimeout) {
                     clearTimeout(speechTimeout);
                     speechTimeout = null;
@@ -1974,38 +1974,6 @@
                 }
             }
         }
-        
-        function forceResetRecognition() {
-            console.log('🔄 Force resetting recognition');
-            
-            try {
-                if (recognition) {
-                    recognition.abort();
-                }
-                
-                isListening = false;
-                isSpeaking = false;
-                
-                setTimeout(() => {
-                    if (currentPage === 'speech' && !isListening) {
-                        console.log('🔄 Attempting fresh start');
-                        updateStatus('🎤 Trying fresh start...');
-                        
-                        try {
-                            recognition.start();
-                            console.log('✅ Fresh recognition started');
-                        } catch (e) {
-                            console.error('❌ Fresh start failed:', e.message);
-                            updateStatus('❌ Recognition unavailable - refresh page if needed');
-                        }
-                    }
-                }, 1000);
-                
-            } catch (error) {
-                console.error('❌ Force reset failed:', error);
-                updateStatus('❌ Reset failed - try refreshing page');
-            }
-        }
 
         function updateListenButton() {
             const listenButton = document.getElementById('listenButton');
@@ -2054,6 +2022,14 @@
             
             lastVoiceCommand = '';
             lastVoiceCommandTime = 0;
+            
+            // Clear speech recognition state
+            isProcessingCurrentPhrase = false;
+            lastResultLength = 0;
+            if (speechTimeout) {
+                clearTimeout(speechTimeout);
+                speechTimeout = null;
+            }
             
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
