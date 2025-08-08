@@ -1097,7 +1097,7 @@
                 recognition.onstart = function() {
                     isListening = true;
                     updateListenButton();
-                    updateStatus(`🎤 Listening - Speak clearly and pause when done`);
+                    updateStatus(`🎤 Listening - Speak complete phrases and pause when done`);
                     resetSessionTimeout();
                     console.log('🎤 Speech recognition started successfully');
                 };
@@ -1149,69 +1149,109 @@
                     updateStatus('❌ Error: ' + event.error);
                 };
 
-                // FIXED: Simplified speech recognition processing
-                let interimText = '';
-                let finalText = '';
+                // FIXED: Fragment-based phrase collection system
+                let speechFragments = [];
+                let fragmentTimer = null;
+                let lastFragmentTime = 0;
+                const FRAGMENT_TIMEOUT = 2500; // Wait 2.5 seconds after last speech
                 
                 recognition.onresult = function(event) {
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    interimText = '';
-                    finalText = '';
+                    let interimText = '';
+                    let newFinalText = '';
                     
-                    // Get all results
-                    for (let i = 0; i < event.results.length; i++) {
-                        const transcript = event.results[i][0].transcript;
+                    // Process only NEW results from this event
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        const transcript = event.results[i][0].transcript.trim();
                         
-                        if (event.results[i].isFinal) {
-                            finalText += transcript;
-                        } else {
+                        if (event.results[i].isFinal && transcript) {
+                            newFinalText += transcript;
+                        } else if (transcript) {
                             interimText += transcript;
                         }
                     }
                     
-                    // Show interim results
+                    // Show interim feedback
                     if (interimText.trim()) {
-                        updateStatus(`🎤 Speaking: "${interimText.trim()}" - Continue...`);
+                        const currentPhrase = speechFragments.join(' ') + ' ' + interimText.trim();
+                        updateStatus(`🎤 Speaking: "${currentPhrase.trim()}" - Continue speaking...`);
                     }
                     
-                    // Process final results
-                    if (finalText.trim() && !isSpeaking) {
-                        const cleanText = finalText.trim();
+                    // Handle new final speech fragments
+                    if (newFinalText && !isSpeaking) {
+                        console.log('🎤 New speech fragment:', `"${newFinalText}"`);
                         
-                        // Check for voice commands
-                        const lowerText = cleanText.toLowerCase();
-                        const isLeslieCommand = lowerText.includes('hey leslie') || 
-                                              lowerText.includes('hey less') ||
-                                              lowerText.includes('hey lesley');
+                        // Add fragment to collection
+                        speechFragments.push(newFinalText);
+                        lastFragmentTime = Date.now();
                         
-                        if (isLeslieCommand) {
-                            console.log('🎯 Voice command detected:', cleanText);
-                            updateStatus('🎤 Processing voice command...');
-                            processVoiceCommand(cleanText);
-                            return;
+                        const buildingPhrase = speechFragments.join(' ').trim();
+                        console.log('🎤 Building phrase:', `"${buildingPhrase}"`);
+                        updateStatus(`🎤 Building: "${buildingPhrase}" - Continue or pause to complete...`);
+                        
+                        // Clear existing timer
+                        if (fragmentTimer) {
+                            clearTimeout(fragmentTimer);
                         }
                         
-                        // Process normal speech
-                        if (cleanText.length > 2) {
-                            const now = Date.now();
-                            const isDuplicate = cleanText === lastProcessedPhrase && (now - lastPhraseTime) < 3000;
-                            
-                            if (!isDuplicate) {
-                                console.log('✅ Processing phrase:', cleanText);
-                                lastProcessedPhrase = cleanText;
-                                lastPhraseTime = now;
+                        // Set timer to process complete phrase after pause
+                        fragmentTimer = setTimeout(() => {
+                            if (speechFragments.length > 0 && !isSpeaking) {
+                                const completePhrase = speechFragments.join(' ').trim();
+                                console.log('🎤 Processing complete phrase after timeout:', `"${completePhrase}"`);
                                 
-                                updateSpeechDisplay(cleanText);
-                                updateStatus(`✅ Captured: "${cleanText}" - Speaking back...`);
+                                // Clear fragments before processing
+                                speechFragments = [];
                                 
-                                // FIXED: Simple speech playback
-                                speakText(cleanText);
+                                // Process the complete phrase
+                                if (completePhrase.length > 2) {
+                                    processCompletePhrase(completePhrase);
+                                }
                             }
-                        }
+                        }, FRAGMENT_TIMEOUT);
                     }
                 };
+                
+                // Function to process a complete phrase
+                function processCompletePhrase(text) {
+                    if (!text || text.length <= 2 || isSpeaking) return;
+                    
+                    console.log('🎯 Processing complete phrase:', `"${text}"`);
+                    
+                    // Check for voice commands
+                    const lowerText = text.toLowerCase();
+                    const isLeslieCommand = lowerText.includes('hey leslie') || 
+                                          lowerText.includes('hey less') ||
+                                          lowerText.includes('hey lesley');
+                    
+                    if (isLeslieCommand) {
+                        console.log('🎯 Voice command detected:', text);
+                        updateStatus('🎤 Processing voice command...');
+                        processVoiceCommand(text);
+                        return;
+                    }
+                    
+                    // Check for duplicates
+                    const now = Date.now();
+                    const isDuplicate = text === lastProcessedPhrase && (now - lastPhraseTime) < 4000;
+                    
+                    if (!isDuplicate) {
+                        console.log('✅ Processing new phrase:', text);
+                        lastProcessedPhrase = text;
+                        lastPhraseTime = now;
+                        
+                        updateSpeechDisplay(text);
+                        updateStatus(`✅ Captured: "${text}" - Speaking back...`);
+                        
+                        // Speak the complete phrase
+                        speakText(text);
+                    } else {
+                        console.log('🚫 Ignoring duplicate phrase:', text);
+                        updateStatus('🎤 Ready for next phrase - speak clearly');
+                    }
+                }
                 
                 console.log('✅ Speech recognition set up successfully');
                 
@@ -2000,12 +2040,21 @@
             lastVoiceCommand = '';
             lastVoiceCommandTime = 0;
             
+            // Clear fragment collection system
+            if (typeof speechFragments !== 'undefined') {
+                speechFragments = [];
+            }
+            if (typeof fragmentTimer !== 'undefined' && fragmentTimer) {
+                clearTimeout(fragmentTimer);
+                fragmentTimer = null;
+            }
+            
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
                 recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Say something and your phrase will appear here...</div>';
             }
             
-            console.log('🗑️ SPEECH DATA CLEARED');
+            console.log('🗑️ SPEECH DATA CLEARED - Including fragment system');
         }
 
         function clearTextInput() {
