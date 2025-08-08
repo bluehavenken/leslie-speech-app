@@ -1151,39 +1151,37 @@
                     updateStatus('❌ Error: ' + event.error);
                 };
 
-                // FIXED: Wait longer for complete phrases, handle interim results better
-                let finalTranscript = '';
+                // FIXED: Continuous listening with complete phrase capture
+                let allFinalResults = '';
                 let speechTimeout = null;
-                const SPEECH_COMPLETION_DELAY = 3000; // Wait 3 seconds after final result for complete phrases
+                let lastResultIndex = 0;
+                const SPEECH_COMPLETION_DELAY = 3000; // Wait 3 seconds for complete phrases
 
                 recognition.onresult = function(event) {
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // Build complete transcript from all final results
-                    let currentFinalTranscript = '';
-                    let hasInterimResults = false;
+                    // Build complete transcript from all final results since start
+                    let completeFinalTranscript = '';
+                    let hasNewFinalResults = false;
                     
                     for (let i = 0; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            currentFinalTranscript += event.results[i][0].transcript + ' ';
-                        } else {
-                            hasInterimResults = true;
+                            completeFinalTranscript += event.results[i][0].transcript + ' ';
+                            if (i >= lastResultIndex) {
+                                hasNewFinalResults = true;
+                            }
                         }
                     }
                     
-                    currentFinalTranscript = currentFinalTranscript.trim();
+                    completeFinalTranscript = completeFinalTranscript.trim();
                     
-                    // If we have new final results, update our transcript
-                    if (currentFinalTranscript && currentFinalTranscript !== finalTranscript) {
-                        finalTranscript = currentFinalTranscript;
-                        console.log('🎤 Updated final transcript:', finalTranscript);
-                        updateStatus(`🎤 Captured: "${finalTranscript}" - Continue speaking or pause to finish...`);
-                    }
-                    
-                    // If we have interim results, show we're still listening
-                    if (hasInterimResults && finalTranscript) {
-                        updateStatus(`🎤 Still listening: "${finalTranscript}" + more...`);
+                    // Update our tracking
+                    if (hasNewFinalResults && completeFinalTranscript) {
+                        allFinalResults = completeFinalTranscript;
+                        lastResultIndex = event.results.length;
+                        console.log('🎤 Building phrase:', allFinalResults);
+                        updateStatus(`🎤 Listening: "${allFinalResults}" - Keep speaking or pause when done...`);
                     }
                     
                     // Clear existing timeout
@@ -1191,13 +1189,15 @@
                         clearTimeout(speechTimeout);
                     }
                     
-                    // Only set timeout if we have some final text and no more interim results
-                    if (finalTranscript && !hasInterimResults) {
+                    // Set timeout to process phrase after pause (but keep listening)
+                    if (allFinalResults) {
                         speechTimeout = setTimeout(() => {
-                            if (finalTranscript && finalTranscript.length > 2 && !isSpeaking) {
-                                console.log('🎤 Processing complete phrase after pause:', finalTranscript);
-                                processCompletePhrase(finalTranscript);
-                                finalTranscript = ''; // Clear after processing
+                            if (allFinalResults && allFinalResults.length > 2 && !isSpeaking) {
+                                console.log('🎤 Processing complete phrase:', allFinalResults);
+                                processCompletePhrase(allFinalResults);
+                                // Clear for next phrase but keep listening
+                                allFinalResults = '';
+                                lastResultIndex = 0;
                             }
                         }, SPEECH_COMPLETION_DELAY);
                     }
