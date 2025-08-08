@@ -1161,63 +1161,66 @@
                     updateStatus('❌ Error: ' + event.error);
                 };
 
-                // FIXED: True continuous listening with complete phrase capture
-                let currentPhrase = '';
+                // FIXED: Clean phrase capture with no cascading
                 let speechTimeout = null;
-                let isProcessingCurrentPhrase = false;
-                let lastProcessedText = '';
-                const SPEECH_COMPLETION_DELAY = 2500;
+                let lastFinalTranscript = '';
+                let isWaitingForComplete = false;
 
                 recognition.onresult = function(event) {
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // Skip if currently processing a phrase
-                    if (isProcessingCurrentPhrase) {
+                    // Skip if we're already processing
+                    if (isProcessingCurrentPhrase || isWaitingForComplete) {
                         return;
                     }
                     
-                    // Build complete transcript from ALL final results in this event
-                    let completeText = '';
-                    for (let i = 0; i < event.results.length; i++) {
+                    // Get only the most recent final result to avoid cascading
+                    let latestFinal = '';
+                    for (let i = event.results.length - 1; i >= 0; i--) {
                         if (event.results[i].isFinal) {
-                            completeText += event.results[i][0].transcript + ' ';
+                            latestFinal = event.results[i][0].transcript.trim();
+                            break;
                         }
                     }
                     
-                    completeText = completeText.trim();
-                    
-                    // Only process if we have new text that's different from last processed
-                    if (completeText && completeText !== lastProcessedText && completeText !== currentPhrase) {
-                        currentPhrase = completeText;
-                        console.log('🎤 Complete phrase building:', currentPhrase);
-                        updateStatus(`🎤 Captured: "${currentPhrase}" - Pause to finish or keep speaking...`);
+                    // Only process if we have a completely new final result
+                    if (latestFinal && latestFinal !== lastFinalTranscript) {
+                        lastFinalTranscript = latestFinal;
+                        isWaitingForComplete = true;
                         
-                        // Clear existing timeout
+                        console.log('🎤 Latest final result:', latestFinal);
+                        updateStatus(`🎤 Got: "${latestFinal}" - Waiting for complete phrase...`);
+                        
+                        // Clear any existing timeout
                         if (speechTimeout) {
                             clearTimeout(speechTimeout);
                         }
                         
-                        // Set timeout to process complete phrase
+                        // Wait longer for the complete phrase
                         speechTimeout = setTimeout(() => {
-                            if (currentPhrase && !isSpeaking && !isProcessingCurrentPhrase) {
+                            if (lastFinalTranscript && !isSpeaking && !isProcessingCurrentPhrase) {
                                 isProcessingCurrentPhrase = true;
-                                lastProcessedText = currentPhrase;
-                                console.log('🎯 Processing complete phrase:', currentPhrase);
+                                isWaitingForComplete = false;
                                 
-                                // Process the phrase
-                                processCompletePhrase(currentPhrase);
+                                console.log('🎯 Processing complete phrase:', lastFinalTranscript);
+                                updateStatus(`✅ Complete: "${lastFinalTranscript}" - Speaking back...`);
                                 
-                                // Reset for next phrase but keep listening
+                                // Process the complete phrase
+                                processCompletePhrase(lastFinalTranscript);
+                                
+                                // Reset for next phrase
                                 setTimeout(() => {
-                                    currentPhrase = '';
+                                    lastFinalTranscript = '';
                                     isProcessingCurrentPhrase = false;
                                     if (currentPage === 'speech' && isListening) {
-                                        updateStatus('🎤 Continuous listening - Say your next phrase!');
+                                        updateStatus('🎤 Ready for next phrase!');
                                     }
-                                }, 500);
+                                }, 1000);
+                            } else {
+                                isWaitingForComplete = false;
                             }
-                        }, SPEECH_COMPLETION_DELAY);
+                        }, 3500); // Longer delay to ensure complete phrases
                     }
                 };
                 
@@ -2044,34 +2047,15 @@
                 if (!text || text === '') {
                     recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for your next phrase...</div>';
                 } else {
-                    // Add this phrase to history for display (keep last 3 phrases)
-                    phraseHistory.push(text);
-                    if (phraseHistory.length > 3) {
-                        phraseHistory = phraseHistory.slice(-3);
-                    }
-                    
-                    let html = '';
-                    
-                    // Show previous phrases (grayed out)
-                    for (let i = 0; i < phraseHistory.length - 1; i++) {
-                        html += `<div style="background-color: #f5f5f5; padding: 6px; border-radius: 4px; margin-bottom: 4px; color: #888; font-size: 14px; border-left: 3px solid #ccc;">
-                                    Previous: ${phraseHistory[i]}
+                    // Simply show the current phrase - no cascading, no history accumulation
+                    const html = `<div class="final-phrase" style="font-size: 18px; font-weight: bold; border: 2px solid #0099cc; padding: 12px; margin-bottom: 8px; background-color: #e3f2fd;">
+                                    ✅ CAPTURED: ${text}
+                                 </div>
+                                 <div style="color: #999; font-size: 12px; margin-top: 8px; text-align: center; padding: 6px; background: #f9f9f9; border-radius: 4px;">
+                                    🎤 Continuous listening - Say another phrase or click "STOP LISTENING"
                                  </div>`;
-                    }
-                    
-                    // Show current phrase (highlighted)
-                    html += `<div class="final-phrase" style="font-size: 18px; font-weight: bold; border: 2px solid #0099cc; padding: 12px; margin-bottom: 8px; background-color: #e3f2fd;">
-                                ✅ LATEST: ${text}
-                             </div>`;
-                    
-                    html += `<div style="color: #999; font-size: 12px; margin-top: 8px; text-align: center; padding: 6px; background: #f9f9f9; border-radius: 4px;">
-                                🎤 Continuous listening - Say another phrase or click "STOP LISTENING"
-                             </div>`;
                     
                     recognizedTextEl.innerHTML = html;
-                    
-                    // Scroll to bottom
-                    recognizedTextEl.scrollTop = recognizedTextEl.scrollHeight;
                 }
             }
         }
