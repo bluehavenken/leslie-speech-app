@@ -1151,47 +1151,62 @@
                     updateStatus('❌ Error: ' + event.error);
                 };
 
-                // FIXED: Only process final results, no cascading text
+                // FIXED: Wait longer for complete phrases, handle interim results better
                 let finalTranscript = '';
                 let speechTimeout = null;
-                const SPEECH_COMPLETION_DELAY = 1500; // Wait 1.5 seconds after final result
+                const SPEECH_COMPLETION_DELAY = 3000; // Wait 3 seconds after final result for complete phrases
 
                 recognition.onresult = function(event) {
                     lastSpeechTime = Date.now();
                     resetSessionTimeout();
                     
-                    // Only process the LATEST final result to prevent cascading
-                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                    // Build complete transcript from all final results
+                    let currentFinalTranscript = '';
+                    let hasInterimResults = false;
+                    
+                    for (let i = 0; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            const latestFinal = event.results[i][0].transcript.trim();
-                            if (latestFinal && latestFinal !== finalTranscript) {
-                                finalTranscript = latestFinal;
-                                console.log('🎤 Final result received:', finalTranscript);
-                                
-                                // Clear any existing timeout
-                                if (speechTimeout) {
-                                    clearTimeout(speechTimeout);
-                                }
-                                
-                                // Show status but don't update display yet
-                                updateStatus(`🎤 Processing: "${finalTranscript}"`);
-                                
-                                // Process after brief delay
-                                speechTimeout = setTimeout(() => {
-                                    if (finalTranscript && !isSpeaking) {
-                                        processCompletePhrase(finalTranscript);
-                                        finalTranscript = ''; // Clear after processing
-                                    }
-                                }, SPEECH_COMPLETION_DELAY);
-                            }
+                            currentFinalTranscript += event.results[i][0].transcript + ' ';
+                        } else {
+                            hasInterimResults = true;
                         }
+                    }
+                    
+                    currentFinalTranscript = currentFinalTranscript.trim();
+                    
+                    // If we have new final results, update our transcript
+                    if (currentFinalTranscript && currentFinalTranscript !== finalTranscript) {
+                        finalTranscript = currentFinalTranscript;
+                        console.log('🎤 Updated final transcript:', finalTranscript);
+                        updateStatus(`🎤 Captured: "${finalTranscript}" - Continue speaking or pause to finish...`);
+                    }
+                    
+                    // If we have interim results, show we're still listening
+                    if (hasInterimResults && finalTranscript) {
+                        updateStatus(`🎤 Still listening: "${finalTranscript}" + more...`);
+                    }
+                    
+                    // Clear existing timeout
+                    if (speechTimeout) {
+                        clearTimeout(speechTimeout);
+                    }
+                    
+                    // Only set timeout if we have some final text and no more interim results
+                    if (finalTranscript && !hasInterimResults) {
+                        speechTimeout = setTimeout(() => {
+                            if (finalTranscript && finalTranscript.length > 2 && !isSpeaking) {
+                                console.log('🎤 Processing complete phrase after pause:', finalTranscript);
+                                processCompletePhrase(finalTranscript);
+                                finalTranscript = ''; // Clear after processing
+                            }
+                        }, SPEECH_COMPLETION_DELAY);
                     }
                 };
                 
                 function processCompletePhrase(text) {
-                    if (!text || text.length <= 2 || isSpeaking) return;
+                    if (!text || text.length <= 1 || isSpeaking) return;
                     
-                    console.log('🎯 Processing phrase:', `"${text}"`);
+                    console.log('🎯 Processing complete phrase:', `"${text}"`);
                     
                     // Check for voice commands
                     const lowerText = text.toLowerCase();
@@ -1206,19 +1221,19 @@
                         return;
                     }
                     
-                    // Check for duplicates
+                    // Check for duplicates (be more lenient with timing for longer phrases)
                     const now = Date.now();
-                    const isDuplicate = text === lastProcessedPhrase && (now - lastPhraseTime) < 4000;
+                    const isDuplicate = text === lastProcessedPhrase && (now - lastPhraseTime) < 5000;
                     
                     if (!isDuplicate) {
-                        console.log('✅ Processing new phrase:', text);
+                        console.log('✅ Processing new complete phrase:', text);
                         lastProcessedPhrase = text;
                         lastPhraseTime = now;
                         
                         updateSpeechDisplay(text);
-                        updateStatus(`✅ Captured: "${text}" - Speaking back...`);
+                        updateStatus(`✅ Complete phrase captured: "${text}" - Speaking back...`);
                         
-                        // Speak the phrase back
+                        // Speak the complete phrase back
                         speakText(text);
                         
                     } else {
