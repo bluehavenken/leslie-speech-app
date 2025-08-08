@@ -1203,12 +1203,12 @@
                     }
                 };
 
-        // FIXED: Fragment collection system - collect multiple final results into complete phrases
+        // FIXED: Balanced system - capture complete phrases and prevent cascade
         let phraseFragments = [];
         let fragmentTimer = null;
         let lastFragmentTime = 0;
-        const FRAGMENT_COLLECTION_TIME = 2500; // Wait 2.5 seconds to collect all fragments
-        const MAX_FRAGMENT_GAP = 1000; // Max 1 second between fragments
+        const FRAGMENT_COLLECTION_TIME = 2000; // Wait 2 seconds to collect all fragments
+        const MAX_FRAGMENT_GAP = 800; // Max 800ms between fragments
 
                 recognition.onresult = function(event) {
                     // CRITICAL: Ignore results if we're currently speaking to prevent cascade
@@ -1236,22 +1236,22 @@
                     // Show interim feedback
                     if (latestInterim.trim() && !speechInProgress) {
                         const currentPhrase = phraseFragments.join(' ') + ' ' + latestInterim.trim();
-                        updateStatus(`🎤 Speaking: "${currentPhrase.trim()}" - Continue or pause to complete...`);
+                        updateStatus(`🎤 Speaking: "${currentPhrase.trim()}" - Continue or pause...`);
                     }
                     
-                    // FIXED: Collect final result fragments
+                    // FIXED: Collect final result fragments for complete phrases
                     if (newFinalResult && newFinalResult.length > 0 && !speechInProgress) {
                         const now = Date.now();
                         
-                        // Check if this fragment is part of the current phrase
+                        // Check if this fragment belongs to current phrase
                         if (phraseFragments.length === 0 || (now - lastFragmentTime) < MAX_FRAGMENT_GAP) {
                             // Add fragment to current phrase
                             phraseFragments.push(newFinalResult);
                             lastFragmentTime = now;
                             
                             const buildingPhrase = phraseFragments.join(' ');
-                            console.log('🎤 COLLECTING FRAGMENT:', `"${newFinalResult}"`, 'BUILDING:', `"${buildingPhrase}"`);
-                            updateStatus(`🎤 Collecting: "${buildingPhrase}" - Continue speaking...`);
+                            console.log('🎤 FRAGMENT ADDED:', `"${newFinalResult}"`, 'BUILDING:', `"${buildingPhrase}"`);
+                            updateStatus(`🎤 Building: "${buildingPhrase}" - Continue or pause to complete...`);
                             
                             // Reset completion timer
                             if (fragmentTimer) {
@@ -1262,9 +1262,9 @@
                             fragmentTimer = setTimeout(() => {
                                 if (phraseFragments.length > 0 && !speechInProgress) {
                                     const completePhrase = phraseFragments.join(' ').trim();
-                                    console.log('🎤 PHRASE COMPLETED FROM FRAGMENTS:', `"${completePhrase}"`);
+                                    console.log('🎤 COMPLETE PHRASE FROM FRAGMENTS:', `"${completePhrase}"`);
                                     
-                                    // Clear fragments
+                                    // Clear fragments before processing
                                     phraseFragments = [];
                                     lastFragmentTime = 0;
                                     
@@ -1276,22 +1276,22 @@
                             }, FRAGMENT_COLLECTION_TIME);
                             
                         } else {
-                            // This is a new phrase - process previous one first
+                            // Gap too large - process previous phrase and start new one
                             if (phraseFragments.length > 0) {
-                                const completePhrase = phraseFragments.join(' ').trim();
-                                console.log('🎤 PROCESSING PREVIOUS PHRASE:', `"${completePhrase}"`);
+                                const previousPhrase = phraseFragments.join(' ').trim();
+                                console.log('🎤 PROCESSING PREVIOUS PHRASE:', `"${previousPhrase}"`);
                                 
-                                if (completePhrase.length > 2) {
-                                    processCompletedPhrase(completePhrase);
+                                if (previousPhrase.length > 2) {
+                                    processCompletedPhrase(previousPhrase);
                                 }
                             }
                             
-                            // Start new phrase with this fragment
+                            // Start new phrase
                             phraseFragments = [newFinalResult];
                             lastFragmentTime = now;
                             
-                            console.log('🎤 STARTING NEW PHRASE WITH:', `"${newFinalResult}"`);
-                            updateStatus(`🎤 New phrase: "${newFinalResult}" - Continue speaking...`);
+                            console.log('🎤 STARTING NEW PHRASE:', `"${newFinalResult}"`);
+                            updateStatus(`🎤 New phrase: "${newFinalResult}" - Continue...`);
                         }
                     }
                 };
