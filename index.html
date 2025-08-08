@@ -1195,11 +1195,12 @@
                     }
                 };
 
-        // FIXED: Phrase completion detection system
+        // FIXED: Aggressive phrase completion system - ignore all final results
         let phraseTimeout = null;
         let currentInterimPhrase = '';
         let lastInterimTime = 0;
-        const PHRASE_COMPLETION_DELAY = 1500; // Wait 1.5 seconds after last word
+        const PHRASE_COMPLETION_DELAY = 2500; // Wait 2.5 seconds after last word
+        let isCapturingPhrase = false;
 
                 recognition.onresult = function(event) {
                     // CRITICAL: Ignore results if we're currently speaking to prevent cascade
@@ -1212,57 +1213,56 @@
                     resetSessionTimeout();
                     
                     let latestInterim = '';
-                    let finalResult = null;
-                    let hasNewFinal = false;
                     
-                    // Build the latest interim result from all non-final results
+                    // CRITICAL: IGNORE ALL FINAL RESULTS - only use interim results
                     for (let i = 0; i < event.results.length; i++) {
                         if (event.results[i].isFinal) {
-                            // Skip processing final results immediately - let phrase completion handle it
-                            finalResult = event.results[i][0].transcript.trim();
-                            hasNewFinal = true;
-                            console.log('🎤 FINAL RESULT DETECTED (WILL PROCESS AFTER PAUSE):', `"${finalResult}"`);
+                            console.log('🚫 IGNORING FINAL RESULT TO PREVENT PARTIAL PHRASES:', event.results[i][0].transcript);
+                            // Do nothing with final results - they cause partial phrase processing
                         } else {
+                            // Only process interim (non-final) results
                             latestInterim += event.results[i][0].transcript;
                         }
                     }
                     
-                    // Show interim results and detect phrase completion
+                    // FIXED: Only work with interim results to build complete phrases
                     if (latestInterim.trim() && !speechInProgress) {
                         currentInterimPhrase = latestInterim.trim();
                         lastInterimTime = Date.now();
-                        updateStatus(`🎤 Hearing: "${currentInterimPhrase}" - Keep speaking...`);
+                        isCapturingPhrase = true;
                         
-                        // FIXED: Reset phrase completion timer
+                        updateStatus(`🎤 Building phrase: "${currentInterimPhrase}" - Keep speaking or pause to finish...`);
+                        console.log('🎤 INTERIM UPDATE:', `"${currentInterimPhrase}"`);
+                        
+                        // FIXED: Reset phrase completion timer every time user speaks
                         if (phraseTimeout) {
                             clearTimeout(phraseTimeout);
                         }
                         
-                        // FIXED: Set timer to process phrase after user stops speaking
+                        // FIXED: Set longer timer to process phrase after user stops speaking
                         phraseTimeout = setTimeout(() => {
-                            if (currentInterimPhrase && currentInterimPhrase.length > 3 && !speechInProgress) {
-                                console.log('🎤 PHRASE COMPLETION DETECTED:', `"${currentInterimPhrase}"`);
+                            if (currentInterimPhrase && currentInterimPhrase.length > 3 && !speechInProgress && isCapturingPhrase) {
+                                console.log('🎤 PHRASE COMPLETION DETECTED AFTER PAUSE:', `"${currentInterimPhrase}"`);
+                                isCapturingPhrase = false;
                                 processCompletedPhrase(currentInterimPhrase);
                                 currentInterimPhrase = '';
                             }
                         }, PHRASE_COMPLETION_DELAY);
-                    }
-                    
-                    // FIXED: Also handle final results with completion detection
-                    if (hasNewFinal && finalResult && finalResult.length > 3 && !speechInProgress) {
-                        console.log('🎤 FINAL RESULT - USING COMPLETION DETECTION:', `"${finalResult}"`);
-                        
-                        // Clear any pending interim processing
+                    } else if (!latestInterim.trim() && currentInterimPhrase && isCapturingPhrase) {
+                        // User stopped speaking but we have a phrase
+                        console.log('🎤 USER STOPPED - PROCESSING CURRENT PHRASE:', `"${currentInterimPhrase}"`);
                         if (phraseTimeout) {
                             clearTimeout(phraseTimeout);
                         }
                         
-                        // Process final result after short delay
+                        // Process immediately when user clearly stops
                         setTimeout(() => {
-                            if (!speechInProgress) {
-                                processCompletedPhrase(finalResult);
+                            if (currentInterimPhrase && currentInterimPhrase.length > 3 && !speechInProgress) {
+                                isCapturingPhrase = false;
+                                processCompletedPhrase(currentInterimPhrase);
+                                currentInterimPhrase = '';
                             }
-                        }, 200);
+                        }, 500);
                     }
                 };
                 
@@ -2353,13 +2353,14 @@
             lastProcessedPhrase = '';
             lastPhraseTime = 0;
             
-            // FIXED: Clear phrase completion system
+            // FIXED: Clear aggressive phrase completion system
             if (phraseTimeout) {
                 clearTimeout(phraseTimeout);
                 phraseTimeout = null;
             }
             currentInterimPhrase = '';
             lastInterimTime = 0;
+            isCapturingPhrase = false;
             
             // FIXED: Clear speech cleanly
             speechSynth.cancel();
@@ -2380,7 +2381,7 @@
                 existingButton.remove();
             }
             
-            console.log('🗑️ SPEECH DATA CLEARED - PHRASE COMPLETION SYSTEM RESET');
+            console.log('🗑️ SPEECH DATA CLEARED - AGGRESSIVE PHRASE SYSTEM RESET');
         }
 
         function clearTextInput() {
