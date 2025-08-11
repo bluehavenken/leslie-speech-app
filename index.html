@@ -1094,7 +1094,7 @@
 
         // === MAIN SPEECH RECOGNITION ===
         function createMainSpeechRecognition() {
-            console.log('🎤 Creating NO-PING speech recognition...');
+            console.log('🎤 Creating CONTINUOUS NO-PING speech recognition...');
             
             // Complete cleanup
             if (speechRecognition) {
@@ -1107,8 +1107,8 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             speechRecognition = new SpeechRecognition();
             
-            // Settings for complete phrase capture without pinging
-            speechRecognition.continuous = false;
+            // Settings for complete phrase capture with continuous listening
+            speechRecognition.continuous = false; // Single phrase mode to get complete phrases
             speechRecognition.interimResults = true;
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
@@ -1116,20 +1116,35 @@
             speechRecognition.onstart = function() {
                 console.log('🎤 Recognition started for single phrase');
                 isMainListening = true;
-                updateStatus('🎤 Listening for complete phrase...');
+                // Keep button in listening state during continuous session
+                updateListenButton();
+                updateStatus('🎤 Listening continuously - Speak anytime...');
                 resetSessionTimeout();
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended - MANUAL RESTART ONLY');
-                isMainListening = false;
+                console.log('🎤 Recognition ended - checking for auto-restart');
                 
-                // NO AUTOMATIC RESTART - completely manual
+                // CONTROLLED auto-restart for continuous listening
                 if (shouldContinueListening && !manualStop && currentPage === 'speech') {
-                    // Show message but don't restart automatically
-                    updateStatus('🎤 Click "START TALKING" for next phrase');
-                    updateListenButton(); // Show START TALKING button
+                    updateStatus('🎤 Ready for next phrase...');
+                    // Auto-restart with delay to prevent pinging, but keep button state
+                    setTimeout(() => {
+                        if (shouldContinueListening && !manualStop && currentPage === 'speech') {
+                            try {
+                                console.log('🎤 Auto-restarting for continuous listening...');
+                                speechRecognition.start();
+                            } catch (e) {
+                                console.log('❌ Auto-restart failed:', e.message);
+                                shouldContinueListening = false;
+                                isMainListening = false;
+                                updateListenButton();
+                                updateStatus('❌ Recognition stopped - Click "START TALKING" to restart');
+                            }
+                        }
+                    }, 1500); // 1.5 second delay to prevent pinging but maintain flow
                 } else {
+                    isMainListening = false;
                     updateListenButton();
                     updateStatus('🛑 Stopped - Click "START TALKING" to restart');
                 }
@@ -1137,28 +1152,36 @@
 
             speechRecognition.onerror = function(event) {
                 console.error('🎤 Recognition error:', event.error);
-                isMainListening = false;
-                updateListenButton();
                 
-                // STOP on ALL errors - no restart attempts
-                shouldContinueListening = false;
-                
+                // Handle errors but try to continue for minor ones
                 switch (event.error) {
                     case 'not-allowed':
                         updateStatus('❌ Microphone permission denied');
                         microphonePermissionGranted = false;
+                        shouldContinueListening = false;
+                        isMainListening = false;
+                        updateListenButton();
                         break;
                     case 'network':
                         updateStatus('❌ Network error');
-                        break;
-                    case 'no-speech':
-                        updateStatus('🎤 No speech detected - Click "START TALKING" to try again');
+                        shouldContinueListening = false;
+                        isMainListening = false;
+                        updateListenButton();
                         break;
                     case 'audio-capture':
                         updateStatus('❌ Microphone unavailable');
+                        shouldContinueListening = false;
+                        isMainListening = false;
+                        updateListenButton();
+                        break;
+                    case 'no-speech':
+                        console.log('No speech detected - will continue listening');
+                        updateStatus('🎤 No speech detected - continuing to listen...');
+                        // Continue listening for no-speech (normal in continuous mode)
                         break;
                     default:
-                        updateStatus('❌ Error: ' + event.error + ' - Click "START TALKING" to try again');
+                        console.log('Minor error - continuing:', event.error);
+                        updateStatus('🎤 Continuing to listen...');
                         break;
                 }
             };
@@ -1197,7 +1220,7 @@
                 }
             };
             
-            console.log('✅ NO-PING speech recognition created');
+            console.log('✅ CONTINUOUS NO-PING speech recognition created');
         }
 
         function processCompleteFinalPhrase(text) {
@@ -1220,13 +1243,18 @@
                 updateStatus(`🔊 Speaking complete phrase: "${text}"`);
                 speakText(text);
                 
-                // After speaking, require manual restart
+                // After speaking, continue listening automatically
                 setTimeout(() => {
-                    updateStatus('🎤 Click "START TALKING" for next phrase');
+                    if (shouldContinueListening) {
+                        updateStatus('🎤 Listening continuously - Say another phrase...');
+                    }
                 }, 2000);
             } else {
                 console.log('🚫 Skipping phrase:', text, 'duplicate:', isDuplicate, 'tooSoon:', isTooSoon);
-                updateStatus('🎤 Click "START TALKING" for next phrase');
+                // Continue listening even when skipping
+                if (shouldContinueListening) {
+                    updateStatus('🎤 Listening continuously - Say another phrase...');
+                }
             }
         }
 
@@ -1760,12 +1788,12 @@
         function updateListenButton() {
             const listenButton = document.getElementById('listenButton');
             if (listenButton) {
-                if (isMainListening) {
+                if (isMainListening || shouldContinueListening) {
                     listenButton.textContent = 'STOP LISTENING';
-                    listenButton.className = 'control-btn btn-stop';
+                    listenButton.className = 'control-btn btn-stop'; // Red color
                 } else {
                     listenButton.textContent = 'START TALKING';
-                    listenButton.className = 'control-btn btn-listen';
+                    listenButton.className = 'control-btn btn-listen'; // Blue color
                 }
             }
         }
