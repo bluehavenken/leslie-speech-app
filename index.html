@@ -1099,7 +1099,11 @@
                 recognition.onstart = function() {
                     console.log('🎤 *** RECOGNITION STARTED SUCCESSFULLY ***');
                     isListening = true;
-                    updateListenButton();
+                    const listenButton = document.getElementById('listenButton');
+                    if (listenButton) {
+                        listenButton.textContent = 'STOP LISTENING';
+                        listenButton.className = 'control-btn btn-stop';
+                    }
                     updateStatus(`🎤 Listening - Speak clearly now!`);
                     resetSessionTimeout();
                 };
@@ -1107,36 +1111,11 @@
                 recognition.onend = function() {
                     console.log('🎤 Recognition ended');
                     isListening = false;
+                    updateListenButton();
                     
-                    // Only restart if we're still on speech page and user expects continuous listening
-                    const listenButton = document.getElementById('listenButton');
-                    if (currentPage === 'speech' && 
-                        listenButton && 
-                        listenButton.textContent === 'STOP LISTENING' &&
-                        !isProcessingCurrentPhrase) {
-                        
-                        console.log('🔄 Restarting recognition for continuous listening');
-                        
-                        // Restart with longer delay to prevent constant pinging
-                        setTimeout(() => {
-                            if (currentPage === 'speech' && 
-                                listenButton.textContent === 'STOP LISTENING' && 
-                                !isListening && 
-                                !isProcessingCurrentPhrase) {
-                                
-                                try {
-                                    recognition.start();
-                                    console.log('✅ Recognition restarted successfully');
-                                } catch (e) {
-                                    console.error('❌ Restart failed:', e.message);
-                                    updateListenButton();
-                                    updateStatus('❌ Continuous listening failed - click "START TALKING" to restart');
-                                }
-                            }
-                        }, 500); // Longer delay to prevent constant restarts
-                    } else {
-                        updateListenButton();
-                        updateStatus('✅ Stopped listening - Click "START TALKING" to restart');
+                    // Stop the constant restart cycle - only restart manually
+                    if (currentPage === 'speech') {
+                        updateStatus('🛑 Recognition stopped - Click "START TALKING" to restart');
                     }
                 };
 
@@ -1842,9 +1821,13 @@
         }
 
         function toggleListening() {
-            if (isListening || document.getElementById('listenButton')?.textContent === 'STOP LISTENING') {
+            console.log('🎤 toggleListening called, isListening:', isListening);
+            
+            if (isListening) {
+                // Stop listening
+                console.log('🛑 Stopping recognition...');
                 clearSessionTimeout();
-                if (recognition && isListening) {
+                if (recognition) {
                     try {
                         recognition.abort();
                     } catch (error) {
@@ -1853,16 +1836,33 @@
                 }
                 isListening = false;
                 isSpeaking = false;
+                isProcessingCurrentPhrase = false;
+                if (speechTimeout) {
+                    clearTimeout(speechTimeout);
+                    speechTimeout = null;
+                }
                 updateListenButton();
                 updateStatus('🛑 Stopped listening. Click "START TALKING" to restart.');
                 
+                // Restart voice commands after stopping
                 setTimeout(() => {
                     if (!isListening && microphonePermissionGranted && isInitialized) {
                         startVoiceCommands();
                     }
                 }, 1000);
+                
             } else {
+                // Start listening
+                console.log('🎤 Starting recognition...');
                 lastSpeechTime = Date.now();
+                
+                // Update button immediately to show we're trying
+                const listenButton = document.getElementById('listenButton');
+                if (listenButton) {
+                    listenButton.textContent = 'STARTING...';
+                    listenButton.className = 'control-btn btn-stop';
+                }
+                
                 startListening();
             }
         }
@@ -1927,18 +1927,16 @@
                 return;
             }
             
-            // Check if recognition object exists
+            // Check if recognition object exists and recreate if needed
             if (!recognition) {
-                console.error('❌ No recognition object available');
-                updateStatus('❌ Speech recognition not initialized - refresh page');
-                resetListenButton();
-                return;
+                console.log('🔄 Recreating recognition object...');
+                setupSpeechRecognition();
             }
             
             // Check browser support
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 console.error('❌ Speech recognition not supported');
-                updateStatus('❌ Speech recognition not supported in this browser - Try Chrome');
+                updateStatus('❌ Speech recognition not supported - Try Chrome browser');
                 resetListenButton();
                 return;
             }
@@ -1955,41 +1953,30 @@
                     speechTimeout = null;
                 }
                 
-                // Try to start recognition
-                recognition.start();
-                console.log('✅ Recognition.start() called successfully');
+                // Force stop any existing recognition
+                try {
+                    recognition.abort();
+                    console.log('✅ Aborted any existing recognition');
+                } catch (e) {
+                    console.log('ℹ️ No existing recognition to abort');
+                }
                 
-                // Set a backup timeout in case onstart doesn't fire
+                // Wait a moment then start fresh
                 setTimeout(() => {
-                    if (!isListening) {
-                        console.log('⚠️ Recognition did not start properly');
-                        updateStatus('❌ Recognition failed to start - Try again or refresh page');
+                    try {
+                        recognition.start();
+                        console.log('✅ Recognition.start() called successfully');
+                    } catch (startError) {
+                        console.error('❌ Recognition start failed:', startError.message);
+                        updateStatus('❌ Could not start speech recognition - Try refreshing the page');
                         resetListenButton();
                     }
-                }, 5000); // 5 second timeout
+                }, 200);
                 
             } catch (error) {
-                console.error('❌ Recognition start failed:', error.message);
+                console.error('❌ Recognition setup failed:', error.message);
+                updateStatus('❌ Speech recognition setup failed - Try refreshing the page');
                 resetListenButton();
-                
-                if (error.message.includes('already started') || error.message.includes('already-started')) {
-                    console.log('🔄 Recognition conflict detected - forcing clean restart');
-                    updateStatus('🔄 Resolving conflict... Try clicking START TALKING again');
-                    
-                    // Force a complete reset
-                    try {
-                        recognition.abort();
-                        console.log('✅ Recognition aborted for clean restart');
-                    } catch (abortError) {
-                        console.log('⚠️ Abort error (expected):', abortError.message);
-                    }
-                    
-                } else if (error.message.includes('not-allowed')) {
-                    updateStatus('❌ Microphone permission denied - Check browser settings');
-                    microphonePermissionGranted = false;
-                } else {
-                    updateStatus('❌ Recognition error: ' + error.message + ' - Try refreshing page');
-                }
             }
         }
 
