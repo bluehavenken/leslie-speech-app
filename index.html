@@ -1712,42 +1712,37 @@
             console.log('📄 Showing page:', pageId);
             
             try {
-                // COMPLETE CLEANUP when leaving speech page
+                // NUCLEAR CLEANUP when leaving speech page
                 if (currentPage === 'speech' && pageId !== 'speech') {
-                    console.log('🧹 Complete cleanup leaving speech page...');
+                    console.log('🧹 NUCLEAR CLEANUP leaving speech page...');
                     
-                    // Stop all recognition
+                    // Stop ALL recognition
                     if (recognition) {
                         try {
                             recognition.abort();
-                            console.log('✅ Recognition aborted');
-                        } catch (e) {
-                            console.log('ℹ️ Recognition abort:', e.message);
-                        }
-                        recognition = null; // Destroy the object
+                        } catch (e) {}
+                        recognition = null;
                     }
                     
-                    // Stop all speech
+                    // Stop ALL speech
                     speechSynth.cancel();
                     
-                    // Clear only our specific timeouts
-                    if (speechTimeout) {
-                        clearTimeout(speechTimeout);
-                        speechTimeout = null;
-                    }
-                    if (sessionTimeoutId) {
-                        clearTimeout(sessionTimeoutId);
-                        sessionTimeoutId = null;
+                    // Clear ALL timeouts - NUCLEAR APPROACH
+                    for (let i = 1; i < 10000; i++) {
+                        clearTimeout(i);
+                        clearInterval(i);
                     }
                     
-                    // Reset ALL state variables
+                    // Reset ALL variables
                     isListening = false;
                     isProcessingCurrentPhrase = false;
                     isSpeaking = false;
                     lastProcessedPhrase = '';
                     lastPhraseTime = 0;
+                    speechTimeout = null;
+                    sessionTimeoutId = null;
                     
-                    console.log('✅ Complete cleanup finished');
+                    console.log('✅ NUCLEAR CLEANUP finished');
                 }
                 
                 document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
@@ -1762,33 +1757,28 @@
                     }
                     
                     if (pageId === 'speech') {
-                        console.log('📄 Entering speech page - MANUAL START ONLY');
+                        console.log('📄 Entering speech page - READY TO START');
                         
                         // Stop voice commands
                         stopVoiceCommands();
                         
-                        // Force rebuild recognition every time
-                        console.log('🔄 Force rebuilding recognition object...');
-                        try {
-                            setupSpeechRecognition();
-                            console.log('✅ Recognition rebuilt successfully');
-                        } catch (e) {
-                            console.error('❌ Recognition rebuild failed:', e);
-                        }
-                        
-                        // Reset display and button to manual mode
+                        // Clear display
                         const recognizedTextEl = document.getElementById('recognizedText');
                         if (recognizedTextEl) {
-                            recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Click "START TALKING" to begin...</div>';
+                            recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Ready to listen - Click "START TALKING"</div>';
                         }
                         
+                        // Set button to ready state
                         const listenButton = document.getElementById('listenButton');
                         if (listenButton) {
                             listenButton.textContent = 'START TALKING';
                             listenButton.className = 'control-btn btn-listen';
                         }
                         
-                        updateStatus('🎤 Ready - Click "START TALKING" to begin');
+                        updateStatus('🎤 Ready - Click "START TALKING" to begin listening');
+                        
+                        // NO automatic setup - only on demand
+                        recognition = null;
                         
                     } else {
                         // Start voice commands for other pages
@@ -1908,27 +1898,14 @@
         function startListening() {
             console.log('🎤 startListening() called');
             
-            if (!recognition) {
-                console.error('❌ No recognition object available');
-                updateStatus('❌ Speech recognition not available - refresh page');
-                resetListenButton();
-                return;
-            }
+            // Clear everything first
+            isListening = false;
+            isProcessingCurrentPhrase = false;
+            isSpeaking = false;
             
-            if (isListening) {
-                console.log('🚫 Already listening');
-                return;
-            }
-            
-            // Stop voice commands if running
-            if (isVoiceCommandListening) {
-                console.log('🛑 Stopping voice commands to start main recognition');
-                stopVoiceCommands();
-            }
-            
-            // Check microphone permission first
-            console.log('🎤 Checking microphone permission...');
-            updateStatus('🎤 Checking microphone access...');
+            // Request microphone permission first
+            console.log('🎤 Requesting microphone permission...');
+            updateStatus('🎤 Requesting microphone access...');
             
             navigator.mediaDevices.getUserMedia({ audio: true })
                 .then(stream => {
@@ -1936,20 +1913,93 @@
                     microphonePermissionGranted = true;
                     stream.getTracks().forEach(track => track.stop());
                     
-                    // Now try to start recognition
-                    updateStatus('🎤 Starting speech recognition...');
-                    attemptStartRecognition();
+                    // Now create and start recognition
+                    updateStatus('🎤 Creating fresh recognition...');
+                    
+                    try {
+                        // Force create completely new recognition
+                        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                        
+                        if (!SpeechRecognition) {
+                            throw new Error('Speech Recognition not supported');
+                        }
+                        
+                        // Destroy any existing
+                        if (recognition) {
+                            try {
+                                recognition.abort();
+                            } catch (e) {}
+                            recognition = null;
+                        }
+                        
+                        // Create fresh
+                        recognition = new SpeechRecognition();
+                        recognition.continuous = false;
+                        recognition.interimResults = true;
+                        recognition.lang = 'en-US';
+                        recognition.maxAlternatives = 1;
+                        
+                        // Simple event handlers
+                        recognition.onstart = function() {
+                            console.log('🎤 Recognition started');
+                            isListening = true;
+                            updateStatus('🎤 Listening - Speak clearly!');
+                        };
+                        
+                        recognition.onend = function() {
+                            console.log('🎤 Recognition ended');
+                            isListening = false;
+                            updateStatus('🎤 Click "START TALKING" to try again');
+                            resetListenButton();
+                        };
+                        
+                        recognition.onerror = function(event) {
+                            console.error('🎤 Recognition error:', event.error);
+                            isListening = false;
+                            updateStatus('❌ Recognition error: ' + event.error);
+                            resetListenButton();
+                        };
+                        
+                        recognition.onresult = function(event) {
+                            console.log('🎤 Got result');
+                            
+                            // Get final result
+                            let finalText = '';
+                            for (let i = 0; i < event.results.length; i++) {
+                                if (event.results[i].isFinal) {
+                                    finalText = event.results[i][0].transcript.trim();
+                                    break;
+                                }
+                            }
+                            
+                            if (finalText && finalText.length > 1) {
+                                console.log('✅ Final text:', finalText);
+                                updateSpeechDisplay(finalText);
+                                updateStatus('🔊 Speaking: ' + finalText);
+                                speakText(finalText);
+                            }
+                        };
+                        
+                        // Start recognition
+                        console.log('🎤 Starting fresh recognition...');
+                        recognition.start();
+                        
+                    } catch (error) {
+                        console.error('❌ Recognition creation failed:', error);
+                        updateStatus('❌ Failed to create recognition: ' + error.message);
+                        resetListenButton();
+                    }
                 })
                 .catch(error => {
                     console.error('❌ Microphone permission denied:', error);
                     microphonePermissionGranted = false;
-                    updateStatus('❌ Microphone access denied - Please allow microphone access and try again');
+                    updateStatus('❌ Microphone permission denied');
                     resetListenButton();
                 });
         }
         
         function resetListenButton() {
-            console.log('🔄 Resetting listen button and clearing all timers...');
+            console.log('🔄 Resetting listen button...');
             
             const listenButton = document.getElementById('listenButton');
             if (listenButton) {
@@ -1957,35 +2007,28 @@
                 listenButton.className = 'control-btn btn-listen';
             }
             
-            // Reset ALL state variables
+            // Reset ALL state
             isListening = false;
             isProcessingCurrentPhrase = false;
             isSpeaking = false;
             
-            // Clear ALL pending timeouts to stop any pinging
-            if (speechTimeout) {
-                clearTimeout(speechTimeout);
-                speechTimeout = null;
-                console.log('✅ Speech timeout cleared in reset');
+            // Nuclear timeout clearing
+            for (let i = 1; i < 10000; i++) {
+                clearTimeout(i);
+                clearInterval(i);
             }
+            speechTimeout = null;
+            sessionTimeoutId = null;
             
-            if (sessionTimeoutId) {
-                clearTimeout(sessionTimeoutId);
-                sessionTimeoutId = null;
-                console.log('✅ Session timeout cleared in reset');
-            }
-            
-            // Abort any running recognition
+            // Stop any recognition
             if (recognition) {
                 try {
                     recognition.abort();
-                    console.log('✅ Recognition aborted in reset');
-                } catch (e) {
-                    console.log('ℹ️ Recognition abort in reset:', e.message);
-                }
+                } catch (e) {}
+                recognition = null;
             }
             
-            console.log('✅ Listen button reset and all timers cleared');
+            console.log('✅ Button reset and all timers cleared');
         }
         
         function attemptStartRecognition() {
@@ -1996,18 +2039,24 @@
                 return;
             }
             
-            // Always recreate recognition object to ensure it's fresh
-            if (!recognition) {
-                console.log('🔄 No recognition object, creating new one...');
-                try {
-                    setupSpeechRecognition();
-                    console.log('✅ New recognition object created');
-                } catch (e) {
-                    console.error('❌ Failed to create recognition object:', e);
+            // Force rebuild recognition object every time
+            console.log('🔄 Force rebuilding recognition for fresh start...');
+            try {
+                setupSpeechRecognition();
+                
+                if (!recognition) {
+                    console.error('❌ Failed to create recognition object');
                     updateStatus('❌ Failed to initialize speech recognition - Try refreshing page');
                     resetListenButton();
                     return;
                 }
+                
+                console.log('✅ Fresh recognition object created');
+            } catch (e) {
+                console.error('❌ Failed to setup recognition:', e);
+                updateStatus('❌ Failed to setup speech recognition - Try refreshing page');
+                resetListenButton();
+                return;
             }
             
             // Check browser support
@@ -2019,7 +2068,7 @@
             }
             
             try {
-                console.log('🎤 Attempting to start recognition...');
+                console.log('🎤 Attempting to start fresh recognition...');
                 updateStatus('🎤 Starting speech recognition...');
                 
                 // Reset all state variables before starting
@@ -2030,35 +2079,13 @@
                     speechTimeout = null;
                 }
                 
-                // Force stop any existing recognition
-                try {
-                    recognition.abort();
-                    console.log('✅ Aborted any existing recognition');
-                } catch (e) {
-                    console.log('ℹ️ No existing recognition to abort');
-                }
-                
-                // Wait a moment then start fresh
-                setTimeout(() => {
-                    try {
-                        if (recognition) {
-                            recognition.start();
-                            console.log('✅ Recognition.start() called successfully');
-                        } else {
-                            console.error('❌ Recognition object disappeared');
-                            updateStatus('❌ Recognition object error - Try refreshing page');
-                            resetListenButton();
-                        }
-                    } catch (startError) {
-                        console.error('❌ Recognition start failed:', startError.message);
-                        updateStatus('❌ Could not start speech recognition - Try again');
-                        resetListenButton();
-                    }
-                }, 300);
+                // Start recognition immediately
+                recognition.start();
+                console.log('✅ Recognition.start() called successfully');
                 
             } catch (error) {
-                console.error('❌ Recognition setup failed:', error.message);
-                updateStatus('❌ Speech recognition setup failed - Try refreshing page');
+                console.error('❌ Recognition start failed:', error.message);
+                updateStatus('❌ Could not start speech recognition: ' + error.message);
                 resetListenButton();
             }
         }
