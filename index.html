@@ -1119,23 +1119,23 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             speechRecognition = new SpeechRecognition();
             
-            // Simple, reliable settings for speech recognition
+            // Settings for reliable continuous recognition without pinging
             speechRecognition.continuous = true;
             speechRecognition.interimResults = true;
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 *** RECOGNITION STARTED SUCCESSFULLY ***');
+                console.log('🎤 *** RECOGNITION STARTED ***');
                 isMainListening = true;
                 processingDebounce = false;
                 updateListenButton();
-                updateStatus('🎤 Listening continuously - Speak clearly and naturally...');
+                updateStatus('🎤 Listening continuously - Speak complete phrases...');
                 resetSessionTimeout();
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended naturally');
+                console.log('🎤 Recognition ended - shouldRestart:', shouldRestart, 'manualStop:', manualStop);
                 isMainListening = false;
                 
                 // Clear any pending processing
@@ -1144,24 +1144,29 @@
                     speechProcessingTimeout = null;
                 }
                 
-                // PREVENT PINGING: Only restart if explicitly allowed and still on speech page
-                if (shouldRestart && !manualStop && currentPage === 'speech') {
-                    console.log('🔄 Restarting for continuous listening...');
-                    // Longer delay to prevent rapid ping cycles
+                // ANTI-PING: Only restart if manually allowed AND not processing AND on speech page
+                if (shouldRestart && !manualStop && currentPage === 'speech' && !processingDebounce) {
+                    console.log('🔄 Will restart in 2 seconds to prevent pinging...');
+                    
+                    // LONGER DELAY to prevent pinging
                     setTimeout(() => {
-                        if (shouldRestart && !manualStop && currentPage === 'speech' && !isMainListening) {
+                        // Double-check conditions before restart
+                        if (shouldRestart && !manualStop && currentPage === 'speech' && !isMainListening && !processingDebounce) {
                             try {
+                                console.log('🎤 Restarting recognition...');
                                 speechRecognition.start();
                                 console.log('✅ Restart successful');
                             } catch (e) {
                                 console.log('❌ Restart failed:', e.message);
-                                // Don't try again on failure to prevent pinging
+                                // IMPORTANT: Stop trying on failure to prevent pinging
                                 shouldRestart = false;
                                 updateStatus('❌ Recognition stopped - Click "START TALKING" to restart');
                                 updateListenButton();
                             }
+                        } else {
+                            console.log('🚫 Restart cancelled - conditions changed');
                         }
-                    }, 1000); // 1 second delay to prevent pinging
+                    }, 2000); // 2-second delay to prevent rapid restart pinging
                 } else {
                     updateListenButton();
                     if (currentPage === 'speech') {
@@ -1181,32 +1186,32 @@
                     speechProcessingTimeout = null;
                 }
                 
-                // PREVENT PINGING: Stop restart on errors
+                // ANTI-PING: Stop restart on any error
                 switch (event.error) {
                     case 'not-allowed':
-                        updateStatus('❌ Microphone permission denied - Please allow microphone access');
+                        updateStatus('❌ Microphone permission denied');
                         microphonePermissionGranted = false;
-                        shouldRestart = false;
+                        shouldRestart = false; // Stop restart attempts
                         break;
                     case 'network':
-                        updateStatus('❌ Network error - Check internet connection');
-                        shouldRestart = false;
+                        updateStatus('❌ Network error');
+                        shouldRestart = false; // Stop restart attempts
                         break;
                     case 'aborted':
-                        console.log('Recognition aborted (manual stop)');
+                        console.log('Recognition manually aborted');
+                        // Don't restart on manual abort
                         break;
                     case 'no-speech':
-                        console.log('No speech detected - continuing to listen');
-                        // Continue listening for no-speech without showing error
+                        console.log('No speech detected');
+                        // Continue listening for no-speech (normal)
                         break;
                     case 'audio-capture':
-                        updateStatus('❌ Microphone unavailable - Check if another app is using it');
-                        shouldRestart = false;
+                        updateStatus('❌ Microphone unavailable');
+                        shouldRestart = false; // Stop restart attempts
                         break;
                     default:
-                        console.log('Other recognition error:', event.error);
-                        // For unknown errors, stop restart to prevent issues
-                        shouldRestart = false;
+                        console.log('Unknown error:', event.error);
+                        shouldRestart = false; // Stop restart attempts on unknown errors
                         updateStatus('❌ Recognition error - Click "START TALKING" to restart');
                         break;
                 }
@@ -1227,36 +1232,48 @@
             
             console.log('🎤 Speech result received, event.results.length:', event.results.length);
             
-            let interimTranscript = '';
-            let finalTranscript = '';
+            let fullTranscript = '';
+            let latestInterim = '';
+            let hasNewFinal = false;
             
-            // Process ALL results to get complete text
+            // Build complete transcript from ALL results
             for (let i = 0; i < event.results.length; i++) {
                 const transcript = event.results[i][0].transcript;
                 console.log(`Result ${i}: "${transcript}" (final: ${event.results[i].isFinal})`);
                 
                 if (event.results[i].isFinal) {
-                    finalTranscript += transcript + ' ';
+                    fullTranscript += transcript + ' ';
+                    hasNewFinal = true;
                 } else {
-                    interimTranscript += transcript + ' ';
+                    // Only show the latest interim result for feedback
+                    if (i === event.results.length - 1) {
+                        latestInterim = transcript;
+                    }
                 }
             }
             
-            // Show real-time interim feedback
-            const currentInterim = interimTranscript.trim();
-            if (currentInterim) {
-                updateStatus(`🎤 Listening: "${currentInterim}"...`);
+            // Show real-time interim feedback from the latest result
+            if (latestInterim && !hasNewFinal) {
+                updateStatus(`🎤 Listening: "${latestInterim}"...`);
             }
             
-            // Process final results immediately when they come in
-            const cleanFinal = finalTranscript.trim();
-            if (cleanFinal && cleanFinal.length > 0) {
-                console.log('🎤 Final result:', cleanFinal);
+            // Process final results with delay to capture complete phrases
+            if (hasNewFinal && fullTranscript.trim()) {
+                const cleanFinal = fullTranscript.trim();
+                console.log('🎤 Final result detected:', cleanFinal);
                 
-                // Process immediately without waiting - the browser already decided this is final
-                if (!processingDebounce && cleanFinal.length > 1) {
-                    processFinalSpeech(cleanFinal);
+                // Clear any existing timeout to prevent multiple processing
+                if (speechProcessingTimeout) {
+                    clearTimeout(speechProcessingTimeout);
                 }
+                
+                // Wait for complete phrase - speech recognition often sends partial finals first
+                speechProcessingTimeout = setTimeout(() => {
+                    if (!processingDebounce && cleanFinal.length > 1) {
+                        console.log('🎤 Processing after delay:', cleanFinal);
+                        processFinalSpeech(cleanFinal);
+                    }
+                }, 800); // Wait for complete phrase capture
             }
         }
 
