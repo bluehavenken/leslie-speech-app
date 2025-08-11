@@ -1193,34 +1193,48 @@
                 let finalText = '';
                 let interimText = '';
                 
-                // Process results
-                for (let i = 0; i < event.results.length; i++) {
-                    if (event.results[i].isFinal) {
-                        finalText += event.results[i][0].transcript + ' ';
+                // Only process the LATEST results to prevent cascading
+                const latestIndex = event.results.length - 1;
+                
+                if (latestIndex >= 0) {
+                    const latestResult = event.results[latestIndex];
+                    
+                    if (latestResult.isFinal) {
+                        finalText = latestResult[0].transcript.trim();
+                        console.log('🎤 NEW Final text:', finalText);
                     } else {
-                        interimText += event.results[i][0].transcript + ' ';
+                        interimText = latestResult[0].transcript.trim();
                     }
                 }
                 
                 // Show interim feedback
-                if (interimText.trim()) {
-                    updateStatus(`🎤 Listening: "${interimText.trim()}"...`);
+                if (interimText && !finalText) {
+                    updateStatus(`🎤 Listening: "${interimText}"...`);
                 }
                 
-                // Process final text
-                if (finalText.trim()) {
-                    const cleanText = finalText.trim();
-                    console.log('🎤 Final text:', cleanText);
-                    
-                    // Simple duplicate check
+                // Process final text - with strict duplicate prevention
+                if (finalText && finalText.length > 1) {
                     const now = Date.now();
-                    if (cleanText !== lastProcessedPhrase || (now - lastPhraseTime) > 3000) {
-                        updateSpeechDisplay(cleanText);
-                        updateStatus(`🔊 Speaking: "${cleanText}"`);
-                        speakText(cleanText);
+                    const timeSinceLastPhrase = now - lastPhraseTime;
+                    
+                    // Strict duplicate checking
+                    const isDuplicate = finalText.toLowerCase() === lastProcessedPhrase.toLowerCase();
+                    const isTooSoon = timeSinceLastPhrase < 4000; // 4 seconds minimum between phrases
+                    const isVeryShort = finalText.length < 3;
+                    
+                    if (!isDuplicate && !isTooSoon && !isVeryShort && !isSpeechSynthesisActive) {
+                        console.log('✅ Processing NEW phrase:', finalText);
                         
-                        lastProcessedPhrase = cleanText;
+                        // Immediately update tracking to prevent duplicates
+                        lastProcessedPhrase = finalText;
                         lastPhraseTime = now;
+                        
+                        // Update display - replace previous, don't accumulate
+                        updateSpeechDisplay(finalText);
+                        updateStatus(`🔊 Speaking: "${finalText}"`);
+                        
+                        // Speak the phrase
+                        speakText(finalText);
                         
                         // Show ready status after speech
                         setTimeout(() => {
@@ -1228,6 +1242,8 @@
                                 updateStatus('🎤 Listening continuously - Say another phrase...');
                             }
                         }, 2000);
+                    } else {
+                        console.log('🚫 Skipping phrase:', finalText, 'isDuplicate:', isDuplicate, 'isTooSoon:', isTooSoon, 'isVeryShort:', isVeryShort);
                     }
                 }
             };
@@ -1317,14 +1333,23 @@
                 return;
             }
             
+            // Prevent speaking if already speaking
+            if (isSpeechSynthesisActive) {
+                console.log('🚫 Already speaking, skipping:', text);
+                return;
+            }
+            
             console.log('🔊 Speaking text:', text);
             
-            // Stop any existing speech
+            // Stop any existing speech first
             try {
                 speechSynth.cancel();
             } catch (e) {
                 console.log('Speech cancel error:', e);
             }
+            
+            // Set speaking flag immediately
+            isSpeechSynthesisActive = true;
             
             // Brief delay then speak
             setTimeout(() => {
@@ -1336,12 +1361,12 @@
                     utterance.lang = 'en-US';
                     
                     utterance.onstart = function() {
-                        console.log('✅ Speech synthesis started');
+                        console.log('✅ Speech synthesis started:', text);
                         isSpeechSynthesisActive = true;
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ Speech synthesis ended');
+                        console.log('✅ Speech synthesis ended:', text);
                         isSpeechSynthesisActive = false;
                     };
                     
@@ -1349,6 +1374,11 @@
                         console.error('❌ Speech synthesis error:', event.error);
                         isSpeechSynthesisActive = false;
                     };
+                    
+                    // Ensure synthesis is ready
+                    if (speechSynth.paused) {
+                        speechSynth.resume();
+                    }
                     
                     speechSynth.speak(utterance);
                     
@@ -1728,14 +1758,15 @@
                 if (!text || text === '') {
                     recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for your next phrase...</div>';
                 } else {
+                    // REPLACE previous content - don't accumulate
                     const html = `<div class="final-phrase" style="font-size: 18px; font-weight: bold; border: 2px solid #0099cc; padding: 12px; margin-bottom: 8px; background-color: #e3f2fd;">
-                                    ✅ CAPTURED: ${text}
+                                    ✅ LATEST: ${text}
                                  </div>
                                  <div style="color: #999; font-size: 12px; margin-top: 8px; text-align: center; padding: 6px; background: #f9f9f9; border-radius: 4px;">
-                                    🎤 Continuous listening - Say another phrase or click "STOP LISTENING"
+                                    🎤 Continuous listening - Say another phrase anytime
                                  </div>`;
                     
-                    recognizedTextEl.innerHTML = html;
+                    recognizedTextEl.innerHTML = html; // REPLACE, don't append
                 }
             }
         }
