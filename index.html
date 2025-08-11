@@ -1221,13 +1221,13 @@
                                 updateSpeechDisplay(latestFinalTranscript);
                                 updateStatus(`🔊 Speaking: "${latestFinalTranscript}"`);
                                 
-                                // Speak the phrase (will auto-restart recognition when done)
+                                // Speak the phrase (manual restart required after)
                                 speakText(latestFinalTranscript);
                                 
-                                // Reset processing flag quickly since speech handles restart
+                                // Reset processing flag immediately
                                 setTimeout(() => {
                                     isProcessingCurrentPhrase = false;
-                                }, 300);
+                                }, 200);
                             }
                         }, 700); // Fixed 0.7 second delay
                     }
@@ -1294,39 +1294,22 @@
                     console.log('✅ Speech finished completely');
                     isSpeaking = false;
                     
-                    // After speech ends, automatically restart recognition
-                    setTimeout(() => {
-                        if (currentPage === 'speech' && !isListening && !isProcessingCurrentPhrase) {
-                            console.log('🔄 Auto-restarting recognition after speech');
-                            updateStatus('🎤 Ready - Starting recognition...');
-                            
-                            try {
-                                recognition.start();
-                                console.log('✅ Recognition auto-restarted after speech');
-                            } catch (e) {
-                                console.error('❌ Auto-restart failed:', e.message);
-                                updateStatus('🎤 Click "START TALKING" to continue');
-                                resetListenButton();
-                            }
-                        }
-                    }, 500); // Wait 0.5 seconds after speech ends
+                    // NO auto-restart - manual only
+                    if (currentPage === 'speech') {
+                        updateStatus('🎤 Click "START TALKING" for next phrase');
+                        resetListenButton();
+                    }
                 };
                 
                 utterance.onerror = function(event) {
                     console.log('⚠️ Speech error:', event.error);
                     isSpeaking = false;
                     
-                    // Restart recognition even if speech failed
-                    setTimeout(() => {
-                        if (currentPage === 'speech' && !isListening) {
-                            try {
-                                recognition.start();
-                            } catch (e) {
-                                updateStatus('🎤 Click "START TALKING" to continue');
-                                resetListenButton();
-                            }
-                        }
-                    }, 500);
+                    // NO auto-restart on error either
+                    if (currentPage === 'speech') {
+                        updateStatus('🎤 Click "START TALKING" to continue');
+                        resetListenButton();
+                    }
                 };
                 
                 speechSynth.speak(utterance);
@@ -1765,10 +1748,10 @@
                             isListening = false;
                         }
                         
-                        // Simple auto-start sequence
+                        // Simple auto-start sequence - NO AUTOMATIC RESTART
                         setTimeout(() => {
                             if (currentPage === 'speech') {
-                                console.log('🎤 Auto-starting recognition...');
+                                console.log('🎤 Initial auto-start only...');
                                 const listenButton = document.getElementById('listenButton');
                                 if (listenButton) {
                                     listenButton.textContent = 'STOP LISTENING';
@@ -1776,7 +1759,7 @@
                                 }
                                 updateStatus('🎤 Initializing speech recognition...');
                                 
-                                // Start recognition directly
+                                // Start recognition once on page load
                                 setTimeout(() => {
                                     if (currentPage === 'speech') {
                                         startListening();
@@ -1947,6 +1930,13 @@
                 listenButton.className = 'control-btn btn-listen';
             }
             isListening = false;
+            isProcessingCurrentPhrase = false;
+            
+            // Clear any pending timeouts to stop pinging
+            if (speechTimeout) {
+                clearTimeout(speechTimeout);
+                speechTimeout = null;
+            }
         }
         
         function attemptStartRecognition() {
