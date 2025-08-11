@@ -1266,7 +1266,7 @@
             }
         }
 
-        // Simple, reliable speech function
+        // Simple, reliable speech function with optional auto-restart
         function speakText(text) {
             if (isSpeaking || !text || text.trim() === '') {
                 return;
@@ -1294,8 +1294,28 @@
                     console.log('✅ Speech finished completely');
                     isSpeaking = false;
                     
-                    // NO auto-restart - manual only
-                    if (currentPage === 'speech') {
+                    // Check if continuous mode is enabled (button still says STOP LISTENING)
+                    const listenButton = document.getElementById('listenButton');
+                    const isContinuousMode = listenButton && listenButton.textContent === 'STOP LISTENING';
+                    
+                    if (currentPage === 'speech' && isContinuousMode) {
+                        // Continuous mode - auto-restart after speech
+                        updateStatus('🎤 Ready for next phrase - Auto-restarting...');
+                        setTimeout(() => {
+                            if (currentPage === 'speech' && !isListening && !isProcessingCurrentPhrase) {
+                                console.log('🔄 Auto-restarting for continuous listening');
+                                try {
+                                    recognition.start();
+                                    console.log('✅ Recognition auto-restarted');
+                                } catch (e) {
+                                    console.error('❌ Auto-restart failed:', e.message);
+                                    updateStatus('🎤 Click "START TALKING" to continue');
+                                    resetListenButton();
+                                }
+                            }
+                        }, 800); // Wait a bit longer for stability
+                    } else {
+                        // Manual mode - require button click
                         updateStatus('🎤 Click "START TALKING" for next phrase');
                         resetListenButton();
                     }
@@ -1305,7 +1325,7 @@
                     console.log('⚠️ Speech error:', event.error);
                     isSpeaking = false;
                     
-                    // NO auto-restart on error either
+                    // Always go to manual mode on error
                     if (currentPage === 'speech') {
                         updateStatus('🎤 Click "START TALKING" to continue');
                         resetListenButton();
@@ -1875,13 +1895,14 @@
                 console.log('🎤 Starting recognition...');
                 lastSpeechTime = Date.now();
                 
-                // Update button immediately to show we're trying
+                // Update button to show continuous mode is active
                 const listenButton = document.getElementById('listenButton');
                 if (listenButton) {
-                    listenButton.textContent = 'STARTING...';
+                    listenButton.textContent = 'STOP LISTENING';
                     listenButton.className = 'control-btn btn-stop';
                 }
                 
+                updateStatus('🎤 Starting continuous listening mode...');
                 startListening();
             }
         }
