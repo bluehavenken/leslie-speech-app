@@ -1270,54 +1270,68 @@
             }
         }
 
-        // Simple, reliable speech function - MANUAL MODE ONLY
+        // Fixed speech function
         function speakText(text) {
-            if (isSpeaking || !text || text.trim() === '') {
+            if (!text || text.trim() === '') {
+                console.log('🚫 No text to speak');
                 return;
             }
             
             console.log('🔊 Speaking:', text);
-            isSpeaking = true;
             
-            // Stop any existing speech immediately
-            speechSynth.cancel();
+            // Stop any existing speech
+            try {
+                speechSynth.cancel();
+            } catch (e) {
+                console.log('Speech cancel error:', e);
+            }
             
-            // Brief delay to ensure cancel takes effect
+            // Wait a moment then speak
             setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = settings.speechSpeed || 1.0;
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
-                utterance.lang = 'en-US';
-                
-                utterance.onstart = function() {
-                    console.log('✅ Speech started:', text);
-                };
-                
-                utterance.onend = function() {
-                    console.log('✅ Speech finished completely');
+                try {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.rate = settings.speechSpeed || 1.0;
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
+                    utterance.lang = 'en-US';
+                    
+                    utterance.onstart = function() {
+                        console.log('✅ Speech started successfully');
+                        isSpeaking = true;
+                    };
+                    
+                    utterance.onend = function() {
+                        console.log('✅ Speech finished successfully');
+                        isSpeaking = false;
+                        
+                        // Update status when speech is done
+                        if (currentPage === 'speech') {
+                            updateStatus('🎤 Click "START TALKING" for next phrase');
+                        }
+                    };
+                    
+                    utterance.onerror = function(event) {
+                        console.error('❌ Speech error:', event.error);
+                        isSpeaking = false;
+                        
+                        if (currentPage === 'speech') {
+                            updateStatus('🎤 Speech error - Click "START TALKING" to continue');
+                        }
+                    };
+                    
+                    // Force speak
+                    speechSynth.speak(utterance);
+                    console.log('✅ Speech utterance queued');
+                    
+                } catch (error) {
+                    console.error('❌ Speech synthesis error:', error);
                     isSpeaking = false;
                     
-                    // Always manual mode - NO auto-restart
                     if (currentPage === 'speech') {
                         updateStatus('🎤 Click "START TALKING" for next phrase');
-                        resetListenButton();
                     }
-                };
-                
-                utterance.onerror = function(event) {
-                    console.log('⚠️ Speech error:', event.error);
-                    isSpeaking = false;
-                    
-                    // Always manual mode on error
-                    if (currentPage === 'speech') {
-                        updateStatus('🎤 Click "START TALKING" to continue');
-                        resetListenButton();
-                    }
-                };
-                
-                speechSynth.speak(utterance);
-            }, 100);
+                }
+            }, 200);
         }
 
         // === VOICE COMMANDS ===
@@ -1757,27 +1771,30 @@
                     }
                     
                     if (pageId === 'speech') {
-                        console.log('📄 Entering speech page - READY TO START');
+                        console.log('📄 Entering speech page - READY TO START IMMEDIATELY');
                         
                         // Stop voice commands
                         stopVoiceCommands();
                         
-                        // Clear display
+                        // Set up ready display immediately
                         const recognizedTextEl = document.getElementById('recognizedText');
                         if (recognizedTextEl) {
-                            recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Ready to listen - Click "START TALKING"</div>';
+                            recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px; font-size: 18px;">🎤 READY TO LISTEN<br><br>Click "START TALKING" to begin</div>';
                         }
                         
-                        // Set button to ready state
+                        // Set button to ready state immediately
                         const listenButton = document.getElementById('listenButton');
                         if (listenButton) {
                             listenButton.textContent = 'START TALKING';
                             listenButton.className = 'control-btn btn-listen';
                         }
                         
-                        updateStatus('🎤 Ready - Click "START TALKING" to begin listening');
+                        updateStatus('🎤 READY - Click "START TALKING" to begin listening');
                         
-                        // NO automatic setup - only on demand
+                        // Clear all state
+                        isListening = false;
+                        isProcessingCurrentPhrase = false;
+                        isSpeaking = false;
                         recognition = null;
                         
                     } else {
@@ -1965,18 +1982,36 @@
                             
                             // Get final result
                             let finalText = '';
+                            let interimText = '';
+                            
                             for (let i = 0; i < event.results.length; i++) {
                                 if (event.results[i].isFinal) {
                                     finalText = event.results[i][0].transcript.trim();
-                                    break;
+                                } else {
+                                    interimText = event.results[i][0].transcript;
                                 }
                             }
                             
+                            // Show interim results
+                            if (interimText) {
+                                updateStatus(`🎤 Listening: "${interimText}"...`);
+                            }
+                            
+                            // Process final result
                             if (finalText && finalText.length > 1) {
-                                console.log('✅ Final text:', finalText);
+                                console.log('✅ Final text received:', finalText);
+                                
+                                // Update display immediately
                                 updateSpeechDisplay(finalText);
-                                updateStatus('🔊 Speaking: ' + finalText);
+                                updateStatus(`🔊 Speaking: "${finalText}"`);
+                                
+                                // Speak the text
                                 speakText(finalText);
+                                
+                                // Reset button for next use
+                                setTimeout(() => {
+                                    resetListenButton();
+                                }, 1000);
                             }
                         };
                         
