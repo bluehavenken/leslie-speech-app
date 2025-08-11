@@ -1708,6 +1708,43 @@
             console.log('📄 Showing page:', pageId);
             
             try {
+                // COMPLETE CLEANUP when leaving speech page
+                if (currentPage === 'speech' && pageId !== 'speech') {
+                    console.log('🧹 Complete cleanup leaving speech page...');
+                    
+                    // Stop all recognition
+                    if (recognition) {
+                        try {
+                            recognition.abort();
+                            console.log('✅ Recognition aborted');
+                        } catch (e) {
+                            console.log('ℹ️ Recognition abort:', e.message);
+                        }
+                    }
+                    
+                    // Stop all speech
+                    speechSynth.cancel();
+                    
+                    // Clear ALL timeouts and intervals
+                    if (speechTimeout) {
+                        clearTimeout(speechTimeout);
+                        speechTimeout = null;
+                    }
+                    if (sessionTimeoutId) {
+                        clearTimeout(sessionTimeoutId);
+                        sessionTimeoutId = null;
+                    }
+                    
+                    // Reset ALL state variables
+                    isListening = false;
+                    isProcessingCurrentPhrase = false;
+                    isSpeaking = false;
+                    lastProcessedPhrase = '';
+                    lastPhraseTime = 0;
+                    
+                    console.log('✅ Complete cleanup finished');
+                }
+                
                 document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
                 
                 const targetPage = document.getElementById(pageId + 'Page');
@@ -1719,55 +1756,24 @@
                         pageHistory.push(pageId);
                     }
                     
-                    if (pageId !== 'speech') {
-                        clearSessionTimeout();
-                        if (isListening && recognition) {
-                            try {
-                                recognition.abort();
-                            } catch (e) {
-                                console.log('Error stopping recognition:', e);
-                            }
-                            isListening = false;
-                            isSpeaking = false;
-                        }
-                    }
-                    
                     if (pageId === 'speech') {
-                        console.log('📄 Entering speech page - setting up recognition');
-                        stopVoiceCommands();
-                        clearSpeechText();
-                        isSpeaking = false;
+                        console.log('📄 Entering speech page - FRESH START');
                         
-                        // Reset all recognition state
-                        if (recognition) {
-                            try {
-                                recognition.abort();
-                            } catch (e) {
-                                console.log('Error aborting recognition:', e);
-                            }
-                            isListening = false;
+                        // Complete fresh start - no auto-start
+                        const listenButton = document.getElementById('listenButton');
+                        if (listenButton) {
+                            listenButton.textContent = 'START TALKING';
+                            listenButton.className = 'control-btn btn-listen';
                         }
                         
-                        // Simple auto-start sequence - NO AUTOMATIC RESTART
-                        setTimeout(() => {
-                            if (currentPage === 'speech') {
-                                console.log('🎤 Initial auto-start only...');
-                                const listenButton = document.getElementById('listenButton');
-                                if (listenButton) {
-                                    listenButton.textContent = 'STOP LISTENING';
-                                    listenButton.className = 'control-btn btn-stop';
-                                }
-                                updateStatus('🎤 Initializing speech recognition...');
-                                
-                                // Start recognition once on page load
-                                setTimeout(() => {
-                                    if (currentPage === 'speech') {
-                                        startListening();
-                                    }
-                                }, 500);
-                            }
-                        }, 300);
+                        updateStatus('🎤 Ready - Click "START TALKING" to begin');
+                        clearSpeechText();
+                        
+                        // Stop voice commands cleanly
+                        stopVoiceCommands();
+                        
                     } else {
+                        // Start voice commands for other pages
                         if (microphonePermissionGranted && isInitialized && !voiceCommandsInitialized && !isListening) {
                             setTimeout(() => {
                                 initializeVoiceCommandsWithPermissions();
@@ -1924,19 +1930,43 @@
         }
         
         function resetListenButton() {
+            console.log('🔄 Resetting listen button and clearing all timers...');
+            
             const listenButton = document.getElementById('listenButton');
             if (listenButton) {
                 listenButton.textContent = 'START TALKING';
                 listenButton.className = 'control-btn btn-listen';
             }
+            
+            // Reset ALL state variables
             isListening = false;
             isProcessingCurrentPhrase = false;
+            isSpeaking = false;
             
-            // Clear any pending timeouts to stop pinging
+            // Clear ALL pending timeouts to stop any pinging
             if (speechTimeout) {
                 clearTimeout(speechTimeout);
                 speechTimeout = null;
+                console.log('✅ Speech timeout cleared in reset');
             }
+            
+            if (sessionTimeoutId) {
+                clearTimeout(sessionTimeoutId);
+                sessionTimeoutId = null;
+                console.log('✅ Session timeout cleared in reset');
+            }
+            
+            // Abort any running recognition
+            if (recognition) {
+                try {
+                    recognition.abort();
+                    console.log('✅ Recognition aborted in reset');
+                } catch (e) {
+                    console.log('ℹ️ Recognition abort in reset:', e.message);
+                }
+            }
+            
+            console.log('✅ Listen button reset and all timers cleared');
         }
         
         function attemptStartRecognition() {
@@ -2038,29 +2068,51 @@
         }
 
         function clearSpeechText() {
+            console.log('🗑️ Clearing speech data and stopping all processes...');
+            
             phraseHistory = [];
             lastProcessedPhrase = '';
             lastPhraseTime = 0;
             
+            // Stop all speech processes
             speechSynth.cancel();
             isSpeaking = false;
             
             lastVoiceCommand = '';
             lastVoiceCommandTime = 0;
             
-            // Clear speech recognition state
+            // Clear ALL speech recognition state and timers
             isProcessingCurrentPhrase = false;
+            isListening = false;
+            
             if (speechTimeout) {
                 clearTimeout(speechTimeout);
                 speechTimeout = null;
+                console.log('✅ Speech timeout cleared');
+            }
+            
+            if (sessionTimeoutId) {
+                clearTimeout(sessionTimeoutId);
+                sessionTimeoutId = null;
+                console.log('✅ Session timeout cleared');
+            }
+            
+            // Stop recognition completely
+            if (recognition) {
+                try {
+                    recognition.abort();
+                    console.log('✅ Recognition aborted in clear');
+                } catch (e) {
+                    console.log('ℹ️ Recognition abort in clear:', e.message);
+                }
             }
             
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
-                recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Say something and your phrase will appear here...</div>';
+                recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Click "START TALKING" to begin...</div>';
             }
             
-            console.log('🗑️ Speech data cleared');
+            console.log('✅ All speech data and processes cleared');
         }
 
         function clearTextInput() {
