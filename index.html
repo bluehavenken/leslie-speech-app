@@ -1220,15 +1220,14 @@
                                 
                                 updateSpeechDisplay(latestFinalTranscript);
                                 updateStatus(`🔊 Speaking: "${latestFinalTranscript}"`);
+                                
+                                // Speak the phrase (will auto-restart recognition when done)
                                 speakText(latestFinalTranscript);
                                 
-                                // Reset after speech completes
+                                // Reset processing flag quickly since speech handles restart
                                 setTimeout(() => {
                                     isProcessingCurrentPhrase = false;
-                                    if (currentPage === 'speech' && isListening) {
-                                        updateStatus('🎤 Ready for next phrase!');
-                                    }
-                                }, 1500); // Longer delay to let speech finish
+                                }, 300);
                             }
                         }, 700); // Fixed 0.7 second delay
                     }
@@ -1276,31 +1275,62 @@
             console.log('🔊 Speaking:', text);
             isSpeaking = true;
             
+            // Stop any existing speech immediately
             speechSynth.cancel();
             
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.rate = settings.speechSpeed || 1.0;
-            utterance.pitch = 1.0;
-            utterance.volume = 1.0;
-            utterance.lang = 'en-US';
-            
-            utterance.onend = function() {
-                console.log('✅ Speech finished');
-                isSpeaking = false;
-                if (currentPage === 'speech' && isListening) {
-                    updateStatus('🎤 Ready for next phrase!');
-                }
-            };
-            
-            utterance.onerror = function(event) {
-                console.log('⚠️ Speech error:', event.error);
-                isSpeaking = false;
-                if (currentPage === 'speech' && isListening) {
-                    updateStatus('🎤 Ready for next phrase!');
-                }
-            };
-            
-            speechSynth.speak(utterance);
+            // Brief delay to ensure cancel takes effect
+            setTimeout(() => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = settings.speechSpeed || 1.0;
+                utterance.pitch = 1.0;
+                utterance.volume = 1.0;
+                utterance.lang = 'en-US';
+                
+                utterance.onstart = function() {
+                    console.log('✅ Speech started:', text);
+                };
+                
+                utterance.onend = function() {
+                    console.log('✅ Speech finished completely');
+                    isSpeaking = false;
+                    
+                    // After speech ends, automatically restart recognition
+                    setTimeout(() => {
+                        if (currentPage === 'speech' && !isListening && !isProcessingCurrentPhrase) {
+                            console.log('🔄 Auto-restarting recognition after speech');
+                            updateStatus('🎤 Ready - Starting recognition...');
+                            
+                            try {
+                                recognition.start();
+                                console.log('✅ Recognition auto-restarted after speech');
+                            } catch (e) {
+                                console.error('❌ Auto-restart failed:', e.message);
+                                updateStatus('🎤 Click "START TALKING" to continue');
+                                resetListenButton();
+                            }
+                        }
+                    }, 500); // Wait 0.5 seconds after speech ends
+                };
+                
+                utterance.onerror = function(event) {
+                    console.log('⚠️ Speech error:', event.error);
+                    isSpeaking = false;
+                    
+                    // Restart recognition even if speech failed
+                    setTimeout(() => {
+                        if (currentPage === 'speech' && !isListening) {
+                            try {
+                                recognition.start();
+                            } catch (e) {
+                                updateStatus('🎤 Click "START TALKING" to continue');
+                                resetListenButton();
+                            }
+                        }
+                    }, 500);
+                };
+                
+                speechSynth.speak(utterance);
+            }, 100);
         }
 
         // === VOICE COMMANDS ===
