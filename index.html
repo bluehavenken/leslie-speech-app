@@ -1094,7 +1094,7 @@
 
         // === MAIN SPEECH RECOGNITION ===
         function createMainSpeechRecognition() {
-            console.log('🎤 Creating FIXED speech recognition...');
+            console.log('🎤 Creating PING-FREE speech recognition...');
             
             // Complete cleanup
             if (speechRecognition) {
@@ -1107,78 +1107,74 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             speechRecognition = new SpeechRecognition();
             
-            // FIXED settings for complete phrase capture
-            speechRecognition.continuous = false;
+            // PING-FREE settings - true continuous mode
+            speechRecognition.continuous = true; // TRUE continuous - no restarts needed
             speechRecognition.interimResults = true;
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 Recognition started for single phrase');
+                console.log('🎤 TRUE CONTINUOUS recognition started - NO RESTARTS');
                 isMainListening = true;
-                // DON'T update button - keep it in listening state
-                updateStatus('🎤 Listening for complete phrase...');
+                updateStatus('🎤 Listening continuously - Speak anytime...');
                 resetSessionTimeout();
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended for single phrase');
-                // Keep isMainListening true to maintain button state
-                // DON'T call updateListenButton() to prevent button flashing
+                console.log('🎤 Recognition ended - NO AUTO-RESTART');
+                isMainListening = false;
                 
-                // ONLY restart if we should continue and user hasn't stopped
+                // NO RESTART - only manual control
                 if (shouldContinueListening && !manualStop && currentPage === 'speech') {
-                    updateStatus('🎤 Ready for next phrase...');
-                    // Restart quietly without changing button state
+                    updateStatus('🔄 Restarting...');
+                    // Only restart if really needed, with long delay
                     setTimeout(() => {
                         if (shouldContinueListening && !manualStop && currentPage === 'speech') {
                             try {
-                                console.log('🎤 Quietly restarting for next phrase...');
                                 speechRecognition.start();
                             } catch (e) {
                                 console.log('❌ Restart failed:', e.message);
                                 shouldContinueListening = false;
                                 isMainListening = false;
                                 updateListenButton();
-                                updateStatus('❌ Recognition stopped - Click "START TALKING" to restart');
+                                updateStatus('❌ Recognition stopped');
                             }
                         }
-                    }, 1000); // 1 second quiet restart
+                    }, 5000); // 5 SECOND delay to minimize pinging
                 } else {
                     isMainListening = false;
                     updateListenButton();
-                    updateStatus('🛑 Stopped - Click "START TALKING" to restart');
+                    updateStatus('🛑 Stopped');
                 }
             };
 
             speechRecognition.onerror = function(event) {
                 console.error('🎤 Recognition error:', event.error);
                 
-                // Only change button state on serious errors
-                if (event.error === 'not-allowed' || event.error === 'network' || event.error === 'audio-capture') {
-                    isMainListening = false;
-                    shouldContinueListening = false;
-                    updateListenButton();
-                }
-                
+                // MINIMAL error handling to prevent restarts
                 switch (event.error) {
                     case 'not-allowed':
                         updateStatus('❌ Microphone permission denied');
                         microphonePermissionGranted = false;
+                        shouldContinueListening = false;
+                        isMainListening = false;
+                        updateListenButton();
                         break;
                     case 'network':
                         updateStatus('❌ Network error');
-                        break;
-                    case 'no-speech':
-                        console.log('No speech detected - will retry quietly');
-                        updateStatus('🎤 No speech detected - listening again...');
+                        shouldContinueListening = false;
+                        isMainListening = false;
+                        updateListenButton();
                         break;
                     case 'audio-capture':
                         updateStatus('❌ Microphone unavailable');
+                        shouldContinueListening = false;
+                        isMainListening = false;
+                        updateListenButton();
                         break;
                     default:
-                        console.log('Minor error - continuing:', event.error);
-                        updateStatus('🎤 Continuing to listen...');
+                        // For all other errors including 'no-speech', just continue
+                        console.log('Ignoring error to prevent pinging:', event.error);
                         break;
                 }
             };
@@ -1186,72 +1182,70 @@
             speechRecognition.onresult = function(event) {
                 resetSessionTimeout();
                 
-                // SIMPLE approach - get the FULL final result
-                let fullFinalText = '';
+                // Process results only from the LATEST final result
+                let latestFinalText = '';
                 let currentInterim = '';
                 
-                // Go through ALL results and build complete final text
-                for (let i = 0; i < event.results.length; i++) {
-                    if (event.results[i].isFinal) {
-                        fullFinalText += event.results[i][0].transcript + ' ';
-                        console.log(`Adding final result ${i}: "${event.results[i][0].transcript}"`);
-                    } else {
-                        // Get the last interim for display
-                        currentInterim = event.results[i][0].transcript;
+                // Find the latest final result
+                for (let i = event.results.length - 1; i >= 0; i--) {
+                    if (event.results[i].isFinal && !latestFinalText) {
+                        latestFinalText = event.results[i][0].transcript.trim();
+                        console.log(`Latest final result: "${latestFinalText}"`);
+                        break;
+                    }
+                }
+                
+                // Get current interim
+                if (event.results.length > 0) {
+                    const lastResult = event.results[event.results.length - 1];
+                    if (!lastResult.isFinal) {
+                        currentInterim = lastResult[0].transcript;
                     }
                 }
                 
                 // Show interim feedback
-                if (currentInterim && !fullFinalText.trim()) {
+                if (currentInterim && !latestFinalText) {
                     updateStatus(`🎤 Listening: "${currentInterim}"...`);
                 }
                 
-                // When we get final text, process it
-                if (fullFinalText.trim()) {
-                    const completeFinalPhrase = fullFinalText.trim();
-                    console.log('🎤 FINAL COMPLETE TEXT:', completeFinalPhrase, '(', completeFinalPhrase.split(' ').length, 'words)');
-                    
-                    if (completeFinalPhrase.length > 1) {
-                        processCompleteFinalPhrase(completeFinalPhrase);
-                    }
+                // Process latest final text
+                if (latestFinalText && latestFinalText.length > 1) {
+                    console.log('🎤 Processing latest final:', latestFinalText);
+                    processLatestFinalPhrase(latestFinalText);
                 }
             };
             
-            console.log('✅ FIXED speech recognition created');
+            console.log('✅ PING-FREE continuous recognition created');
         }
 
-        function processCompleteFinalPhrase(text) {
+        function processLatestFinalPhrase(text) {
             const now = Date.now();
             const timeSinceLastPhrase = now - lastPhraseTime;
             
-            // Duplicate prevention
+            // Strict duplicate prevention
             const isDuplicate = text.toLowerCase() === lastProcessedPhrase.toLowerCase();
-            const isTooSoon = timeSinceLastPhrase < 3000;
+            const isTooSoon = timeSinceLastPhrase < 4000; // 4 seconds between phrases
             
             if (!isDuplicate && !isTooSoon && !isSpeechSynthesisActive) {
-                console.log('✅ Processing COMPLETE FINAL PHRASE:', text);
+                console.log('✅ Processing phrase:', text);
                 
-                // Update tracking
+                // Update tracking immediately
                 lastProcessedPhrase = text;
                 lastPhraseTime = now;
                 
-                // Display and speak the COMPLETE phrase
+                // Display and speak
                 updateSpeechDisplay(text);
-                updateStatus(`🔊 Speaking complete phrase: "${text}"`);
+                updateStatus(`🔊 Speaking: "${text}"`);
                 speakText(text);
                 
-                // Ready for next phrase - keep listening state
+                // Continue listening status
                 setTimeout(() => {
                     if (shouldContinueListening) {
-                        updateStatus('🎤 Listening continuously - Say another phrase...');
+                        updateStatus('🎤 Listening continuously...');
                     }
                 }, 2000);
             } else {
-                console.log('🚫 Skipping phrase:', text, 'duplicate:', isDuplicate, 'tooSoon:', isTooSoon);
-                // Still show listening status even when skipping
-                if (shouldContinueListening) {
-                    updateStatus('🎤 Listening continuously - Say another phrase...');
-                }
+                console.log('🚫 Skipping duplicate/recent phrase:', text);
             }
         }
 
