@@ -1,5 +1,4 @@
-
-I see the issue! The nuclear timeout clearing is too aggressive and is breaking other parts of the app. Also, the recognition object isn't being properly rebuilt. Let me fix this with a more targeted approach.<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -946,10 +945,10 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
         // Voice command initialization tracking
         let voiceCommandsInitialized = false;
         
-        // Session timeout
+        // Session timeout - 2 minutes instead of 3
         let sessionTimeoutId = null;
         let lastSpeechTime = null;
-        const SESSION_TIMEOUT = 3 * 60 * 1000; // 3 minutes
+        const SESSION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
         
         // Speech tracking
         let lastProcessedPhrase = '';
@@ -1105,18 +1104,42 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
                         listenButton.textContent = 'STOP LISTENING';
                         listenButton.className = 'control-btn btn-stop';
                     }
-                    updateStatus(`🎤 Listening - Speak one phrase clearly!`);
+                    updateStatus(`🎤 Continuous listening active - Speak phrases clearly!`);
                     resetSessionTimeout();
                 };
 
                 recognition.onend = function() {
                     console.log('🎤 Recognition ended');
                     isListening = false;
-                    updateListenButton();
                     
-                    // Stop the constant restart cycle - only restart manually
-                    if (currentPage === 'speech') {
-                        updateStatus('🛑 Recognition stopped - Click "START TALKING" to restart');
+                    // Check if we should restart for continuous mode
+                    const listenButton = document.getElementById('listenButton');
+                    const shouldContinue = currentPage === 'speech' && 
+                                         listenButton && 
+                                         listenButton.textContent === 'STOP LISTENING' &&
+                                         !isProcessingCurrentPhrase;
+                    
+                    if (shouldContinue) {
+                        console.log('🔄 Restarting recognition for continuous mode');
+                        setTimeout(() => {
+                            if (currentPage === 'speech' && 
+                                listenButton.textContent === 'STOP LISTENING' && 
+                                !isListening && 
+                                !isProcessingCurrentPhrase) {
+                                
+                                try {
+                                    recognition.start();
+                                    console.log('✅ Recognition restarted for continuous mode');
+                                } catch (e) {
+                                    console.error('❌ Continuous restart failed:', e.message);
+                                    updateStatus('❌ Continuous listening failed - Click "START TALKING" to restart');
+                                    resetListenButton();
+                                }
+                            }
+                        }, 300); // Quick restart for continuous mode
+                    } else {
+                        updateListenButton();
+                        updateStatus('✅ Stopped listening - Click "START TALKING" to restart');
                     }
                 };
 
@@ -1267,7 +1290,7 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
             }
         }
 
-        // Simple, reliable speech function - MANUAL MODE ONLY
+        // Simple, reliable speech function with auto-restart for continuous mode
         function speakText(text) {
             if (isSpeaking || !text || text.trim() === '') {
                 return;
@@ -1295,8 +1318,30 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
                     console.log('✅ Speech finished completely');
                     isSpeaking = false;
                     
-                    // Always go to manual mode - NO auto-restart
-                    if (currentPage === 'speech') {
+                    // Check if we're in continuous mode (button says STOP LISTENING)
+                    const listenButton = document.getElementById('listenButton');
+                    const isContinuousMode = listenButton && listenButton.textContent === 'STOP LISTENING';
+                    
+                    if (currentPage === 'speech' && isContinuousMode) {
+                        // Continuous mode - auto-restart after speech
+                        updateStatus('🎤 Ready for next phrase - Auto-restarting...');
+                        setTimeout(() => {
+                            if (currentPage === 'speech' && !isListening && !isProcessingCurrentPhrase) {
+                                console.log('🔄 Auto-restarting for continuous listening');
+                                try {
+                                    if (recognition) {
+                                        recognition.start();
+                                        console.log('✅ Recognition auto-restarted');
+                                    }
+                                } catch (e) {
+                                    console.error('❌ Auto-restart failed:', e.message);
+                                    updateStatus('🎤 Click "START TALKING" to continue');
+                                    resetListenButton();
+                                }
+                            }
+                        }, 1000); // 1 second delay for stability
+                    } else {
+                        // Manual mode - require button click
                         updateStatus('🎤 Click "START TALKING" for next phrase');
                         resetListenButton();
                     }
@@ -1306,7 +1351,7 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
                     console.log('⚠️ Speech error:', event.error);
                     isSpeaking = false;
                     
-                    // Always manual mode on error
+                    // Always go to manual mode on error
                     if (currentPage === 'speech') {
                         updateStatus('🎤 Click "START TALKING" to continue');
                         resetListenButton();
@@ -1759,7 +1804,7 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
                     }
                     
                     if (pageId === 'speech') {
-                        console.log('📄 Entering speech page - REBUILDING RECOGNITION');
+                        console.log('📄 Entering speech page - AUTO-START CONTINUOUS MODE');
                         
                         // Stop voice commands
                         stopVoiceCommands();
@@ -1773,19 +1818,25 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
                             console.error('❌ Recognition rebuild failed:', e);
                         }
                         
-                        // Reset display and button
+                        // Reset display
                         const recognizedTextEl = document.getElementById('recognizedText');
                         if (recognizedTextEl) {
-                            recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Click "START TALKING" to begin...</div>';
+                            recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Starting continuous listening...</div>';
                         }
                         
-                        const listenButton = document.getElementById('listenButton');
-                        if (listenButton) {
-                            listenButton.textContent = 'START TALKING';
-                            listenButton.className = 'control-btn btn-listen';
-                        }
-                        
-                        updateStatus('🎤 Ready - Click "START TALKING" to begin');
+                        // Auto-start continuous listening
+                        setTimeout(() => {
+                            if (currentPage === 'speech') {
+                                console.log('🎤 Auto-starting continuous listening mode...');
+                                const listenButton = document.getElementById('listenButton');
+                                if (listenButton) {
+                                    listenButton.textContent = 'STOP LISTENING';
+                                    listenButton.className = 'control-btn btn-stop';
+                                }
+                                updateStatus('🎤 Starting continuous listening mode...');
+                                startListening();
+                            }
+                        }, 500);
                         
                     } else {
                         // Start voice commands for other pages
@@ -2164,6 +2215,7 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
             if (sessionTimeoutId) clearTimeout(sessionTimeoutId);
             sessionTimeoutId = setTimeout(() => {
                 if (isListening && currentPage === 'speech') {
+                    console.log('⏰ 2-minute timeout reached - stopping listening');
                     try {
                         if (recognition) recognition.abort();
                     } catch (e) {
@@ -2171,8 +2223,8 @@ I see the issue! The nuclear timeout clearing is too aggressive and is breaking 
                     }
                     isListening = false;
                     isSpeaking = false;
-                    updateListenButton();
-                    updateStatus('⏰ Session timeout (3 minutes) - Click "START TALKING" to restart');
+                    resetListenButton();
+                    updateStatus('⏰ Session timeout (2 minutes) - Click "START TALKING" to restart');
                 }
                 clearSessionTimeout();
             }, SESSION_TIMEOUT);
