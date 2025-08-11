@@ -1,4 +1,5 @@
-<!DOCTYPE html>
+
+I see the issue! The nuclear timeout clearing is too aggressive and is breaking other parts of the app. Also, the recognition object isn't being properly rebuilt. Let me fix this with a more targeted approach.<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1720,12 +1721,13 @@
                         } catch (e) {
                             console.log('ℹ️ Recognition abort:', e.message);
                         }
+                        recognition = null; // Destroy the object
                     }
                     
                     // Stop all speech
                     speechSynth.cancel();
                     
-                    // Clear ALL timeouts and intervals
+                    // Clear only our specific timeouts
                     if (speechTimeout) {
                         clearTimeout(speechTimeout);
                         speechTimeout = null;
@@ -1742,9 +1744,6 @@
                     lastProcessedPhrase = '';
                     lastPhraseTime = 0;
                     
-                    // Destroy recognition object completely
-                    recognition = null;
-                    
                     console.log('✅ Complete cleanup finished');
                 }
                 
@@ -1760,24 +1759,31 @@
                     }
                     
                     if (pageId === 'speech') {
-                        console.log('📄 Entering speech page - COMPLETE FRESH START');
+                        console.log('📄 Entering speech page - REBUILDING RECOGNITION');
                         
                         // Stop voice commands
                         stopVoiceCommands();
                         
-                        // Clear display
-                        clearSpeechText();
+                        // Force rebuild recognition every time
+                        console.log('🔄 Force rebuilding recognition object...');
+                        try {
+                            setupSpeechRecognition();
+                            console.log('✅ Recognition rebuilt successfully');
+                        } catch (e) {
+                            console.error('❌ Recognition rebuild failed:', e);
+                        }
                         
-                        // Reset button to clean state
+                        // Reset display and button
+                        const recognizedTextEl = document.getElementById('recognizedText');
+                        if (recognizedTextEl) {
+                            recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Click "START TALKING" to begin...</div>';
+                        }
+                        
                         const listenButton = document.getElementById('listenButton');
                         if (listenButton) {
                             listenButton.textContent = 'START TALKING';
                             listenButton.className = 'control-btn btn-listen';
                         }
-                        
-                        // Rebuild recognition from scratch
-                        console.log('🔄 Rebuilding recognition object...');
-                        setupSpeechRecognition();
                         
                         updateStatus('🎤 Ready - Click "START TALKING" to begin');
                         
@@ -1987,10 +1993,18 @@
                 return;
             }
             
-            // Check if recognition object exists and recreate if needed
+            // Always recreate recognition object to ensure it's fresh
             if (!recognition) {
-                console.log('🔄 Recreating recognition object...');
-                setupSpeechRecognition();
+                console.log('🔄 No recognition object, creating new one...');
+                try {
+                    setupSpeechRecognition();
+                    console.log('✅ New recognition object created');
+                } catch (e) {
+                    console.error('❌ Failed to create recognition object:', e);
+                    updateStatus('❌ Failed to initialize speech recognition - Try refreshing page');
+                    resetListenButton();
+                    return;
+                }
             }
             
             // Check browser support
@@ -2024,18 +2038,24 @@
                 // Wait a moment then start fresh
                 setTimeout(() => {
                     try {
-                        recognition.start();
-                        console.log('✅ Recognition.start() called successfully');
+                        if (recognition) {
+                            recognition.start();
+                            console.log('✅ Recognition.start() called successfully');
+                        } else {
+                            console.error('❌ Recognition object disappeared');
+                            updateStatus('❌ Recognition object error - Try refreshing page');
+                            resetListenButton();
+                        }
                     } catch (startError) {
                         console.error('❌ Recognition start failed:', startError.message);
-                        updateStatus('❌ Could not start speech recognition - Try refreshing the page');
+                        updateStatus('❌ Could not start speech recognition - Try again');
                         resetListenButton();
                     }
-                }, 200);
+                }, 300);
                 
             } catch (error) {
                 console.error('❌ Recognition setup failed:', error.message);
-                updateStatus('❌ Speech recognition setup failed - Try refreshing the page');
+                updateStatus('❌ Speech recognition setup failed - Try refreshing page');
                 resetListenButton();
             }
         }
@@ -2095,7 +2115,7 @@
             isProcessingCurrentPhrase = false;
             isListening = false;
             
-            // Clear ALL timeouts - check for any that might exist
+            // Clear only our specific timeouts
             if (speechTimeout) {
                 clearTimeout(speechTimeout);
                 speechTimeout = null;
@@ -2106,12 +2126,6 @@
                 clearTimeout(sessionTimeoutId);
                 sessionTimeoutId = null;
                 console.log('✅ Session timeout cleared');
-            }
-            
-            // Clear any other potential timeouts by clearing all pending timeouts
-            const highestTimeoutId = setTimeout(() => {}, 0);
-            for (let i = 0; i < highestTimeoutId; i++) {
-                clearTimeout(i);
             }
             
             // Stop recognition completely
@@ -2129,7 +2143,7 @@
                 recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Click "START TALKING" to begin...</div>';
             }
             
-            console.log('✅ All speech data and processes cleared completely');
+            console.log('✅ All speech data and processes cleared');
         }
 
         function clearTextInput() {
