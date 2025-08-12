@@ -1095,9 +1095,9 @@
             console.log('✅ Complete cleanup finished - fresh state ready');
         }
 
-        // === MAIN SPEECH RECOGNITION - NO RESTART, NO PING ===
+        // === MAIN SPEECH RECOGNITION - AUTO-START BUT NO PING ===
         function createMainSpeechRecognition() {
-            console.log('🎤 Creating NO-RESTART speech recognition...');
+            console.log('🎤 Creating AUTO-START speech recognition...');
             
             // Complete cleanup
             if (speechRecognition) {
@@ -1110,14 +1110,14 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             speechRecognition = new SpeechRecognition();
             
-            // TRUE CONTINUOUS - NO RESTARTS = NO PINGS
+            // TRUE CONTINUOUS - but smart restart to avoid pings
             speechRecognition.continuous = true;
             speechRecognition.interimResults = true;
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 TRUE continuous recognition started (no restarts)');
+                console.log('🎤 Auto-start recognition started');
                 isMainListening = true;
                 updateListenButton();
                 updateStatus(`🎤 Listening continuously - speak and pause ${settings.pauseBetweenWords}s to complete phrases`);
@@ -1125,13 +1125,28 @@
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended - NOT restarting to avoid pings');
+                console.log('🎤 Recognition ended - smart restart logic');
                 isMainListening = false;
-                updateListenButton();
-                updateStatus('🛑 Stopped - Click "START TALKING" to begin again');
                 
-                // NEVER restart automatically - this causes the ping sounds
-                // User must manually restart by clicking the button
+                // Smart restart - only if we're supposed to be listening and on speech page
+                if (shouldContinueListening && !manualStop && currentPage === 'speech') {
+                    // Longer delay to prevent rapid restarts (which cause pings)
+                    setTimeout(() => {
+                        if (shouldContinueListening && !manualStop && currentPage === 'speech') {
+                            try {
+                                console.log('🎤 Smart restart (longer delay to avoid pings)');
+                                speechRecognition.start();
+                            } catch (e) {
+                                console.log('❌ Smart restart failed:', e.message);
+                                updateListenButton();
+                                updateStatus('❌ Recognition failed - Click "START TALKING" to restart');
+                            }
+                        }
+                    }, 3000); // 3 second delay to avoid rapid pings
+                } else {
+                    updateListenButton();
+                    updateStatus('🛑 Stopped - Click "START TALKING" to begin again');
+                }
             };
 
             speechRecognition.onerror = function(event) {
@@ -1144,12 +1159,10 @@
                     updateListenButton();
                 } else if (event.error === 'no-speech') {
                     console.log('No speech - continuing (normal for pauses)');
-                    // Do NOT restart on no-speech - this causes ping sounds
+                    // This is normal during pauses - don't show as error
                 } else {
-                    console.log('Other error - NOT restarting to avoid pings:', event.error);
-                    isMainListening = false;
-                    updateListenButton();
-                    updateStatus('🛑 Recognition error - Click "START TALKING" to restart');
+                    console.log('Other error:', event.error);
+                    // Don't restart immediately on other errors to avoid pings
                 }
             };
 
@@ -1206,7 +1219,7 @@
                 }
             };
             
-            console.log('✅ NO-RESTART recognition created - no ping sounds!');
+            console.log('✅ Auto-start recognition created with smart restart to avoid pings!');
         }
 
         // Show interim text without speaking it
@@ -1320,7 +1333,7 @@
         }
 
         function startMainListening() {
-            console.log('🎤 Starting NO-RESTART listening...');
+            console.log('🎤 Starting AUTO-START listening...');
             
             if (isMainListening) {
                 return;
@@ -1334,20 +1347,21 @@
                     // Create recognition
                     createMainSpeechRecognition();
                     
-                    // Simple flags - NO automatic restart logic
-                    shouldContinueListening = false; // CHANGED: No auto-restart
+                    // Enable auto-restart with smart delays
+                    shouldContinueListening = true;
                     manualStop = false;
                     isProcessingPhrase = false;
                     currentTranscript = '';
                     
-                    // Start ONCE - no restarts
+                    // Start listening
                     try {
                         speechRecognition.start();
-                        console.log('✅ NO-RESTART recognition started');
+                        console.log('✅ Auto-start recognition started');
                     } catch (error) {
                         console.error('Failed to start:', error);
                         updateStatus('❌ Failed to start');
                         updateListenButton();
+                        shouldContinueListening = false;
                     }
                 })
                 .catch(error => {
@@ -1358,7 +1372,7 @@
         }
 
         function stopMainListening() {
-            console.log('🛑 Stopping NO-RESTART listening...');
+            console.log('🛑 Stopping auto-start listening...');
             
             shouldContinueListening = false;
             manualStop = true;
