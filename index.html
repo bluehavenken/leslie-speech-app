@@ -121,7 +121,7 @@
             flex-direction: column;
             height: calc(100vh - 100px);
             overflow-y: auto;
-            padding-bottom: 120px; /* Extra space for buttons */
+            padding-bottom: 100px; /* Space for fixed button */
         }
         .status-text {
             text-align: center;
@@ -1095,9 +1095,9 @@
             console.log('✅ Complete cleanup finished - fresh state ready');
         }
 
-        // === MAIN SPEECH RECOGNITION - ULTRA LONG SESSION NO RESTART ===
+        // === MAIN SPEECH RECOGNITION - ZERO PING SOLUTION ===
         function createMainSpeechRecognition() {
-            console.log('🎤 Creating ULTRA LONG session recognition...');
+            console.log('🎤 Creating ZERO PING recognition...');
             
             // Complete cleanup
             if (speechRecognition) {
@@ -1110,60 +1110,43 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             speechRecognition = new SpeechRecognition();
             
-            // ULTRA LONG SESSION - minimal restarts
+            // ZERO RESTART CONFIGURATION
             speechRecognition.continuous = true;
             speechRecognition.interimResults = true;
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 ULTRA LONG session started');
+                console.log('🎤 ZERO PING session started');
                 isMainListening = true;
                 updateListenButton();
-                updateStatus(`🎤 Listening continuously - speak and pause ${settings.pauseBetweenWords}s to complete phrases`);
+                updateStatus(`🎤 Listening - speak and pause ${settings.pauseBetweenWords}s to complete phrases`);
                 resetSessionTimeout();
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Session ended - VERY LONG delay restart to minimize pings');
+                console.log('🎤 Session ended - NO RESTART to prevent pings');
                 isMainListening = false;
+                updateListenButton();
+                updateStatus('🛑 Session ended - Click "START TALKING" to restart');
                 
-                // ULTRA LONG delay to minimize pings - only if really needed
-                if (shouldContinueListening && !manualStop && currentPage === 'speech') {
-                    // 10 second delay to minimize ping frequency
-                    setTimeout(() => {
-                        if (shouldContinueListening && !manualStop && currentPage === 'speech') {
-                            try {
-                                console.log('🎤 ULTRA LONG delay restart');
-                                speechRecognition.start();
-                            } catch (e) {
-                                console.log('❌ Ultra long restart failed:', e.message);
-                                updateListenButton();
-                                updateStatus('❌ Recognition failed - Click "START TALKING" to restart');
-                            }
-                        }
-                    }, 10000); // 10 second delay to minimize pings
-                } else {
-                    updateListenButton();
-                    updateStatus('🛑 Stopped - Click "START TALKING" to begin again');
-                }
+                // NEVER restart automatically - this is what causes ALL the pings
+                // User must manually click button to restart
             };
 
             speechRecognition.onerror = function(event) {
                 console.error('🎤 Error:', event.error);
+                isMainListening = false;
+                updateListenButton();
                 
                 if (event.error === 'not-allowed') {
-                    isMainListening = false;
                     updateStatus('❌ Microphone permission denied');
                     shouldContinueListening = false;
-                    updateListenButton();
-                } else if (event.error === 'no-speech') {
-                    console.log('No speech - this is normal during pauses');
-                    // This is normal during pauses - don't restart immediately
                 } else {
-                    console.log('Other error:', event.error);
-                    // Don't restart immediately on errors
+                    updateStatus('❌ Error occurred - Click "START TALKING" to restart');
                 }
+                
+                // NEVER restart on error - prevents ping sounds
             };
 
             speechRecognition.onresult = function(event) {
@@ -1186,13 +1169,11 @@
                 if (interimTranscript.trim()) {
                     const buildingPhrase = (currentTranscript + ' ' + interimTranscript).trim();
                     updateStatus(`🎤 Hearing: "${buildingPhrase}"`);
-                    // Show interim phrase on screen without speaking it
                     showInterimText(buildingPhrase);
                 }
                 
                 // Handle completed words (final results)
                 if (finalTranscript.trim()) {
-                    // Add to our building transcript
                     currentTranscript = (currentTranscript + ' ' + finalTranscript).trim();
                     console.log('🎤 Building phrase:', currentTranscript);
                     
@@ -1204,7 +1185,6 @@
                     
                     // Start pause timer using the setting
                     const pauseMs = settings.pauseBetweenWords * 1000;
-                    console.log(`⏱️ Starting ${pauseMs}ms pause timer for phrase completion...`);
                     updateStatus(`🎤 Building: "${currentTranscript}" (${settings.pauseBetweenWords}s until complete)`);
                     
                     // Wait for the user-configured pause before processing the complete phrase
@@ -1219,7 +1199,7 @@
                 }
             };
             
-            console.log('✅ ULTRA LONG session recognition created!');
+            console.log('✅ ZERO PING recognition created!');
         }
 
         // Show interim text without speaking it
@@ -1234,7 +1214,7 @@
             }
         }
 
-        // Process complete phrase - NO CASCADING, NO PING
+        // Process complete phrase - ZERO cascading, ONE phrase only
         function processCompletePhrase(phrase) {
             const now = Date.now();
             
@@ -1249,33 +1229,93 @@
             lastProcessedPhrase = phrase;
             lastPhraseTime = now;
             
-            console.log('✅ Processing COMPLETE phrase:', phrase);
+            console.log('✅ Processing SINGLE phrase:', phrase);
             
-            // Clear phrase history to prevent cascading
-            phraseHistory = [phrase]; // Only keep current phrase
+            // NO history - prevents all cascading
+            phraseHistory = []; // Keep empty to prevent cascading
             
-            // Display ONLY this phrase (replace everything)
+            // Display ONLY this phrase (replaces everything)
             displayCompletePhrase(phrase);
             
-            // Speak ONLY this complete phrase
-            updateStatus('🔊 Speaking complete phrase...');
-            speakCompletePhrase(phrase);
+            // Speak ONLY this complete phrase ONCE
+            updateStatus('🔊 Speaking phrase...');
+            speakOnlyThisPhrase(phrase);
             
             // Reset processing flag
             setTimeout(() => {
                 isProcessingPhrase = false;
-                updateStatus(`🎤 Ready for next phrase - speak and pause ${settings.pauseBetweenWords}s to complete`);
+                updateStatus(`🎤 Ready for next phrase - speak and pause ${settings.pauseBetweenWords}s`);
             }, 1000);
         }
 
-        // Display only ONE complete phrase at a time (no cascading)
+        // Speak only this phrase - no cascading speech
+        function speakOnlyThisPhrase(phrase) {
+            if (!phrase || phrase.trim() === '') {
+                console.log('🚫 No phrase to speak');
+                return;
+            }
+            
+            // Stop any existing speech to prevent overlapping
+            try {
+                speechSynth.cancel();
+            } catch (e) {}
+            
+            console.log('🔊 Speaking ONLY this phrase:', phrase);
+            
+            setTimeout(() => {
+                try {
+                    const utterance = new SpeechSynthesisUtterance(phrase);
+                    utterance.rate = settings.speechSpeed || 1.0;
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
+                    utterance.lang = 'en-US';
+                    
+                    utterance.onstart = function() {
+                        console.log('✅ Speaking single phrase started:', phrase);
+                        isSpeechSynthesisActive = true;
+                    };
+                    
+                    utterance.onend = function() {
+                        console.log('✅ Speaking single phrase ended:', phrase);
+                        isSpeechSynthesisActive = false;
+                    };
+                    
+                    utterance.onerror = function(event) {
+                        console.error('❌ Speech error:', event.error);
+                        isSpeechSynthesisActive = false;
+                    };
+                    
+                    speechSynth.speak(utterance);
+                    
+                } catch (error) {
+                    console.error('❌ Speech synthesis error:', error);
+                    isSpeechSynthesisActive = false;
+                }
+            }, 100);
+        }
+
+        // Display ONLY current phrase - ZERO cascading
         function displayCompletePhrase(phrase) {
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
-                // SIMPLE: Show only the latest complete phrase
+                // COMPLETELY REPLACE content - no history, no cascading
                 recognizedTextEl.innerHTML = `
                     <div style="background: #e3f2fd; padding: 16px; border-radius: 8px; border-left: 4px solid #0099cc; font-size: 18px; font-weight: bold; text-align: center;">
                         "${phrase}"
+                    </div>
+                `;
+                console.log('✅ Displayed ONLY current phrase - no cascading');
+            }
+        }
+
+        // Show interim text - replace completely
+        function showInterimText(text) {
+            const recognizedTextEl = document.getElementById('recognizedText');
+            if (recognizedTextEl && text.trim()) {
+                // COMPLETELY REPLACE - no cascading
+                recognizedTextEl.innerHTML = `
+                    <div style="color: #666; font-style: italic; background: #fff8e1; padding: 12px; border-radius: 8px; border-left: 4px solid #ffa000;">
+                        Building: "${text}"
                     </div>
                 `;
             }
@@ -1335,7 +1375,7 @@
         }
 
         function startMainListening() {
-            console.log('🎤 Starting AUTO-START listening...');
+            console.log('🎤 Starting ZERO PING listening...');
             
             if (isMainListening) {
                 return;
@@ -1349,21 +1389,20 @@
                     // Create recognition
                     createMainSpeechRecognition();
                     
-                    // Enable auto-restart with smart delays
-                    shouldContinueListening = true;
+                    // NO auto-restart flags to prevent pings
+                    shouldContinueListening = false; // NEVER auto-restart
                     manualStop = false;
                     isProcessingPhrase = false;
                     currentTranscript = '';
                     
-                    // Start listening
+                    // Start once - no automatic restarts
                     try {
                         speechRecognition.start();
-                        console.log('✅ Auto-start recognition started');
+                        console.log('✅ ZERO PING recognition started');
                     } catch (error) {
                         console.error('Failed to start:', error);
                         updateStatus('❌ Failed to start');
                         updateListenButton();
-                        shouldContinueListening = false;
                     }
                 })
                 .catch(error => {
