@@ -1095,9 +1095,9 @@
             console.log('✅ Complete cleanup finished - fresh state ready');
         }
 
-        // === MAIN SPEECH RECOGNITION - ULTRA SIMPLE ===
+        // === MAIN SPEECH RECOGNITION - NO PING, RESPECTS PAUSE SETTING ===
         function createMainSpeechRecognition() {
-            console.log('🎤 Creating ULTRA SIMPLE speech recognition...');
+            console.log('🎤 Creating NO-PING speech recognition...');
             
             // Complete cleanup
             if (speechRecognition) {
@@ -1110,14 +1110,14 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             speechRecognition = new SpeechRecognition();
             
-            // ULTRA SIMPLE SETTINGS
-            speechRecognition.continuous = true; // Keep listening for normal speech
-            speechRecognition.interimResults = false; // NO interim = no "above screen" text
+            // NO-PING SETTINGS
+            speechRecognition.continuous = false; // FALSE = no auto-restart = no pinging
+            speechRecognition.interimResults = true; // TRUE to build phrases with pauses
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 Ultra simple recognition started');
+                console.log('🎤 No-ping recognition started');
                 isMainListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening...');
@@ -1125,20 +1125,27 @@
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended - auto restart');
+                console.log('🎤 Recognition ended - MANUAL RESTART ONLY');
                 isMainListening = false;
                 
-                // Simple auto-restart with longer delay to reduce pinging
-                if (shouldContinueListening && !manualStop && currentPage === 'speech') {
+                // MANUAL RESTART - only when user wants to continue
+                if (shouldContinueListening && !manualStop && currentPage === 'speech' && !isProcessingPhrase) {
+                    // Use the actual pause setting for restart delay
+                    const restartDelay = Math.max(settings.pauseBetweenWords * 1000, 3000); // At least 3 seconds
+                    
                     setTimeout(() => {
-                        if (shouldContinueListening && !manualStop && currentPage === 'speech') {
+                        if (shouldContinueListening && !manualStop && currentPage === 'speech' && !isProcessingPhrase) {
                             try {
+                                console.log('🎤 Manual restart after pause setting delay');
                                 speechRecognition.start();
                             } catch (e) {
-                                console.log('Restart failed:', e.message);
+                                console.log('❌ Restart failed:', e.message);
+                                shouldContinueListening = false;
+                                updateListenButton();
+                                updateStatus('❌ Recognition stopped');
                             }
                         }
-                    }, 2000); // 2 second delay
+                    }, restartDelay);
                 } else {
                     updateListenButton();
                     updateStatus('🛑 Stopped');
@@ -1154,8 +1161,7 @@
                     shouldContinueListening = false;
                     updateListenButton();
                 } else if (event.error === 'no-speech') {
-                    // Normal - just continue
-                    console.log('No speech - normal');
+                    console.log('No speech - will restart after delay');
                 } else {
                     console.log('Other error:', event.error);
                 }
@@ -1164,32 +1170,71 @@
             speechRecognition.onresult = function(event) {
                 resetSessionTimeout();
                 
-                // Process ONLY final results - no interim processing
-                for (let i = event.resultIndex; i < event.results.length; i++) {
+                let finalTranscript = '';
+                let interimTranscript = '';
+                
+                // Get all results
+                for (let i = 0; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
-                        const transcript = event.results[i][0].transcript.trim();
-                        
-                        if (transcript && transcript.length > 1 && !isProcessingPhrase) {
-                            console.log('🎤 Got phrase:', transcript);
-                            
-                            // Process immediately - no waiting
-                            processPhrase(transcript);
-                        }
+                        finalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript = transcript;
                     }
+                }
+                
+                // Show what we're building (allows pauses between words)
+                if (interimTranscript) {
+                    const building = (currentTranscript + ' ' + interimTranscript).trim();
+                    updateStatus(`🎤 Building: "${building}"`);
+                }
+                
+                // Add final words to transcript
+                if (finalTranscript.trim()) {
+                    currentTranscript = (currentTranscript + ' ' + finalTranscript).trim();
+                    console.log('🎤 Added words:', finalTranscript.trim());
+                    console.log('🎤 Full phrase so far:', currentTranscript);
+                    
+                    // Clear existing timeout
+                    if (finalResultTimeout) {
+                        clearTimeout(finalResultTimeout);
+                        finalResultTimeout = null;
+                    }
+                    
+                    // Use the actual pause setting
+                    const pauseMs = settings.pauseBetweenWords * 1000;
+                    console.log(`⏱️ Waiting ${pauseMs}ms (pause setting) for phrase completion...`);
+                    updateStatus(`🎤 Phrase: "${currentTranscript}" - waiting ${settings.pauseBetweenWords}s for completion...`);
+                    
+                    finalResultTimeout = setTimeout(() => {
+                        if (currentTranscript && !isProcessingPhrase) {
+                            console.log('✅ Pause setting reached - processing phrase:', currentTranscript);
+                            processPhrase(currentTranscript);
+                            currentTranscript = ''; // Clear for next phrase
+                        }
+                        finalResultTimeout = null;
+                    }, pauseMs);
                 }
             };
             
-            console.log('✅ Ultra simple recognition ready');
+            console.log('✅ No-ping recognition with pause setting created');
         }
 
-        // Process phrase immediately
+        // Process phrase with duplicate protection
         function processPhrase(phrase) {
             const now = Date.now();
             
-            // Simple duplicate check
+            // Strong duplicate protection
             if (phrase.toLowerCase() === lastProcessedPhrase.toLowerCase() && 
-                (now - lastPhraseTime) < 2000) {
-                console.log('Skipping duplicate');
+                (now - lastPhraseTime) < 5000) { // 5 seconds protection
+                console.log('🚫 Skipping duplicate phrase:', phrase);
+                return;
+            }
+            
+            // Extra protection against partial phrases
+            if (lastProcessedPhrase && phrase.toLowerCase().includes(lastProcessedPhrase.toLowerCase()) && 
+                (now - lastPhraseTime) < 10000) { // 10 seconds for partial matches
+                console.log('🚫 Skipping partial duplicate:', phrase);
                 return;
             }
             
@@ -1197,18 +1242,18 @@
             lastProcessedPhrase = phrase;
             lastPhraseTime = now;
             
-            console.log('✅ Processing immediately:', phrase);
+            console.log('✅ Processing phrase:', phrase);
             
-            // Display immediately in main area only
+            // Display and speak immediately
             updateSpeechDisplay(phrase);
-            
-            // Speak immediately
+            updateStatus('🔊 Speaking...');
             speakText(phrase);
             
-            // Quick reset
+            // Reset processing flag
             setTimeout(() => {
                 isProcessingPhrase = false;
-            }, 1000);
+                updateStatus('🎤 Ready for next phrase...');
+            }, 1500);
         }
 
 
