@@ -1095,9 +1095,9 @@
             console.log('✅ Complete cleanup finished - fresh state ready');
         }
 
-        // === MAIN SPEECH RECOGNITION - NO PING, RESPECTS PAUSE SETTING ===
+        // === MAIN SPEECH RECOGNITION - TRUE CONTINUOUS, NO PING ===
         function createMainSpeechRecognition() {
-            console.log('🎤 Creating NO-PING speech recognition...');
+            console.log('🎤 Creating TRUE CONTINUOUS speech recognition...');
             
             // Complete cleanup
             if (speechRecognition) {
@@ -1110,42 +1110,37 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             speechRecognition = new SpeechRecognition();
             
-            // NO-PING SETTINGS
-            speechRecognition.continuous = false; // FALSE = no auto-restart = no pinging
-            speechRecognition.interimResults = true; // TRUE to build phrases with pauses
+            // TRUE CONTINUOUS SETTINGS - NO RESTARTS = NO PINGING
+            speechRecognition.continuous = true; // TRUE for real continuous listening
+            speechRecognition.interimResults = true; // TRUE to see words as you speak them
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 No-ping recognition started');
+                console.log('🎤 True continuous recognition started');
                 isMainListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening...');
+                updateStatus('🎤 Listening continuously - you can pause between words...');
                 resetSessionTimeout();
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended - MANUAL RESTART ONLY');
+                console.log('🎤 Recognition ended - ONLY restart if manually stopped');
                 isMainListening = false;
                 
-                // MANUAL RESTART - only when user wants to continue
+                // ONLY restart if recognition died unexpectedly, NOT after every phrase
                 if (shouldContinueListening && !manualStop && currentPage === 'speech' && !isProcessingPhrase) {
-                    // Use the actual pause setting for restart delay
-                    const restartDelay = Math.max(settings.pauseBetweenWords * 1000, 3000); // At least 3 seconds
-                    
+                    // MUCH longer delay to prevent rapid restarts (which cause pinging)
                     setTimeout(() => {
-                        if (shouldContinueListening && !manualStop && currentPage === 'speech' && !isProcessingPhrase) {
+                        if (shouldContinueListening && !manualStop && currentPage === 'speech') {
                             try {
-                                console.log('🎤 Manual restart after pause setting delay');
+                                console.log('🎤 Recovery restart (recognition died)');
                                 speechRecognition.start();
                             } catch (e) {
-                                console.log('❌ Restart failed:', e.message);
-                                shouldContinueListening = false;
-                                updateListenButton();
-                                updateStatus('❌ Recognition stopped');
+                                console.log('❌ Recovery restart failed:', e.message);
                             }
                         }
-                    }, restartDelay);
+                    }, 5000); // 5 second delay for recovery only
                 } else {
                     updateListenButton();
                     updateStatus('🛑 Stopped');
@@ -1154,14 +1149,15 @@
 
             speechRecognition.onerror = function(event) {
                 console.error('🎤 Error:', event.error);
-                isMainListening = false;
                 
                 if (event.error === 'not-allowed') {
+                    isMainListening = false;
                     updateStatus('❌ Microphone permission denied');
                     shouldContinueListening = false;
                     updateListenButton();
                 } else if (event.error === 'no-speech') {
-                    console.log('No speech - will restart after delay');
+                    console.log('No speech - continuing (normal for pauses)');
+                    // Do NOT restart for no-speech - this is normal when pausing between words
                 } else {
                     console.log('Other error:', event.error);
                 }
@@ -1173,7 +1169,7 @@
                 let finalTranscript = '';
                 let interimTranscript = '';
                 
-                // Get all results
+                // Get current results
                 for (let i = 0; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
@@ -1183,32 +1179,32 @@
                     }
                 }
                 
-                // Show what we're building (allows pauses between words)
+                // Show interim results (what we're hearing now)
                 if (interimTranscript) {
-                    const building = (currentTranscript + ' ' + interimTranscript).trim();
-                    updateStatus(`🎤 Building: "${building}"`);
+                    const currentPhrase = (currentTranscript + ' ' + interimTranscript).trim();
+                    updateStatus(`🎤 Hearing: "${currentPhrase}" (you can pause between words)`);
                 }
                 
-                // Add final words to transcript
+                // Handle final results (add to building phrase)
                 if (finalTranscript.trim()) {
                     currentTranscript = (currentTranscript + ' ' + finalTranscript).trim();
-                    console.log('🎤 Added words:', finalTranscript.trim());
-                    console.log('🎤 Full phrase so far:', currentTranscript);
+                    console.log('🎤 Building phrase:', currentTranscript);
                     
-                    // Clear existing timeout
+                    // Clear existing pause timeout
                     if (finalResultTimeout) {
                         clearTimeout(finalResultTimeout);
                         finalResultTimeout = null;
                     }
                     
-                    // Use the actual pause setting
+                    // Use pause setting for word-level pauses
                     const pauseMs = settings.pauseBetweenWords * 1000;
-                    console.log(`⏱️ Waiting ${pauseMs}ms (pause setting) for phrase completion...`);
-                    updateStatus(`🎤 Phrase: "${currentTranscript}" - waiting ${settings.pauseBetweenWords}s for completion...`);
+                    console.log(`⏱️ Starting ${pauseMs}ms pause timer for phrase completion...`);
+                    updateStatus(`🎤 Building: "${currentTranscript}" (${settings.pauseBetweenWords}s pause timer started)`);
                     
+                    // Wait for pause setting before processing complete phrase
                     finalResultTimeout = setTimeout(() => {
                         if (currentTranscript && !isProcessingPhrase) {
-                            console.log('✅ Pause setting reached - processing phrase:', currentTranscript);
+                            console.log('✅ Pause timer completed - processing phrase:', currentTranscript);
                             processPhrase(currentTranscript);
                             currentTranscript = ''; // Clear for next phrase
                         }
@@ -1217,23 +1213,23 @@
                 }
             };
             
-            console.log('✅ No-ping recognition with pause setting created');
+            console.log('✅ True continuous recognition with pause timer created');
         }
 
-        // Process phrase with automatic restart
+        // Process phrase - NO FORCED RESTARTS
         function processPhrase(phrase) {
             const now = Date.now();
             
             // Strong duplicate protection
             if (phrase.toLowerCase() === lastProcessedPhrase.toLowerCase() && 
-                (now - lastPhraseTime) < 5000) { // 5 seconds protection
+                (now - lastPhraseTime) < 5000) {
                 console.log('🚫 Skipping duplicate phrase:', phrase);
                 return;
             }
             
             // Extra protection against partial phrases
             if (lastProcessedPhrase && phrase.toLowerCase().includes(lastProcessedPhrase.toLowerCase()) && 
-                (now - lastPhraseTime) < 10000) { // 10 seconds for partial matches
+                (now - lastPhraseTime) < 10000) {
                 console.log('🚫 Skipping partial duplicate:', phrase);
                 return;
             }
@@ -1249,25 +1245,12 @@
             updateStatus('🔊 Speaking...');
             speakText(phrase);
             
-            // Reset processing flag and prepare for next phrase
+            // Reset processing flag - NO FORCED RESTART
             setTimeout(() => {
                 isProcessingPhrase = false;
-                updateStatus('🎤 Ready for next phrase...');
-                
-                // Force restart recognition for next phrase if still supposed to be listening
-                if (shouldContinueListening && !manualStop && currentPage === 'speech') {
-                    console.log('🎤 Restarting recognition for next phrase...');
-                    setTimeout(() => {
-                        if (shouldContinueListening && !manualStop && currentPage === 'speech') {
-                            try {
-                                speechRecognition.start();
-                            } catch (e) {
-                                console.log('❌ Failed to restart for next phrase:', e.message);
-                            }
-                        }
-                    }, 1000); // 1 second delay before listening for next phrase
-                }
-            }, 2000); // Give speech time to complete
+                updateStatus('🎤 Ready for next phrase - keep talking...');
+                // DO NOT restart recognition here - let it continue naturally
+            }, 2000);
         }
 
 
