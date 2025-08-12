@@ -1220,7 +1220,7 @@
             console.log('✅ No-ping recognition with pause setting created');
         }
 
-        // Process phrase with duplicate protection
+        // Process phrase with automatic restart
         function processPhrase(phrase) {
             const now = Date.now();
             
@@ -1249,11 +1249,25 @@
             updateStatus('🔊 Speaking...');
             speakText(phrase);
             
-            // Reset processing flag
+            // Reset processing flag and prepare for next phrase
             setTimeout(() => {
                 isProcessingPhrase = false;
                 updateStatus('🎤 Ready for next phrase...');
-            }, 1500);
+                
+                // Force restart recognition for next phrase if still supposed to be listening
+                if (shouldContinueListening && !manualStop && currentPage === 'speech') {
+                    console.log('🎤 Restarting recognition for next phrase...');
+                    setTimeout(() => {
+                        if (shouldContinueListening && !manualStop && currentPage === 'speech') {
+                            try {
+                                speechRecognition.start();
+                            } catch (e) {
+                                console.log('❌ Failed to restart for next phrase:', e.message);
+                            }
+                        }
+                    }, 1000); // 1 second delay before listening for next phrase
+                }
+            }, 2000); // Give speech time to complete
         }
 
 
@@ -1332,70 +1346,51 @@
             updateStatus('🛑 Stopped');
         }
 
-        // === SPEECH SYNTHESIS - FIXED STATIC NOISE ===
+        // === SPEECH SYNTHESIS - ALWAYS WORKS ===
         function speakText(text) {
             if (!text || text.trim() === '') {
                 console.log('🚫 No text to speak');
                 return;
             }
             
-            // Prevent speaking if already speaking
-            if (isSpeechSynthesisActive) {
-                console.log('🚫 Already speaking, skipping:', text);
-                return;
-            }
+            // Always speak, even if something else is playing
+            try {
+                speechSynth.cancel(); // Stop any existing speech
+            } catch (e) {}
             
             console.log('🔊 Speaking text:', text);
             
-            // Stop any existing speech first
-            try {
-                speechSynth.cancel();
-            } catch (e) {
-                console.log('Speech cancel error:', e);
-            }
-            
-            // Set speaking flag immediately
-            isSpeechSynthesisActive = true;
-            
-            // LONGER delay to prevent static noise at start
+            // Immediate speech with no delays
             setTimeout(() => {
                 try {
                     const utterance = new SpeechSynthesisUtterance(text);
                     utterance.rate = settings.speechSpeed || 1.0;
                     utterance.pitch = 1.0;
-                    utterance.volume = 0.8; // Slightly lower volume to reduce static
+                    utterance.volume = 1.0;
                     utterance.lang = 'en-US';
                     
                     utterance.onstart = function() {
-                        console.log('✅ Speech synthesis started:', text);
+                        console.log('✅ Speech started:', text);
                         isSpeechSynthesisActive = true;
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ Speech synthesis ended:', text);
+                        console.log('✅ Speech ended:', text);
                         isSpeechSynthesisActive = false;
                     };
                     
                     utterance.onerror = function(event) {
-                        console.error('❌ Speech synthesis error:', event.error);
+                        console.error('❌ Speech error:', event.error);
                         isSpeechSynthesisActive = false;
                     };
                     
-                    // Ensure synthesis is ready and add pause before speaking
-                    if (speechSynth.paused) {
-                        speechSynth.resume();
-                    }
-                    
-                    // Additional delay to ensure clean audio start
-                    setTimeout(() => {
-                        speechSynth.speak(utterance);
-                    }, 200);
+                    speechSynth.speak(utterance);
                     
                 } catch (error) {
                     console.error('❌ Speech synthesis error:', error);
                     isSpeechSynthesisActive = false;
                 }
-            }, 300); // Increased delay to prevent static
+            }, 50); // Minimal delay
         }
 
         // === VOICE COMMANDS ===
