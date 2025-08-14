@@ -1110,74 +1110,73 @@
             return true;
         }
 
-        // DISPLAY INTERIM RESULTS (what's being spoken now)
+        // DISPLAY INTERIM RESULTS (what's being spoken now) - FIXED LOCATION
         function displayInterimPhrase(interimText) {
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl && interimText.trim()) {
-                // Find existing interim display and update it, or create new one
-                let interimDiv = recognizedTextEl.querySelector('.current-interim');
-                if (!interimDiv) {
-                    interimDiv = document.createElement('div');
-                    interimDiv.className = 'current-interim';
-                    interimDiv.style.cssText = 'background: #fff8e1; padding: 12px; border-radius: 4px; margin: 8px 0; border-left: 4px solid #ffa000; color: #666; font-style: italic;';
-                    recognizedTextEl.appendChild(interimDiv);
-                }
-                interimDiv.innerHTML = `🎤 Speaking: "${interimText}"`;
+                // Clear any existing content and show only interim
+                recognizedTextEl.innerHTML = `
+                    <div style="background: #fff8e1; padding: 12px; border-radius: 4px; margin: 8px 0; border-left: 4px solid #ffa000; color: #666; font-style: italic;">
+                        🎤 Speaking: "${interimText}"
+                    </div>
+                `;
                 recognizedTextEl.scrollTop = recognizedTextEl.scrollHeight;
             }
         }
 
-        // PROCESS COMPLETE PHRASE
+        // PROCESS COMPLETE PHRASE - FIXED
         function processCompletePhrase(phrase) {
             console.log('✅ Processing COMPLETE phrase:', phrase);
             
-            // Remove any interim display
-            const recognizedTextEl = document.getElementById('recognizedText');
-            if (recognizedTextEl) {
-                const interimDiv = recognizedTextEl.querySelector('.current-interim');
-                if (interimDiv) {
-                    interimDiv.remove();
-                }
-            }
-            
-            // Display the complete phrase
+            // Immediately display the complete phrase in the correct location
             displayFinalPhrase(phrase);
             
-            // Speak the phrase back with a small delay
-            setTimeout(() => {
-                speakCompletePhrase(phrase);
-            }, 300);
+            // Speak the phrase back with speech loop prevention
+            if (!isSpeaking) {
+                setTimeout(() => {
+                    speakCompletePhrase(phrase);
+                }, 300);
+            }
         }
 
-        // DISPLAY FINAL PHRASE
+        // DISPLAY FINAL PHRASE - FIXED LOCATION
         function displayFinalPhrase(phrase) {
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
-                const finalDiv = document.createElement('div');
-                finalDiv.className = 'final-phrase';
-                finalDiv.style.cssText = 'background: #e8f5e8; padding: 12px; border-radius: 4px; margin: 8px 0; border-left: 4px solid #28a745; font-weight: bold;';
-                finalDiv.innerHTML = `✅ "${phrase}"`;
-                
-                recognizedTextEl.appendChild(finalDiv);
+                // Clear everything and show only the final phrase
+                recognizedTextEl.innerHTML = `
+                    <div style="background: #e8f5e8; padding: 15px; border-radius: 6px; margin: 10px 0; border-left: 4px solid #28a745; font-weight: bold; font-size: 16px;">
+                        ✅ You said: "${phrase}"
+                    </div>
+                `;
                 recognizedTextEl.scrollTop = recognizedTextEl.scrollHeight;
-                
-                console.log('✅ Displayed final phrase:', phrase);
+                console.log('✅ Displayed final phrase in correct location:', phrase);
             }
         }
 
-        // SPEAK COMPLETE PHRASE - FIXED TO PREVENT LOOPS
+        // SPEAK COMPLETE PHRASE - COMPLETELY FIXED TO PREVENT LOOPS
         function speakCompletePhrase(phrase) {
+            // STRICT loop prevention
             if (isSpeaking) {
-                console.log('🔊 Already speaking, skipping duplicate...');
+                console.log('🔊 BLOCKED: Already speaking, preventing duplicate');
                 return;
             }
             
-            console.log('🔊 Speaking phrase:', phrase);
-            isSpeaking = true;
+            // Check for duplicate phrase prevention
+            if (phrase === lastSpokenPhrase && (Date.now() - lastSpokenTime) < 5000) {
+                console.log('🔊 BLOCKED: Duplicate phrase within 5 seconds');
+                return;
+            }
             
-            // Cancel any existing speech
+            console.log('🔊 Speaking phrase ONCE:', phrase);
+            isSpeaking = true;
+            lastSpokenPhrase = phrase;
+            lastSpokenTime = Date.now();
+            
+            // COMPLETELY cancel any existing speech
             speechSynth.cancel();
             
+            // Wait for speech synthesis to be ready
             setTimeout(() => {
                 try {
                     const utterance = new SpeechSynthesisUtterance(phrase);
@@ -1186,32 +1185,47 @@
                     utterance.volume = 1.0;
                     utterance.lang = 'en-US';
                     
+                    // Track this specific utterance
+                    currentSpeechUtterance = utterance;
+                    
                     utterance.onstart = function() {
-                        console.log('🔊 ✅ Started speaking:', phrase);
+                        console.log('🔊 ✅ Started speaking ONCE:', phrase);
                         updateStatus('🔊 Speaking: "' + phrase + '"');
                     };
                     
                     utterance.onend = function() {
-                        console.log('🔊 ✅ Finished speaking:', phrase);
+                        console.log('🔊 ✅ FINISHED speaking (no repeats):', phrase);
                         isSpeaking = false;
-                        updateStatus('🎤 Listening continuously... Speak your next phrase!');
+                        currentSpeechUtterance = null;
+                        updateStatus('🎤 Listening continuously... Ready for your next phrase!');
+                        
+                        // Clear display after speech and show ready message
+                        setTimeout(() => {
+                            const recognizedTextEl = document.getElementById('recognizedText');
+                            if (recognizedTextEl && shouldKeepListening) {
+                                recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px; font-size: 16px;">🎤 Ready for your next phrase...</div>';
+                            }
+                        }, 1500);
                     };
                     
                     utterance.onerror = function(event) {
-                        console.error('🔊 ❌ Speech error:', event.error);
+                        console.error('🔊 ❌ Speech error (stopping loops):', event.error);
                         isSpeaking = false;
-                        updateStatus('🎤 Listening continuously... Speak your next phrase!');
+                        currentSpeechUtterance = null;
+                        speechSynth.cancel(); // Cancel everything on error
+                        updateStatus('🎤 Listening continuously... Ready for your next phrase!');
                     };
                     
-                    // Start speaking
+                    // Start speaking - ONE TIME ONLY
                     speechSynth.speak(utterance);
                     
                 } catch (error) {
-                    console.error('🔊 ❌ Speech synthesis failed:', error);
+                    console.error('🔊 ❌ Speech synthesis completely failed:', error);
                     isSpeaking = false;
-                    updateStatus('🎤 Listening continuously... Speak your next phrase!');
+                    currentSpeechUtterance = null;
+                    updateStatus('🎤 Listening continuously... Ready for your next phrase!');
                 }
-            }, 100);
+            }, 150);
         }
 
         function resetSessionTimeout() {
@@ -1295,24 +1309,27 @@
         }
 
         function stopListening() {
-            console.log('🛑 Manually stopping CONTINUOUS listening session...');
+            console.log('🛑 Manually stopping ALL listening and speech...');
             
-            // Set flags to prevent any restart attempts
+            // COMPLETE SHUTDOWN - stop everything
             shouldKeepListening = false;
             userStoppedManually = true;
             
             // Clear session timeout
             clearSessionTimeout();
             
-            // Stop speech synthesis
+            // FORCE stop all speech synthesis - prevents loops
             speechSynth.cancel();
+            if (currentSpeechUtterance) {
+                currentSpeechUtterance = null;
+            }
             isSpeaking = false;
             
-            // Stop recognition - NO RESTART WILL HAPPEN
+            // Stop recognition completely
             if (speechRecognition) {
                 try {
                     speechRecognition.abort();
-                    console.log('✅ Recognition manually stopped');
+                    console.log('✅ Recognition force stopped');
                 } catch (e) {
                     console.log('Recognition already stopped');
                 }
@@ -1320,7 +1337,7 @@
             
             isMainListening = false;
             updateListenButton();
-            updateStatus('🛑 Stopped - Click "START TALKING" to begin again');
+            updateStatus('🛑 Completely stopped - Click "START TALKING" to begin again');
         }
 
         // === SPEECH SYNTHESIS - RELIABLE ===
@@ -1402,140 +1419,36 @@
             console.log('📍 Using default location (NO geolocation to prevent pinging)');
         }
 
-        function processVoiceCommand(command) {
-            const cmd = command.toLowerCase().trim();
-            const now = Date.now();
-            
-            // Duplicate check
-            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 2000) {
-                console.log('🚫 Duplicate voice command ignored');
-                return;
+        // === COMPLETELY ELIMINATE ALL PHONE PINGING SOURCES ===
+        
+        // REMOVE VOICE COMMAND STATUS ELEMENT COMPLETELY
+        function updateVoiceCommandStatus(status) {
+            const statusEl = document.getElementById('voiceCommandStatus');
+            if (statusEl) {
+                statusEl.remove(); // COMPLETELY remove from DOM
             }
-            
-            lastVoiceCommand = cmd;
-            lastVoiceCommandTime = now;
-            
-            executeVoiceCommand(cmd);
+        }
+        
+        // DISABLE ALL VOICE COMMAND FUNCTIONS
+        function processVoiceCommand(command) {
+            // COMPLETELY DISABLED - no processing
+            console.log('🚫 Voice commands COMPLETELY DISABLED');
         }
 
         function executeVoiceCommand(cmd) {
-            console.log('⚡ Executing voice command:', cmd);
-            
-            let commandExecuted = false;
-            
-            // Navigation commands
-            if (cmd.includes('home') && !cmd.includes('phone')) {
-                hideWeather();
-                showPage('home');
-                speakResponse('Going home');
-                commandExecuted = true;
-            } else if (cmd.includes('start talking') || (cmd.includes('talking') && !cmd.includes('stop'))) {
-                hideWeather();
-                startTalkingFromHome();
-                speakResponse('Starting speech recognition');
-                commandExecuted = true;
-            } else if (cmd.includes('start texting') || (cmd.includes('texting') && !cmd.includes('stop'))) {
-                hideWeather();
-                showPage('textInput');
-                speakResponse('Opening text input');
-                commandExecuted = true;
-            } else if (cmd.includes('phone') || cmd.includes('contacts')) {
-                hideWeather();
-                showPage('phone');
-                speakResponse('Opening phone contacts');
-                commandExecuted = true;
-            } else if (cmd.includes('settings')) {
-                hideWeather();
-                showPage('settings');
-                speakResponse('Opening settings');
-                commandExecuted = true;
-            } else if (cmd.includes('help') || (cmd.includes('commands') && !cmd.includes('voice commands'))) {
-                hideWeather();
-                showPage('commands');
-                speakResponse('Showing commands');
-                commandExecuted = true;
-            } else if (cmd.includes('stop listening')) {
-                if (isMainListening) {
-                    stopListening();
-                    speakResponse('Stopping speech recognition');
-                    commandExecuted = true;
-                }
-            }
-            // Weather commands
-            else if (cmd.includes('weather')) {
-                showCurrentWeather();
-                speakResponse('Showing current weather');
-                commandExecuted = true;
-            } else if (cmd.includes('hourly') || cmd.includes('24 hour')) {
-                showHourlyWeather();
-                speakResponse('Showing hourly forecast');
-                commandExecuted = true;
-            } else if (cmd.includes('weekly') || cmd.includes('7 day')) {
-                showWeeklyWeather();
-                speakResponse('Showing 7 day forecast');
-                commandExecuted = true;
-            } else if (cmd.includes('close')) {
-                const weatherDisplay = document.getElementById('weatherDisplay');
-                if (weatherDisplay && !weatherDisplay.classList.contains('hidden')) {
-                    hideWeather();
-                    speakResponse('Weather closed');
-                    commandExecuted = true;
-                }
-            }
-            // Settings commands
-            else if (cmd.includes('speak faster')) {
-                updateSpeechSpeed(Math.min(settings.speechSpeed + 0.2, 2.0));
-                speakResponse('Speaking faster');
-                commandExecuted = true;
-            } else if (cmd.includes('speak slower')) {
-                updateSpeechSpeed(Math.max(settings.speechSpeed - 0.2, 0.5));
-                speakResponse('Speaking slower');
-                commandExecuted = true;
-            } else if (cmd.includes('pause more')) {
-                updatePauseBetweenWords(Math.min(settings.pauseBetweenWords + 0.5, 4.0));
-                speakResponse('Increasing pause time');
-                commandExecuted = true;
-            } else if (cmd.includes('pause less')) {
-                updatePauseBetweenWords(Math.max(settings.pauseBetweenWords - 0.5, 0.5));
-                speakResponse('Decreasing pause time');
-                commandExecuted = true;
-            } else if (cmd.includes('voice commands off')) {
-                updateVoiceCommandSetting(false);
-                commandExecuted = true;
-            } else if (cmd.includes('voice commands on')) {
-                updateVoiceCommandSetting(true);
-                speakResponse('Voice commands enabled');
-                commandExecuted = true;
-            }
-            
-            if (!commandExecuted) {
-                console.log('❌ Command not recognized:', cmd);
-                speakResponse('Command not recognized');
-            }
+            // COMPLETELY DISABLED - no execution
+            console.log('🚫 Voice commands COMPLETELY DISABLED');
         }
 
         function speakResponse(text) {
-            if (!settings.speakVoiceCommands) {
-                return;
-            }
-            
-            setTimeout(() => {
-                try {
-                    const utterance = new SpeechSynthesisUtterance(text);
-                    utterance.rate = settings.speechSpeed || 1.0;
-                    utterance.pitch = 1.1;
-                    utterance.volume = 0.9;
-                    
-                    utterance.onend = function() {
-                        console.log('✅ Voice command response completed');
-                    };
-                    
-                    speechSynth.speak(utterance);
-                    
-                } catch (error) {
-                    console.error('❌ Voice command speech error:', error);
-                }
-            }, 100);
+            // COMPLETELY DISABLED - no voice responses
+            console.log('🚫 Voice responses COMPLETELY DISABLED');
+        }
+        
+        // REMOVE SWIPE GESTURES - POTENTIAL PINGING SOURCE
+        function setupSwipeGestures() {
+            console.log('🚫 Swipe gestures DISABLED to prevent any pinging');
+            // Don't set up any swipe event listeners
         }
 
         // === UI FUNCTIONS ===
@@ -1568,19 +1481,19 @@
                         // Stop voice commands when entering speech page
                         stopVoiceCommands();
                         
-                        // Initialize speech display
+                        // Initialize speech display with clear message
                         const recognizedTextEl = document.getElementById('recognizedText');
                         if (recognizedTextEl) {
-                            recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px; font-size: 18px;">🎤 Starting continuous speech recognition...<br><br>Speak whenever you want - I will listen continuously!</div>';
+                            recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px; font-size: 18px;">🎤 Initializing continuous speech recognition...<br><br>Get ready to speak your complete phrases!</div>';
                         }
                         
-                        updateStatus('🎤 Auto-starting continuous listening...');
+                        updateStatus('🎤 Preparing to auto-start listening...');
                         updateListenButton();
                         
                         // AUTO-START listening when entering speech page
                         setTimeout(() => {
                             startListening();
-                        }, 500);
+                        }, 800);
                         
                     } else {
                         // COMPLETE DISABLE of voice commands on other pages
