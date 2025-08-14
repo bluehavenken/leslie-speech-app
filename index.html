@@ -974,7 +974,7 @@
             enhancedMode: false
         };
 
-        // === TRULY CONTINUOUS SPEECH RECOGNITION - NO RESTART, NO PINGING ===
+        // === TRULY CONTINUOUS SPEECH RECOGNITION - FIXED STARTUP ===
         function createSpeechRecognition() {
             console.log('🎤 Creating TRULY CONTINUOUS speech recognition...');
             
@@ -991,27 +991,34 @@
             }
             
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                console.error('❌ Speech Recognition not supported in this browser');
+                updateStatus('❌ Speech Recognition not supported in this browser');
+                return false;
+            }
+            
             speechRecognition = new SpeechRecognition();
             
             // CRITICAL SETTINGS FOR CONTINUOUS LISTENING
             speechRecognition.continuous = true;
-            speechRecognition.interimResults = true; // This helps keep it alive
+            speechRecognition.interimResults = true;
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 CONTINUOUS Recognition started - will stay open');
+                console.log('🎤 ✅ CONTINUOUS Recognition STARTED and listening');
                 isMainListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening continuously...');
+                updateStatus('🎤 Listening continuously... Speak now!');
                 resetSessionTimeout();
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended unexpectedly - SHOULD NOT HAPPEN');
+                console.log('🎤 ❌ Recognition ended unexpectedly');
                 isMainListening = false;
                 updateListenButton();
-                updateStatus('❌ Recognition ended unexpectedly - Click "START TALKING" to restart');
+                updateStatus('❌ Recognition ended - Click "START TALKING" to restart');
                 clearSessionTimeout();
                 
                 // DO NOT RESTART - this was causing the pinging
@@ -1019,28 +1026,34 @@
             };
 
             speechRecognition.onerror = function(event) {
-                console.error('🎤 Recognition error:', event.error);
+                console.error('🎤 ❌ Recognition error:', event.error);
+                updateStatus('❌ Recognition error: ' + event.error);
                 
                 // Only stop on critical errors
                 if (event.error === 'not-allowed') {
                     isMainListening = false;
                     shouldKeepListening = false;
                     updateListenButton();
-                    updateStatus('❌ Microphone permission denied');
+                    updateStatus('❌ Microphone permission denied - Please allow microphone access');
                     clearSessionTimeout();
                 } else if (event.error === 'network') {
                     isMainListening = false;
                     shouldKeepListening = false;
                     updateListenButton();
-                    updateStatus('❌ Network error - Click "START TALKING" to retry');
+                    updateStatus('❌ Network error - Check your internet connection');
                     clearSessionTimeout();
+                } else if (event.error === 'no-speech') {
+                    console.log('⚠️ No speech detected (continuing to listen)');
+                    updateStatus('🎤 No speech detected - try speaking louder');
                 } else {
                     // For other errors, just log but don't stop the session
                     console.log('⚠️ Non-critical error (continuing):', event.error);
+                    updateStatus('🎤 Listening continuously... (had minor error: ' + event.error + ')');
                 }
             };
 
             speechRecognition.onresult = function(event) {
+                console.log('🎤 ✅ Speech detected!', event);
                 resetSessionTimeout(); // Reset timeout on any speech activity
                 
                 // Process both interim and final results to keep recognition alive
@@ -1059,16 +1072,17 @@
                 
                 // Only process final results for speech output
                 if (finalText.trim() && !isSpeaking) {
-                    console.log('🎤 Final phrase received:', finalText.trim());
+                    console.log('🎤 ✅ Final phrase received:', finalText.trim());
                     processPhrase(finalText.trim());
                 } else if (interimText.trim()) {
                     // Show interim results to keep user engaged
-                    console.log('🎤 Interim text:', interimText.trim());
-                    updateStatus('🎤 Listening... "' + interimText.trim() + '"');
+                    console.log('🎤 📝 Interim text:', interimText.trim());
+                    updateStatus('🎤 Hearing: "' + interimText.trim() + '"');
                 }
             };
             
             console.log('✅ TRULY CONTINUOUS speech recognition configured');
+            return true;
         }
 
         function resetSessionTimeout() {
@@ -1219,10 +1233,14 @@
                 return;
             }
             
+            updateStatus('🎤 Requesting microphone permission...');
+            
             // Request microphone permission first
             navigator.mediaDevices.getUserMedia({ audio: true })
                 .then(stream => {
+                    console.log('✅ Microphone permission granted');
                     microphonePermissionGranted = true;
+                    
                     // Immediately stop the stream as we just needed permission
                     stream.getTracks().forEach(track => track.stop());
                     
@@ -1231,24 +1249,32 @@
                     userStoppedManually = false;
                     isSpeaking = false;
                     
+                    updateStatus('🎤 Setting up speech recognition...');
+                    
                     // Create fresh recognition instance
-                    createSpeechRecognition();
+                    const recognitionCreated = createSpeechRecognition();
+                    
+                    if (!recognitionCreated) {
+                        updateStatus('❌ Speech recognition not supported');
+                        return;
+                    }
                     
                     // Start listening - TRULY CONTINUOUS SESSION
                     try {
+                        updateStatus('🎤 Starting recognition...');
                         speechRecognition.start();
-                        console.log('✅ TRULY CONTINUOUS session started - should stay open');
+                        console.log('✅ Recognition start() called - waiting for onstart event');
                     } catch (error) {
                         console.error('❌ Failed to start recognition:', error);
                         isMainListening = false;
                         shouldKeepListening = false;
                         updateListenButton();
-                        updateStatus('❌ Failed to start - please try again');
+                        updateStatus('❌ Failed to start: ' + error.message);
                     }
                 })
                 .catch(error => {
                     console.error('❌ Microphone permission denied:', error);
-                    updateStatus('❌ Microphone permission required');
+                    updateStatus('❌ Microphone permission required - Please allow microphone access');
                     updateListenButton();
                 });
         }
@@ -1530,10 +1556,10 @@
                         // AUTO-START listening immediately - SINGLE SESSION
                         setTimeout(() => {
                             if (currentPage === 'speech') {
-                                console.log('🎤 AUTO-STARTING SINGLE CONTINUOUS SESSION now...');
+                                console.log('🎤 AUTO-STARTING TRULY CONTINUOUS SESSION now...');
                                 startListening();
                             }
-                        }, 500);
+                        }, 1000); // Increased delay to ensure page is fully loaded
                         
                     } else {
                         // DON'T start voice commands - they cause pinging
@@ -2353,11 +2379,20 @@
                 loadSettings();
                 setupEventHandlers();
                 
+                // CHECK SPEECH RECOGNITION SUPPORT
                 if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                     console.error('❌ Speech recognition not supported');
                     updateStatus('❌ Speech recognition not supported in this browser');
+                    
+                    // Show error on speech page
+                    const recognizedTextEl = document.getElementById('recognizedText');
+                    if (recognizedTextEl) {
+                        recognizedTextEl.innerHTML = '<div style="color: #cc0000; font-weight: bold; text-align: center; padding: 20px; font-size: 18px;">❌ Speech Recognition Not Supported<br><br>Please use Chrome, Edge, or Safari</div>';
+                    }
                     return;
                 }
+                
+                console.log('✅ Speech Recognition supported:', window.SpeechRecognition ? 'SpeechRecognition' : 'webkitSpeechRecognition');
                 
                 initializeContacts();
                 setupSwipeGestures();
@@ -2372,7 +2407,7 @@
                 console.log('🎙️ Voice commands SKIPPED to prevent pinging');
                 console.log('📍 Geolocation DISABLED to prevent pinging');
                 
-                console.log('✅ Leslie Speech Assistant initialized successfully (no pinging)!');
+                console.log('✅ Leslie Speech Assistant initialized successfully!');
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
