@@ -1,4 +1,11 @@
-<!DOCTYPE html>
+// Remove voice command status indicator completely from DOM
+        function removeVoiceCommandElements() {
+            const voiceStatus = document.getElementById('voiceCommandStatus');
+            if (voiceStatus) {
+                voiceStatus.remove();
+                console.log('🚫 Voice command status element REMOVED');
+            }
+        }<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1154,7 +1161,7 @@
             }
         }
 
-        // SPEAK COMPLETE PHRASE - FIXED TO SPEAK ENTIRE PHRASE
+        // SPEAK COMPLETE PHRASE - COMPLETELY REWRITTEN FOR FULL PHRASE SUPPORT
         function speakCompletePhrase(phrase) {
             // STRICT loop prevention
             if (isSpeaking) {
@@ -1168,75 +1175,79 @@
                 return;
             }
             
-            console.log('🔊 Speaking COMPLETE phrase:', phrase);
+            console.log('🔊 Attempting to speak COMPLETE phrase:', phrase);
             isSpeaking = true;
             lastSpokenPhrase = phrase;
             lastSpokenTime = Date.now();
             
-            // COMPLETELY cancel any existing speech and wait
+            // FORCE STOP all existing speech
             speechSynth.cancel();
             
-            // Give speech synthesis time to fully clear
+            // Wait for speech synthesis to completely clear
             setTimeout(() => {
-                try {
-                    // Create utterance with complete phrase
-                    const utterance = new SpeechSynthesisUtterance(phrase);
-                    utterance.rate = settings.speechSpeed || 1.0;
-                    utterance.pitch = 1.0;
-                    utterance.volume = 1.0;
-                    utterance.lang = 'en-US';
-                    
-                    // Force complete phrase - no chunking
-                    utterance.text = phrase; // Ensure full text is set
-                    
-                    // Track this specific utterance
-                    currentSpeechUtterance = utterance;
-                    
-                    utterance.onstart = function() {
-                        console.log('🔊 ✅ Started speaking COMPLETE phrase:', phrase);
-                        updateStatus('🔊 Speaking: "' + phrase + '"');
-                    };
-                    
-                    utterance.onend = function() {
-                        console.log('🔊 ✅ FINISHED speaking complete phrase:', phrase);
-                        isSpeaking = false;
-                        currentSpeechUtterance = null;
-                        updateStatus('🎤 Listening continuously... Ready for your next phrase!');
-                        
-                        // Clear display after speech and show ready message
-                        setTimeout(() => {
-                            const recognizedTextEl = document.getElementById('recognizedText');
-                            if (recognizedTextEl && shouldKeepListening) {
-                                recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px; font-size: 16px;">🎤 Ready for your next phrase...</div>';
-                            }
-                        }, 1500);
-                    };
-                    
-                    utterance.onerror = function(event) {
-                        console.error('🔊 ❌ Speech error (stopping loops):', event.error);
-                        isSpeaking = false;
-                        currentSpeechUtterance = null;
-                        speechSynth.cancel(); // Cancel everything on error
-                        updateStatus('🎤 Listening continuously... Ready for your next phrase!');
-                    };
-                    
-                    // Wait for synthesis to be completely ready
-                    if (speechSynth.speaking) {
-                        speechSynth.cancel();
-                        setTimeout(() => {
-                            speechSynth.speak(utterance);
-                        }, 100);
-                    } else {
-                        speechSynth.speak(utterance);
-                    }
-                    
-                } catch (error) {
-                    console.error('🔊 ❌ Speech synthesis completely failed:', error);
-                    isSpeaking = false;
-                    currentSpeechUtterance = null;
-                    updateStatus('🎤 Listening continuously... Ready for your next phrase!');
+                // Double-check synthesis is clear
+                if (speechSynth.speaking) {
+                    speechSynth.cancel();
+                    setTimeout(() => attemptSpeech(), 200);
+                } else {
+                    attemptSpeech();
                 }
-            }, 300); // Longer delay to ensure clean speech synthesis
+                
+                function attemptSpeech() {
+                    try {
+                        // Create clean utterance
+                        const utterance = new SpeechSynthesisUtterance();
+                        
+                        // EXPLICITLY set all properties for full phrase
+                        utterance.text = phrase;
+                        utterance.lang = 'en-US';
+                        utterance.rate = settings.speechSpeed || 1.0;
+                        utterance.pitch = 1.0;
+                        utterance.volume = 1.0;
+                        
+                        // Track this utterance
+                        currentSpeechUtterance = utterance;
+                        
+                        utterance.onstart = function() {
+                            console.log('🔊 ✅ Started speaking FULL phrase:', phrase);
+                            updateStatus('🔊 Speaking: "' + phrase + '"');
+                        };
+                        
+                        utterance.onend = function() {
+                            console.log('🔊 ✅ COMPLETED speaking full phrase:', phrase);
+                            isSpeaking = false;
+                            currentSpeechUtterance = null;
+                            updateStatus('🎤 Listening continuously... Ready for your next phrase!');
+                            
+                            // Clear display after speech
+                            setTimeout(() => {
+                                const recognizedTextEl = document.getElementById('recognizedText');
+                                if (recognizedTextEl && shouldKeepListening) {
+                                    recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px; font-size: 16px;">🎤 Ready for your next phrase...</div>';
+                                }
+                            }, 1500);
+                        };
+                        
+                        utterance.onerror = function(event) {
+                            console.error('🔊 ❌ Speech error:', event.error);
+                            isSpeaking = false;
+                            currentSpeechUtterance = null;
+                            speechSynth.cancel();
+                            updateStatus('🎤 Speech error - ready for next phrase');
+                        };
+                        
+                        // Start speaking with clean synthesis
+                        console.log('🔊 Starting speech synthesis for:', phrase);
+                        speechSynth.speak(utterance);
+                        
+                    } catch (error) {
+                        console.error('🔊 ❌ Speech synthesis failed completely:', error);
+                        isSpeaking = false;
+                        currentSpeechUtterance = null;
+                        updateStatus('🎤 Speech failed - ready for next phrase');
+                    }
+                }
+            }, 500); // Longer delay for complete cleanup
         }
 
         function resetSessionTimeout() {
@@ -1430,15 +1441,40 @@
             console.log('📍 Using default location (NO geolocation to prevent pinging)');
         }
 
-        // === COMPLETELY REMOVE ALL HTML ELEMENTS THAT COULD CAUSE PINGING ===
+        // === ELIMINATE ALL INPUT ELEMENTS THAT COULD CAUSE PINGING ===
         
-        // Remove voice command status indicator completely from DOM
-        function removeVoiceCommandElements() {
-            const voiceStatus = document.getElementById('voiceCommandStatus');
-            if (voiceStatus) {
-                voiceStatus.remove();
-                console.log('🚫 Voice command status element REMOVED');
+        // Remove contact search input - potential pinging source
+        function removePingingInputs() {
+            const contactSearch = document.getElementById('contactSearch');
+            if (contactSearch) {
+                // Replace with non-input element
+                const replacement = document.createElement('div');
+                replacement.innerHTML = '<div style="padding: 12px; background: #f0f0f0; border-radius: 8px; color: #666; font-style: italic;">Contact search disabled to prevent microphone access</div>';
+                contactSearch.parentNode.replaceChild(replacement, contactSearch);
+                console.log('🚫 Contact search input REMOVED');
             }
+            
+            // Remove API key input - potential pinging source
+            const apiKeyInput = document.getElementById('apiKeyInput');
+            if (apiKeyInput) {
+                // Replace with non-input element
+                const replacement = document.createElement('div');
+                replacement.innerHTML = '<div style="padding: 12px; background: #f0f0f0; border-radius: 8px; color: #666; font-style: italic;">API key input disabled to prevent microphone access</div>';
+                apiKeyInput.parentNode.replaceChild(replacement, apiKeyInput);
+                console.log('🚫 API key input REMOVED');
+            }
+            
+            // Remove text input - potential pinging source
+            const textInput = document.getElementById('largeTextInputField');
+            if (textInput) {
+                // Replace with non-input element
+                const replacement = document.createElement('div');
+                replacement.innerHTML = '<div style="padding: 20px; background: #f0f0f0; border-radius: 8px; color: #666; font-style: italic; text-align: center;">Text input disabled to prevent microphone access</div>';
+                textInput.parentNode.replaceChild(replacement, textInput);
+                console.log('🚫 Text input REMOVED');
+            }
+            
+            console.log('✅ ALL potential pinging inputs REMOVED');
         }
         
         // Remove swipe gesture areas completely from DOM  
@@ -1686,96 +1722,23 @@
         }
 
         function speakTextInput() {
-            const textInput = document.getElementById('largeTextInputField');
-            if (!textInput) return;
-            
-            const text = textInput.value.trim();
-            if (text) {
-                // Use the same speech synthesis approach as main speech
-                speechSynth.cancel();
-                setTimeout(() => {
-                    try {
-                        const utterance = new SpeechSynthesisUtterance(text);
-                        utterance.rate = settings.speechSpeed;
-                        utterance.pitch = 1.0;
-                        utterance.volume = 1.0;
-                        utterance.lang = 'en-US';
-                        utterance.text = text; // Ensure complete text
-                        
-                        utterance.onstart = function() {
-                            console.log('🔊 Text input speech started:', text);
-                        };
-                        
-                        utterance.onend = function() {
-                            console.log('🔊 Text input speech completed:', text);
-                            textInput.value = '';
-                            updateTextSpeakButton();
-                        };
-                        
-                        utterance.onerror = function(event) {
-                            console.error('🔊 Text input speech error:', event.error);
-                        };
-                        
-                        // Wait for synthesis to be ready
-                        if (speechSynth.speaking) {
-                            speechSynth.cancel();
-                            setTimeout(() => {
-                                speechSynth.speak(utterance);
-                            }, 100);
-                        } else {
-                            speechSynth.speak(utterance);
-                        }
-                        
-                    } catch (error) {
-                        console.error('❌ Error speaking text input:', error);
-                    }
-                }, 300);
-            }
+            // Text input has been removed to prevent pinging
+            console.log('🚫 Text input functionality disabled to prevent microphone access');
         }
 
         function forceKeyboardOpen() {
-            const textInput = document.getElementById('largeTextInputField');
-            if (!textInput) return;
-            
-            try {
-                textInput.removeAttribute('readonly');
-                textInput.removeAttribute('disabled');
-                textInput.focus();
-                textInput.click();
-                
-                if (/iPhone|iPad/.test(navigator.userAgent)) {
-                    const tempInput = document.createElement('input');
-                    tempInput.type = 'text';
-                    tempInput.style.position = 'absolute';
-                    tempInput.style.left = '-9999px';
-                    tempInput.style.opacity = '0';
-                    
-                    document.body.appendChild(tempInput);
-                    tempInput.focus();
-                    
-                    setTimeout(() => {
-                        textInput.focus();
-                        textInput.click();
-                        document.body.removeChild(tempInput);
-                    }, 100);
-                }
-                
-            } catch (error) {
-                console.error('❌ Keyboard forcing failed:', error);
-            }
+            // Text input has been removed to prevent pinging
+            console.log('🚫 Keyboard functionality disabled to prevent microphone access');
         }
 
         function clearTextInput() {
-            const textInput = document.getElementById('largeTextInputField');
-            if (textInput) textInput.value = '';
+            // Text input has been removed to prevent pinging
+            console.log('🚫 Text input functionality disabled to prevent microphone access');
         }
 
         function updateTextSpeakButton() {
-            const speakBtn = document.getElementById('speakTextBtn');
-            if (speakBtn) {
-                speakBtn.disabled = false;
-                speakBtn.style.opacity = '1';
-            }
+            // Text input has been removed to prevent pinging
+            console.log('🚫 Text input functionality disabled to prevent microphone access');
         }
 
         // === CONTACTS ===
