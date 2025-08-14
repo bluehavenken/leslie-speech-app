@@ -974,9 +974,9 @@
             enhancedMode: false
         };
 
-        // === COMPLETELY FIXED SPEECH RECOGNITION - NO RESTART, NO PINGING ===
+        // === TRULY CONTINUOUS SPEECH RECOGNITION - NO RESTART, NO PINGING ===
         function createSpeechRecognition() {
-            console.log('🎤 Creating SINGLE SESSION speech recognition...');
+            console.log('🎤 Creating TRULY CONTINUOUS speech recognition...');
             
             // Clean shutdown of any existing recognition
             if (speechRecognition) {
@@ -993,31 +993,35 @@
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             speechRecognition = new SpeechRecognition();
             
-            // CRITICAL: Keep it running continuously with NO RESTART
+            // CRITICAL SETTINGS FOR CONTINUOUS LISTENING
             speechRecognition.continuous = true;
-            speechRecognition.interimResults = false;
+            speechRecognition.interimResults = true; // This helps keep it alive
             speechRecognition.lang = 'en-US';
+            speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 Recognition started - CONTINUOUS MODE');
+                console.log('🎤 CONTINUOUS Recognition started - will stay open');
                 isMainListening = true;
                 updateListenButton();
-                updateStatus('🎤 Listening...');
+                updateStatus('🎤 Listening continuously...');
                 resetSessionTimeout();
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended - NO RESTART TO PREVENT PINGING');
+                console.log('🎤 Recognition ended unexpectedly - SHOULD NOT HAPPEN');
                 isMainListening = false;
-                shouldKeepListening = false;
                 updateListenButton();
-                updateStatus('🛑 Session ended - Click "START TALKING" to restart');
+                updateStatus('❌ Recognition ended unexpectedly - Click "START TALKING" to restart');
                 clearSessionTimeout();
+                
+                // DO NOT RESTART - this was causing the pinging
+                shouldKeepListening = false;
             };
 
             speechRecognition.onerror = function(event) {
                 console.error('🎤 Recognition error:', event.error);
                 
+                // Only stop on critical errors
                 if (event.error === 'not-allowed') {
                     isMainListening = false;
                     shouldKeepListening = false;
@@ -1030,37 +1034,41 @@
                     updateListenButton();
                     updateStatus('❌ Network error - Click "START TALKING" to retry');
                     clearSessionTimeout();
-                } else if (event.error === 'aborted') {
-                    console.log('🛑 Recognition aborted (normal)');
                 } else {
-                    console.log('⚠️ Recognition error:', event.error);
-                    // Don't stop on other errors, let it continue
+                    // For other errors, just log but don't stop the session
+                    console.log('⚠️ Non-critical error (continuing):', event.error);
                 }
             };
 
             speechRecognition.onresult = function(event) {
-                if (isSpeaking) {
-                    console.log('🚫 Blocked - speech synthesis in progress');
-                    return;
-                }
+                resetSessionTimeout(); // Reset timeout on any speech activity
                 
-                resetSessionTimeout(); // Reset timeout on speech activity
+                // Process both interim and final results to keep recognition alive
+                let finalText = '';
+                let interimText = '';
                 
-                let latestFinal = '';
-                for (let i = event.results.length - 1; i >= 0; i--) {
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    
                     if (event.results[i].isFinal) {
-                        latestFinal = event.results[i][0].transcript.trim();
-                        break;
+                        finalText += transcript;
+                    } else {
+                        interimText += transcript;
                     }
                 }
                 
-                if (latestFinal) {
-                    console.log('🎤 Final phrase received:', latestFinal);
-                    processPhrase(latestFinal);
+                // Only process final results for speech output
+                if (finalText.trim() && !isSpeaking) {
+                    console.log('🎤 Final phrase received:', finalText.trim());
+                    processPhrase(finalText.trim());
+                } else if (interimText.trim()) {
+                    // Show interim results to keep user engaged
+                    console.log('🎤 Interim text:', interimText.trim());
+                    updateStatus('🎤 Listening... "' + interimText.trim() + '"');
                 }
             };
             
-            console.log('✅ Speech recognition configured for SINGLE CONTINUOUS SESSION');
+            console.log('✅ TRULY CONTINUOUS speech recognition configured');
         }
 
         function resetSessionTimeout() {
@@ -1102,7 +1110,7 @@
                 return;
             }
             
-            console.log('✅ Processing phrase:', phrase);
+            console.log('✅ Processing phrase (recognition stays open):', phrase);
             
             lastSpokenPhrase = phrase;
             lastSpokenTime = now;
@@ -1113,6 +1121,9 @@
             
             displayPhrase(phrase);
             speakPhrase(phrase);
+            
+            // IMPORTANT: Recognition should stay active during speech synthesis
+            console.log('🎤 Recognition remains active during speech synthesis');
         }
 
         function displayPhrase(phrase) {
@@ -1133,7 +1144,7 @@
                 return;
             }
             
-            console.log('🔊 Speaking phrase:', phrase);
+            console.log('🔊 Speaking phrase (recognition stays active):', phrase);
             updateStatus('🔊 Speaking...');
             
             // Small delay to ensure clean speech synthesis
@@ -1145,14 +1156,14 @@
                     utterance.volume = 1.0;
                     
                     utterance.onstart = function() {
-                        console.log('✅ Speech started');
+                        console.log('✅ Speech started (recognition continues listening)');
                         isSpeaking = true;
                     };
                     
                     utterance.onend = function() {
-                        console.log('✅ Speech completed - ready for next phrase');
+                        console.log('✅ Speech completed - recognition still active and listening');
                         isSpeaking = false;
-                        updateStatus('🎤 Listening...');
+                        updateStatus('🎤 Listening continuously...');
                         
                         // Clear display after speech completes
                         setTimeout(() => {
@@ -1163,7 +1174,7 @@
                     utterance.onerror = function(event) {
                         console.error('❌ Speech error:', event.error);
                         isSpeaking = false;
-                        updateStatus('🎤 Listening...');
+                        updateStatus('🎤 Listening continuously...');
                         
                         setTimeout(() => {
                             clearPhraseDisplay();
@@ -1176,7 +1187,7 @@
                 } catch (error) {
                     console.error('❌ Speech synthesis failed:', error);
                     isSpeaking = false;
-                    updateStatus('🎤 Listening...');
+                    updateStatus('🎤 Listening continuously...');
                     
                     setTimeout(() => {
                         clearPhraseDisplay();
@@ -1201,7 +1212,7 @@
         }
 
         function startListening() {
-            console.log('🎤 Starting SINGLE CONTINUOUS listening session...');
+            console.log('🎤 Starting TRULY CONTINUOUS listening session...');
             
             if (isMainListening) {
                 console.log('⚠️ Already listening');
@@ -1223,10 +1234,10 @@
                     // Create fresh recognition instance
                     createSpeechRecognition();
                     
-                    // Start listening - SINGLE SESSION, NO RESTART
+                    // Start listening - TRULY CONTINUOUS SESSION
                     try {
                         speechRecognition.start();
-                        console.log('✅ SINGLE CONTINUOUS session started successfully');
+                        console.log('✅ TRULY CONTINUOUS session started - should stay open');
                     } catch (error) {
                         console.error('❌ Failed to start recognition:', error);
                         isMainListening = false;
@@ -1243,7 +1254,7 @@
         }
 
         function stopListening() {
-            console.log('🛑 Stopping SINGLE CONTINUOUS listening session...');
+            console.log('🛑 Manually stopping CONTINUOUS listening session...');
             
             // Set flags to prevent any restart attempts
             shouldKeepListening = false;
@@ -1260,6 +1271,7 @@
             if (speechRecognition) {
                 try {
                     speechRecognition.abort();
+                    console.log('✅ Recognition manually stopped');
                 } catch (e) {
                     console.log('Recognition already stopped');
                 }
