@@ -1085,7 +1085,9 @@
             return true;
         }
 
-        // === GLOBAL VOICE COMMANDS RECOGNITION ===
+        // === GLOBAL VOICE COMMANDS RECOGNITION - FIXED ===
+        let voiceCommandRestartTimer = null;
+        
         function createVoiceCommandRecognition() {
             console.log('🗣️ Creating GLOBAL voice command recognition...');
             
@@ -1098,6 +1100,12 @@
                     voiceCommandRecognition.onresult = null;
                 } catch (e) {}
                 voiceCommandRecognition = null;
+            }
+            
+            // Clear any existing restart timer
+            if (voiceCommandRestartTimer) {
+                clearTimeout(voiceCommandRestartTimer);
+                voiceCommandRestartTimer = null;
             }
             
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1124,25 +1132,34 @@
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
-                // Always restart voice commands (they should be always active)
-                setTimeout(() => {
-                    if (isInitialized) {
-                        try {
-                            voiceCommandRecognition.start();
-                        } catch (e) {
-                            console.log('Voice command restart failed');
-                            setTimeout(() => {
-                                if (isInitialized) {
-                                    try {
-                                        voiceCommandRecognition.start();
-                                    } catch (e2) {
-                                        console.log('Voice command restart failed again');
+                // FIXED: Only restart if NOT on speech page and app is initialized
+                if (isInitialized && currentPage !== 'speech') {
+                    console.log('🔄 Scheduling voice command restart (not on speech page)...');
+                    voiceCommandRestartTimer = setTimeout(() => {
+                        if (isInitialized && currentPage !== 'speech') {
+                            try {
+                                console.log('🔄 Restarting voice commands...');
+                                voiceCommandRecognition.start();
+                            } catch (e) {
+                                console.log('Voice command restart failed:', e.message);
+                                // Longer delay for failed restart
+                                voiceCommandRestartTimer = setTimeout(() => {
+                                    if (isInitialized && currentPage !== 'speech') {
+                                        try {
+                                            voiceCommandRecognition.start();
+                                        } catch (e2) {
+                                            console.log('Voice command restart failed again');
+                                        }
                                     }
-                                }
-                            }, 2000);
+                                    voiceCommandRestartTimer = null;
+                                }, 5000);
+                            }
                         }
-                    }
-                }, 500);
+                        voiceCommandRestartTimer = null;
+                    }, 3000); // Longer delay to prevent rapid cycling
+                } else {
+                    console.log('🚫 Not restarting voice commands - on speech page or not initialized');
+                }
             };
 
             voiceCommandRecognition.onerror = function(event) {
@@ -1153,15 +1170,19 @@
                     updateVoiceCommandStatus('permission-needed');
                 } else {
                     updateVoiceCommandStatus('inactive');
-                    setTimeout(() => {
-                        if (isInitialized) {
-                            try {
-                                voiceCommandRecognition.start();
-                            } catch (e) {
-                                console.log('Voice command error restart failed');
+                    // FIXED: Only restart if NOT on speech page
+                    if (isInitialized && currentPage !== 'speech') {
+                        voiceCommandRestartTimer = setTimeout(() => {
+                            if (isInitialized && currentPage !== 'speech') {
+                                try {
+                                    voiceCommandRecognition.start();
+                                } catch (e) {
+                                    console.log('Voice command error restart failed');
+                                }
                             }
-                        }
-                    }, 2000);
+                            voiceCommandRestartTimer = null;
+                        }, 5000); // Longer delay for error recovery
+                    }
                 }
             };
 
@@ -1178,6 +1199,47 @@
             };
             
             return true;
+        }
+        
+        // FIXED: Function to stop voice commands when entering speech page
+        function stopVoiceCommands() {
+            console.log('🛑 Stopping global voice commands...');
+            
+            if (voiceCommandRestartTimer) {
+                clearTimeout(voiceCommandRestartTimer);
+                voiceCommandRestartTimer = null;
+            }
+            
+            if (voiceCommandRecognition) {
+                try {
+                    voiceCommandRecognition.abort();
+                } catch (e) {
+                    console.log('Voice commands already stopped');
+                }
+            }
+            
+            isVoiceCommandListening = false;
+            updateVoiceCommandStatus('inactive');
+        }
+        
+        // FIXED: Function to start voice commands when leaving speech page
+        function startVoiceCommands() {
+            console.log('🔄 Starting global voice commands...');
+            
+            if (currentPage === 'speech') {
+                console.log('🚫 Not starting voice commands - on speech page');
+                return;
+            }
+            
+            const voiceCommandCreated = createVoiceCommandRecognition();
+            if (voiceCommandCreated) {
+                try {
+                    voiceCommandRecognition.start();
+                    console.log('✅ Global voice commands started');
+                } catch (error) {
+                    console.log('⚠️ Voice commands failed to start:', error.message);
+                }
+            }
         }
 
         // Display functions for speech page
@@ -1575,14 +1637,27 @@
             updateStatus('🛑 Stopped - Click "START TALKING" to begin again');
         }
 
-        // === UI FUNCTIONS ===
+        // === UI FUNCTIONS - FIXED ===
         function showPage(pageId) {
             console.log('📄 Showing page:', pageId);
             
             try {
+                // FIXED: Stop all recognition when changing pages
                 if (currentPage === 'speech' && pageId !== 'speech') {
                     console.log('🧹 Leaving speech page - stopping listening...');
                     stopListening();
+                }
+                
+                // FIXED: Manage voice commands based on page
+                if (pageId === 'speech') {
+                    console.log('🛑 Entering speech page - stopping voice commands...');
+                    stopVoiceCommands();
+                } else if (currentPage === 'speech' && pageId !== 'speech') {
+                    console.log('🔄 Leaving speech page - starting voice commands...');
+                    // Delay voice command restart to avoid conflicts
+                    setTimeout(() => {
+                        startVoiceCommands();
+                    }, 1000);
                 }
                 
                 document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
@@ -1603,10 +1678,10 @@
                         updateStatus('🎤 Auto-starting...');
                         updateListenButton();
                         
-                        // AUTO-START listening as requested
+                        // AUTO-START listening with delay to ensure voice commands are stopped
                         setTimeout(() => {
                             startListening();
-                        }, 800);
+                        }, 1500); // Increased delay
                     }
                     
                     if (pageId === 'phone') {
@@ -1616,7 +1691,14 @@
                     if (pageId === 'textInput') {
                         const textField = document.getElementById('largeTextInputField');
                         if (textField) {
-                            setTimeout(() => textField.focus(), 100);
+                            // FIXED: Focus and show keyboard on mobile
+                            setTimeout(() => {
+                                textField.focus();
+                                // Force keyboard on mobile devices
+                                if (/Mobi|Android/i.test(navigator.userAgent)) {
+                                    textField.click();
+                                }
+                            }, 300);
                         }
                     }
                 }
@@ -2403,7 +2485,7 @@
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
 
-        // === INITIALIZATION ===
+        // === INITIALIZATION - FIXED ===
         function initApp() {
             console.log('🚀 Initializing Leslie Speech Assistant...');
             
@@ -2430,19 +2512,15 @@
                 updateEnhancedSectionVisibility();
                 updateTextSpeakButton();
                 
-                // Initialize global voice commands
-                console.log('🗣️ Initializing global voice commands...');
-                setTimeout(() => {
-                    const voiceCommandCreated = createVoiceCommandRecognition();
-                    if (voiceCommandCreated) {
-                        try {
-                            voiceCommandRecognition.start();
-                            console.log('✅ Global voice commands started');
-                        } catch (error) {
-                            console.log('⚠️ Voice commands failed to start:', error.message);
-                        }
-                    }
-                }, 1000);
+                // FIXED: Only initialize voice commands if NOT starting on speech page
+                if (currentPage !== 'speech') {
+                    console.log('🗣️ Initializing global voice commands...');
+                    setTimeout(() => {
+                        startVoiceCommands();
+                    }, 2000); // Longer delay for stable initialization
+                } else {
+                    console.log('🚫 Skipping voice commands - starting on speech page');
+                }
                 
                 isInitialized = true;
                 console.log('✅ Leslie Speech Assistant initialized successfully!');
