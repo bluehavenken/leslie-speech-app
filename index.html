@@ -891,12 +891,15 @@
         let lastVoiceCommand = '';
         let lastVoiceCommandTime = 0;
         
-        // Speech page recognition control
+        // Speech page recognition control - FIXED VARIABLES
         let shouldKeepListening = false;
         let userStoppedManually = false;
         let sessionTimeoutId = null;
         let lastSpeechTime = null;
+        let restartTimer = null; // NEW: Timer for controlled restarts
+        let isRestarting = false; // NEW: Flag to prevent multiple restart attempts
         const SESSION_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+        const RESTART_DELAY = 1500; // NEW: 1.5 second delay between restarts
         
         // Speech processing control
         let lastSpokenPhrase = '';
@@ -914,10 +917,11 @@
             enhancedMode: false
         };
 
-        // === SPEECH PAGE CONTINUOUS RECOGNITION ===
+        // === SPEECH PAGE CONTINUOUS RECOGNITION - FIXED ===
         function createSpeechRecognition() {
             console.log('🎤 Creating speech page continuous recognition...');
             
+            // Clean up existing recognition properly
             if (speechRecognition) {
                 try {
                     speechRecognition.abort();
@@ -927,6 +931,12 @@
                     speechRecognition.onresult = null;
                 } catch (e) {}
                 speechRecognition = null;
+            }
+            
+            // Clear any existing restart timer
+            if (restartTimer) {
+                clearTimeout(restartTimer);
+                restartTimer = null;
             }
             
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -948,6 +958,7 @@
             speechRecognition.onstart = function() {
                 console.log('🎤 ✅ Speech page recognition started');
                 isMainListening = true;
+                isRestarting = false; // Clear restart flag
                 lastResultIndex = 0;
                 updateListenButton();
                 updateStatus('🎤 Listening continuously... Speak your phrases!');
@@ -959,19 +970,35 @@
                 isMainListening = false;
                 updateListenButton();
                 
-                if (shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
-                    console.log('🔄 Restarting speech page session...');
-                    setTimeout(() => {
+                // FIXED: Better restart logic with delays and checks
+                if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !isRestarting) {
+                    console.log('🔄 Scheduling controlled restart...');
+                    isRestarting = true;
+                    
+                    // Clear any existing restart timer
+                    if (restartTimer) {
+                        clearTimeout(restartTimer);
+                    }
+                    
+                    // Use a longer delay to prevent rapid cycling
+                    restartTimer = setTimeout(() => {
                         if (shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
                             try {
+                                console.log('🔄 Attempting controlled restart...');
                                 lastResultIndex = 0;
+                                isRestarting = false;
                                 speechRecognition.start();
                             } catch (e) {
-                                console.log('Restart failed');
+                                console.log('❌ Restart failed:', e.message);
+                                isRestarting = false;
                                 updateStatus('✅ Session complete - click START TALKING to restart');
+                                shouldKeepListening = false;
                             }
+                        } else {
+                            isRestarting = false;
                         }
-                    }, 200);
+                        restartTimer = null;
+                    }, RESTART_DELAY);
                 } else {
                     updateStatus('✅ Stopped listening');
                     clearSessionTimeout();
@@ -981,26 +1008,46 @@
             speechRecognition.onerror = function(event) {
                 console.error('🎤 Speech recognition error:', event.error);
                 isMainListening = false;
+                isRestarting = false; // Clear restart flag on error
                 updateListenButton();
                 
                 if (event.error === 'not-allowed') {
                     updateStatus('❌ Microphone access denied');
                     shouldKeepListening = false;
+                    userStoppedManually = true;
                 } else if (event.error === 'no-speech') {
-                    console.log('No speech - continuing...');
+                    console.log('No speech detected - continuing...');
                     resetSessionTimeout();
                 } else {
-                    if (shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
-                        setTimeout(() => {
+                    // FIXED: Better error handling with longer delays
+                    if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !isRestarting) {
+                        console.log('🔄 Error recovery - scheduling restart...');
+                        isRestarting = true;
+                        
+                        // Clear any existing restart timer
+                        if (restartTimer) {
+                            clearTimeout(restartTimer);
+                        }
+                        
+                        // Longer delay for error recovery
+                        restartTimer = setTimeout(() => {
                             if (shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
                                 try {
+                                    console.log('🔄 Attempting error recovery restart...');
                                     lastResultIndex = 0;
+                                    isRestarting = false;
                                     speechRecognition.start();
                                 } catch (e) {
-                                    console.log('Error restart failed');
+                                    console.log('❌ Error recovery failed:', e.message);
+                                    isRestarting = false;
+                                    updateStatus('❌ Recognition error - click START TALKING to retry');
+                                    shouldKeepListening = false;
                                 }
+                            } else {
+                                isRestarting = false;
                             }
-                        }, 1000);
+                            restartTimer = null;
+                        }, RESTART_DELAY * 2); // Double delay for error recovery
                     }
                 }
             };
@@ -1443,7 +1490,7 @@
             }
         }
 
-        // Speech page controls
+        // Speech page controls - FIXED
         function toggleListening() {
             if (isMainListening || shouldKeepListening) {
                 stopListening();
@@ -1460,8 +1507,15 @@
                 return;
             }
             
+            // FIXED: Clear any existing restart timers
+            if (restartTimer) {
+                clearTimeout(restartTimer);
+                restartTimer = null;
+            }
+            
             shouldKeepListening = true;
             userStoppedManually = false;
+            isRestarting = false; // Clear restart flag
             isSpeaking = false;
             
             updateStatus('🎤 Preparing continuous recognition...');
@@ -1481,6 +1535,7 @@
                 console.error('❌ Failed to start recognition:', error);
                 shouldKeepListening = false;
                 isMainListening = false;
+                isRestarting = false;
                 updateListenButton();
                 updateStatus('❌ Failed to start recognition');
             }
@@ -1491,6 +1546,13 @@
             
             shouldKeepListening = false;
             userStoppedManually = true;
+            isRestarting = false; // Clear restart flag
+            
+            // FIXED: Clear restart timer when manually stopping
+            if (restartTimer) {
+                clearTimeout(restartTimer);
+                restartTimer = null;
+            }
             
             clearSessionTimeout();
             
