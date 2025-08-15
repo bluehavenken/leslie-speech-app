@@ -548,10 +548,10 @@
                 </button>
                 <div class="tips-box">
                     💡 Tips:<br>
-                    • Voice commands work automatically - just say "Hey Leslie" + command<br>
                     • Click START TALKING for continuous speech recognition<br>
                     • Use Enhanced Recognition for better accuracy with unclear speech<br>
-                    • Pause between words setting allows proper phrase completion
+                    • Pause between words setting allows proper phrase completion<br>
+                    • Voice commands temporarily disabled to prevent phone pinging
                 </div>
             </div>
         </div>
@@ -679,9 +679,11 @@
             </div>
             <div style="padding: 16px; max-height: 70vh; overflow-y: auto; background: white; border-radius: 8px; margin: 8px;">
                 <div style="font-size: 16px; line-height: 1.6; color: #333;">
-                    <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #0099cc;">
-                        <strong>🎤 Available Voice Commands</strong><br>
-                        <span style="font-size: 14px; color: #666;">Voice commands work automatically when listening</span>
+                    <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107; margin-bottom: 20px;">
+                        <strong style="color: #856404;">⚠️ Voice Commands Temporarily Disabled</strong><br>
+                        <div style="margin-top: 8px; font-size: 14px; color: #856404;">
+                            Voice commands have been disabled to prevent phone pinging issues. Use the navigation buttons instead.
+                        </div>
                     </div>
                     
                     <div style="margin-bottom: 25px;">
@@ -1014,17 +1016,11 @@
             }
         }
 
-        // Process complete phrase
+        // Process complete phrase - FIXED TO REMOVE VOICE COMMANDS
         function processCompletePhrase(phrase) {
             console.log('✅ Processing COMPLETE phrase:', phrase);
             
-            // Check for voice commands first
-            if (isVoiceCommand(phrase)) {
-                processVoiceCommand(phrase);
-                return;
-            }
-            
-            // Display the complete phrase
+            // NO voice command checking - go straight to display and speech
             displayFinalPhrase(phrase);
             
             // Speak the phrase back
@@ -1049,41 +1045,49 @@
             }
         }
 
-        // Speak complete phrase
+        // Speak complete phrase - FIXED FOR FULL PHRASE SPEECH
         function speakCompletePhrase(phrase) {
             if (isSpeaking) {
                 console.log('🔊 BLOCKED: Already speaking');
                 return;
             }
             
-            if (phrase === lastSpokenPhrase && (Date.now() - lastSpokenTime) < 5000) {
+            if (phrase === lastSpokenPhrase && (Date.now() - lastSpokenTime) < 3000) {
                 console.log('🔊 BLOCKED: Duplicate phrase');
                 return;
             }
             
-            console.log('🔊 STARTING speech for phrase:', phrase);
+            console.log('🔊 STARTING speech for COMPLETE phrase:', phrase);
             isSpeaking = true;
             lastSpokenPhrase = phrase;
             lastSpokenTime = Date.now();
             
+            // COMPLETE speech synthesis cleanup
             speechSynth.cancel();
             
+            // Wait longer for mobile compatibility
             setTimeout(() => {
                 try {
-                    const utterance = new SpeechSynthesisUtterance();
-                    utterance.text = phrase;
+                    // Create utterance with explicit text content
+                    const utterance = new SpeechSynthesisUtterance(phrase);
+                    
+                    // Set all properties explicitly for maximum compatibility
+                    utterance.text = phrase; // Set again to ensure it's set
                     utterance.lang = 'en-US';
-                    utterance.rate = settings.speechSpeed || 1.0;
+                    utterance.rate = Math.max(0.5, Math.min(2.0, settings.speechSpeed || 1.0));
                     utterance.pitch = 1.0;
                     utterance.volume = 1.0;
                     
+                    console.log('🔊 Created utterance with text length:', phrase.length, 'chars');
+                    console.log('🔊 Utterance text:', utterance.text);
+                    
                     utterance.onstart = function() {
-                        console.log('🔊 ✅ Speech STARTED for:', phrase);
+                        console.log('🔊 ✅ Speech STARTED - Full phrase:', phrase);
                         updateStatus('🔊 Speaking: "' + phrase + '"');
                     };
                     
                     utterance.onend = function() {
-                        console.log('🔊 ✅ Speech COMPLETED for:', phrase);
+                        console.log('🔊 ✅ Speech COMPLETED - Full phrase spoken');
                         isSpeaking = false;
                         currentSpeechUtterance = null;
                         updateStatus('🎤 Ready for your next phrase!');
@@ -1097,180 +1101,61 @@
                     };
                     
                     utterance.onerror = function(event) {
-                        console.error('🔊 ❌ Speech ERROR:', event.error);
+                        console.error('🔊 ❌ Speech ERROR for phrase:', phrase, 'Error:', event.error);
                         isSpeaking = false;
                         currentSpeechUtterance = null;
                         speechSynth.cancel();
                         updateStatus('🎤 Speech error - ready for next phrase');
                     };
                     
+                    utterance.onboundary = function(event) {
+                        console.log('🔊 Speech boundary:', event.name, 'at char:', event.charIndex);
+                    };
+                    
                     currentSpeechUtterance = utterance;
-                    speechSynth.speak(utterance);
+                    
+                    // Additional compatibility check for mobile
+                    if (speechSynth.speaking || speechSynth.pending) {
+                        console.log('🔊 Speech synthesis busy, canceling and retrying...');
+                        speechSynth.cancel();
+                        setTimeout(() => {
+                            speechSynth.speak(utterance);
+                            console.log('🔊 Speech synthesis started after retry');
+                        }, 200);
+                    } else {
+                        speechSynth.speak(utterance);
+                        console.log('🔊 Speech synthesis started immediately');
+                    }
                     
                 } catch (error) {
-                    console.error('🔊 ❌ Speech error:', error);
+                    console.error('🔊 ❌ CRITICAL speech error:', error);
                     isSpeaking = false;
                     currentSpeechUtterance = null;
                     updateStatus('🎤 Speech failed - ready for next phrase');
                 }
-            }, 500);
+            }, 300); // Reduced delay for better responsiveness
         }
 
-        // === VOICE COMMANDS ===
+        // === VOICE COMMANDS - COMPLETELY REMOVED TO PREVENT PHONE PINGING ===
         function isVoiceCommand(phrase) {
-            const normalizedPhrase = phrase.toLowerCase().trim();
-            return normalizedPhrase.includes('hey leslie') || normalizedPhrase.startsWith('leslie');
+            // DISABLED - no voice command processing to prevent microphone access
+            console.log('🚫 Voice commands DISABLED to prevent phone pinging');
+            return false;
         }
 
         function processVoiceCommand(phrase) {
-            const normalizedPhrase = phrase.toLowerCase().trim();
-            console.log('🗣️ Processing voice command:', normalizedPhrase);
-            
-            // Prevent duplicate commands
-            if (normalizedPhrase === lastVoiceCommand && (Date.now() - lastVoiceCommandTime) < 3000) {
-                console.log('🚫 Duplicate voice command ignored');
-                return;
-            }
-            
-            lastVoiceCommand = normalizedPhrase;
-            lastVoiceCommandTime = Date.now();
-            
-            // Extract command after "hey leslie" or "leslie"
-            let command = '';
-            if (normalizedPhrase.includes('hey leslie')) {
-                command = normalizedPhrase.split('hey leslie')[1].trim();
-            } else if (normalizedPhrase.startsWith('leslie')) {
-                command = normalizedPhrase.substring(6).trim();
-            }
-            
-            executeVoiceCommand(command);
+            // DISABLED - no voice command processing
+            console.log('🚫 Voice commands DISABLED to prevent phone pinging');
         }
 
         function executeVoiceCommand(cmd) {
-            console.log('🎯 Executing command:', cmd);
-            
-            // Navigation commands
-            if (cmd.includes('home')) {
-                showPage('home');
-                speakResponse('Going to home page');
-                return;
-            }
-            
-            if (cmd.includes('start talking') || cmd.includes('speech')) {
-                showPage('speech');
-                speakResponse('Starting speech recognition');
-                return;
-            }
-            
-            if (cmd.includes('start texting') || cmd.includes('text')) {
-                showPage('textInput');
-                speakResponse('Opening text input');
-                return;
-            }
-            
-            if (cmd.includes('phone') || cmd.includes('contact')) {
-                showPage('phone');
-                speakResponse('Opening contacts');
-                return;
-            }
-            
-            if (cmd.includes('settings')) {
-                showPage('settings');
-                speakResponse('Opening settings');
-                return;
-            }
-            
-            if (cmd.includes('help') || cmd.includes('commands')) {
-                showPage('commands');
-                speakResponse('Showing voice commands');
-                return;
-            }
-            
-            // Weather commands
-            if (cmd.includes('weather') && !cmd.includes('close')) {
-                showCurrentWeather();
-                speakResponse('Showing current weather');
-                return;
-            }
-            
-            if (cmd.includes('hourly')) {
-                showHourlyWeather();
-                speakResponse('Showing hourly forecast');
-                return;
-            }
-            
-            if (cmd.includes('weekly') || cmd.includes('7 day')) {
-                showWeeklyWeather();
-                speakResponse('Showing weekly forecast');
-                return;
-            }
-            
-            if (cmd.includes('close')) {
-                hideWeather();
-                speakResponse('Closing weather');
-                return;
-            }
-            
-            // Speech settings
-            if (cmd.includes('speak faster')) {
-                adjustSpeechSpeed(0.2);
-                speakResponse('Speech speed increased');
-                return;
-            }
-            
-            if (cmd.includes('speak slower')) {
-                adjustSpeechSpeed(-0.2);
-                speakResponse('Speech speed decreased');
-                return;
-            }
-            
-            if (cmd.includes('pause more')) {
-                adjustPauseBetweenWords(0.3);
-                speakResponse('Pause between words increased');
-                return;
-            }
-            
-            if (cmd.includes('pause less')) {
-                adjustPauseBetweenWords(-0.3);
-                speakResponse('Pause between words decreased');
-                return;
-            }
-            
-            // Recognition commands
-            if (cmd.includes('enhanced mode on')) {
-                updateEnhancedMode(true);
-                speakResponse('Enhanced mode enabled');
-                return;
-            }
-            
-            if (cmd.includes('enhanced mode off')) {
-                updateEnhancedMode(false);
-                speakResponse('Enhanced mode disabled');
-                return;
-            }
-            
-            if (cmd.includes('stop listening')) {
-                stopListening();
-                speakResponse('Stopping speech recognition');
-                return;
-            }
-            
-            console.log('❓ Unknown voice command:', cmd);
-            speakResponse('I did not understand that command');
+            // DISABLED - no voice command execution
+            console.log('🚫 Voice commands DISABLED to prevent phone pinging');
         }
 
         function speakResponse(text) {
-            if (!settings.speakVoiceCommands) return;
-            
-            console.log('🔊 Speaking response:', text);
-            speechSynth.cancel();
-            
-            setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = settings.speechSpeed || 1.0;
-                utterance.volume = 0.8;
-                speechSynth.speak(utterance);
-            }, 100);
+            // DISABLED - no voice responses to prevent additional microphone triggers
+            console.log('🚫 Voice responses DISABLED to prevent phone pinging');
         }
 
         function adjustSpeechSpeed(delta) {
