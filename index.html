@@ -841,13 +841,13 @@
                     <div class="setting-value" id="enhancedModeLabel">Enhanced Mode: OFF</div>
                 </div>
                 <div class="settings-section">
-                    <div class="settings-title">Voice Command Speech</div>
+                    <div class="settings-title">Speak Voice Commands</div>
                     <div class="settings-description">Whether Leslie should speak responses to voice commands</div>
                     <div class="switch">
                         <input type="checkbox" id="speakVoiceCommandsSwitch" checked>
-                        <label for="speakVoiceCommandsSwitch">Enable Voice Command Speech</label>
+                        <label for="speakVoiceCommandsSwitch">Enable Speak Voice Commands</label>
                     </div>
-                    <div class="setting-value" id="speakVoiceCommandsLabel">Voice Command Speech: ON</div>
+                    <div class="setting-value" id="speakVoiceCommandsLabel">Speak Voice Commands: ON</div>
                 </div>
             </div>
             <button class="back-btn" id="btnSettingsHome">← Back</button>
@@ -875,52 +875,155 @@
     </div>
 
     <script>
-        // === AUDIO MUTING - SILENCE BROWSER SPEECH RECOGNITION PINGS ===
+        // === ENHANCED AUDIO MUTING - COMPLETE SILENCE SYSTEM ===
         function muteSystemAudio() {
             try {
-                // Method 1: Create silent audio context to override system sounds
+                console.log('🔇 Activating COMPLETE audio muting system...');
+                
+                // Method 1: Silent audio context with gain control
                 if (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined') {
                     const AudioCtx = window.AudioContext || window.webkitAudioContext;
                     if (!window.silentAudioContext) {
                         window.silentAudioContext = new AudioCtx();
-                        const oscillator = window.silentAudioContext.createOscillator();
-                        const gainNode = window.silentAudioContext.createGain();
-                        gainNode.gain.setValueAtTime(0, window.silentAudioContext.currentTime);
-                        oscillator.connect(gainNode);
-                        gainNode.connect(window.silentAudioContext.destination);
-                        oscillator.start();
-                        console.log('🔇 Silent audio context created to mask system sounds');
+                        
+                        // Create multiple silent nodes to mask system sounds
+                        for (let i = 0; i < 3; i++) {
+                            const oscillator = window.silentAudioContext.createOscillator();
+                            const gainNode = window.silentAudioContext.createGain();
+                            
+                            // Set gain to absolute zero
+                            gainNode.gain.setValueAtTime(0, window.silentAudioContext.currentTime);
+                            oscillator.frequency.setValueAtTime(20, window.silentAudioContext.currentTime);
+                            
+                            oscillator.connect(gainNode);
+                            gainNode.connect(window.silentAudioContext.destination);
+                            oscillator.start();
+                        }
+                        
+                        // Create master volume control and set to zero
+                        if (window.silentAudioContext.destination.volume !== undefined) {
+                            window.silentAudioContext.destination.volume = 0;
+                        }
+                        
+                        console.log('🔇 Silent audio context with multiple masking nodes created');
                     }
                 }
                 
-                // Method 2: Override notification sounds
-                if ('Notification' in window) {
-                    const originalNotification = window.Notification;
-                    window.Notification = function(...args) {
-                        // Silent notifications
-                        return new originalNotification(...args, { silent: true });
+                // Method 2: Override ALL audio-related APIs
+                const originalAudio = window.Audio;
+                window.Audio = function(...args) {
+                    const audio = new originalAudio(...args);
+                    audio.muted = true;
+                    audio.volume = 0;
+                    audio.play = function() { return Promise.resolve(); }; // Prevent playing
+                    return audio;
+                };
+                
+                // Method 3: Override HTMLMediaElement methods
+                if (HTMLMediaElement && HTMLMediaElement.prototype) {
+                    const originalPlay = HTMLMediaElement.prototype.play;
+                    HTMLMediaElement.prototype.play = function() {
+                        this.muted = true;
+                        this.volume = 0;
+                        return Promise.resolve(); // Silent success
                     };
                 }
                 
-                // Method 3: Mute any audio elements that might be created
+                // Method 4: Intercept Web Audio API
+                if (window.AudioContext || window.webkitAudioContext) {
+                    const OriginalAudioContext = window.AudioContext || window.webkitAudioContext;
+                    const AudioContextWrapper = function(...args) {
+                        const ctx = new OriginalAudioContext(...args);
+                        const originalCreateGain = ctx.createGain;
+                        
+                        ctx.createGain = function() {
+                            const gainNode = originalCreateGain.call(this);
+                            gainNode.gain.setValueAtTime(0, ctx.currentTime);
+                            return gainNode;
+                        };
+                        
+                        return ctx;
+                    };
+                    
+                    if (window.AudioContext) window.AudioContext = AudioContextWrapper;
+                    if (window.webkitAudioContext) window.webkitAudioContext = AudioContextWrapper;
+                }
+                
+                // Method 5: Override Notification API
+                if ('Notification' in window) {
+                    const originalNotification = window.Notification;
+                    window.Notification = function(...args) {
+                        const options = args[1] || {};
+                        options.silent = true;
+                        args[1] = options;
+                        return new originalNotification(...args);
+                    };
+                    
+                    // Copy static methods
+                    Object.setPrototypeOf(window.Notification, originalNotification);
+                    Object.assign(window.Notification, originalNotification);
+                }
+                
+                // Method 6: Comprehensive DOM audio element muting
                 const observer = new MutationObserver((mutations) => {
                     mutations.forEach((mutation) => {
                         mutation.addedNodes.forEach((node) => {
-                            if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
-                                node.muted = true;
-                                node.volume = 0;
+                            if (node.nodeType === 1) { // Element node
+                                if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
+                                    node.muted = true;
+                                    node.volume = 0;
+                                    node.autoplay = false;
+                                    
+                                    // Override play method
+                                    node.play = function() { return Promise.resolve(); };
+                                }
+                                
+                                // Check children too
+                                const audioElements = node.querySelectorAll && node.querySelectorAll('audio, video');
+                                if (audioElements) {
+                                    audioElements.forEach(el => {
+                                        el.muted = true;
+                                        el.volume = 0;
+                                        el.autoplay = false;
+                                        el.play = function() { return Promise.resolve(); };
+                                    });
+                                }
                             }
                         });
                     });
                 });
                 observer.observe(document.body, { childList: true, subtree: true });
                 
-                console.log('🔇 Audio muting systems activated');
+                // Method 7: Mute existing audio elements
+                document.querySelectorAll('audio, video').forEach(el => {
+                    el.muted = true;
+                    el.volume = 0;
+                    el.autoplay = false;
+                });
+                
+                // Method 8: Override window sound methods
+                if (window.beep) window.beep = function() {};
+                if (window.alert) {
+                    const originalAlert = window.alert;
+                    window.alert = function(msg) {
+                        console.log('Alert (silenced):', msg);
+                        return originalAlert(msg);
+                    };
+                }
+                
+                console.log('🔇 COMPLETE audio muting system activated - ALL sounds should be silenced');
                 
             } catch (error) {
-                console.log('Audio muting setup failed:', error);
+                console.log('Audio muting setup error (non-critical):', error);
             }
         }
+
+        // === IMMEDIATE MUTING ON LOAD ===
+        (function() {
+            console.log('🔇 Immediate audio muting activation...');
+            muteSystemAudio();
+        })();
+
         let speechRecognition = null; // For speech page continuous listening
         let voiceCommandRecognition = null; // For global voice commands
         let isMainListening = false; // Speech page listening
@@ -964,9 +1067,12 @@
             enhancedMode: false
         };
 
-        // === SPEECH PAGE RECOGNITION - SILENT OPERATION ===
+        // === SPEECH PAGE RECOGNITION - ENHANCED SILENCE ===
         function createSpeechRecognition() {
-            console.log('🎤 Creating SILENT speech recognition...');
+            console.log('🎤 Creating ULTRA-SILENT speech recognition...');
+            
+            // Enhanced audio muting before recognition
+            muteSystemAudio();
             
             // Clean up existing recognition
             if (speechRecognition) {
@@ -998,7 +1104,7 @@
             let isProcessingResult = false;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 ✅ SILENT recognition started');
+                console.log('🎤 ✅ ULTRA-SILENT recognition started');
                 isMainListening = true;
                 completeTranscript = '';
                 isProcessingResult = false;
@@ -1006,8 +1112,13 @@
                 updateStatus('🎤 Listening for complete phrase... Speak now!');
                 resetSessionTimeout();
                 
-                // Ensure audio is muted
+                // Ensure complete silence
                 muteSystemAudio();
+                
+                // Additional silence measures
+                if (window.speechSynthesis) {
+                    window.speechSynthesis.cancel();
+                }
             };
 
             speechRecognition.onend = function() {
@@ -1047,6 +1158,9 @@
                 console.error('🎤 Speech recognition error:', event.error);
                 isMainListening = false;
                 updateListenButton();
+                
+                // Force audio muting on any error
+                muteSystemAudio();
                 
                 if (event.error === 'not-allowed') {
                     updateStatus('❌ Microphone access denied');
@@ -1097,9 +1211,12 @@
             return true;
         }
 
-        // === VOICE COMMANDS - SILENT OPERATION ===
+        // === VOICE COMMANDS - ENHANCED "HEY LESLIE" RECOGNITION ===
         function createVoiceCommandRecognition() {
-            console.log('🗣️ Creating SILENT voice commands...');
+            console.log('🗣️ Creating ENHANCED "Hey Leslie" voice commands...');
+            
+            // Enhanced audio muting for voice commands
+            muteSystemAudio();
             
             if (voiceCommandRecognition) {
                 try {
@@ -1123,23 +1240,28 @@
             voiceCommandRecognition.continuous = false; // Single-shot for fast restart
             voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
-            voiceCommandRecognition.maxAlternatives = 1;
+            voiceCommandRecognition.maxAlternatives = 3; // Better "Hey Leslie" detection
 
             voiceCommandRecognition.onstart = function() {
-                console.log('🗣️ ✅ SILENT voice commands active');
+                console.log('🗣️ ✅ "Hey Leslie" commands ACTIVE and SILENT');
                 isVoiceCommandListening = true;
                 updateVoiceCommandStatus('active');
                 
-                // Ensure audio is muted for voice commands too
+                // Ensure complete silence for voice commands
                 muteSystemAudio();
+                
+                // Cancel any ongoing speech synthesis
+                if (window.speechSynthesis) {
+                    window.speechSynthesis.cancel();
+                }
             };
 
             voiceCommandRecognition.onend = function() {
-                console.log('🗣️ Voice commands ended - SILENT restart');
+                console.log('🗣️ Voice commands ended - INSTANT SILENT restart');
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
-                // FAST restart for immediate availability
+                // ULTRA-FAST restart for immediate "Hey Leslie" availability
                 if (!voiceCommandsDisabled && 
                     currentPage !== 'speech' && 
                     !isMainListening && 
@@ -1151,7 +1273,7 @@
                             !isMainListening && 
                             !shouldKeepListening) {
                             try {
-                                console.log('🔄 SILENT restart of voice commands...');
+                                console.log('🔄 INSTANT "Hey Leslie" restart...');
                                 voiceCommandRecognition.start();
                             } catch (e) {
                                 console.log('Voice command restart failed:', e);
@@ -1162,10 +1284,10 @@
                                             voiceCommandRecognition.start();
                                         } catch (e2) {}
                                     }
-                                }, 2000);
+                                }, 1000);
                             }
                         }
-                    }, 3000); // 3 second restart - much faster than 15 seconds
+                    }, 1500); // Even faster restart - 1.5 seconds
                 }
             };
 
@@ -1174,45 +1296,62 @@
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
+                // Force audio muting on error
+                muteSystemAudio();
+                
                 if (event.error === 'not-allowed') {
                     voiceCommandsDisabled = true;
                     console.log('❌ Voice commands disabled - permission denied');
                 } else {
-                    // Quick retry on other errors
+                    // Ultra-quick retry on other errors
                     setTimeout(() => {
                         if (!voiceCommandsDisabled && currentPage !== 'speech') {
                             try {
                                 voiceCommandRecognition.start();
                             } catch (e) {}
                         }
-                    }, 2000);
+                    }, 1000);
                 }
             };
 
             voiceCommandRecognition.onresult = function(event) {
                 const result = event.results[event.results.length - 1];
                 if (result.isFinal) {
-                    const transcript = result[0].transcript.trim();
-                    console.log('🗣️ Voice command heard:', transcript);
+                    // Check ALL alternatives for "Hey Leslie"
+                    let bestTranscript = '';
+                    let foundHeyLeslie = false;
                     
-                    if (isVoiceCommand(transcript)) {
-                        console.log('🎯 Executing voice command:', transcript);
-                        processVoiceCommand(transcript);
+                    for (let i = 0; i < result.length; i++) {
+                        const transcript = result[i].transcript.trim().toLowerCase();
+                        console.log(`🗣️ Voice command alternative ${i}:`, transcript);
                         
-                        // IMMEDIATE restart after command execution
+                        if (isVoiceCommand(transcript)) {
+                            bestTranscript = transcript;
+                            foundHeyLeslie = true;
+                            break;
+                        }
+                    }
+                    
+                    if (foundHeyLeslie) {
+                        console.log('🎯 "Hey Leslie" detected! Executing:', bestTranscript);
+                        processVoiceCommand(bestTranscript);
+                        
+                        // IMMEDIATE restart after "Hey Leslie" command
                         setTimeout(() => {
                             if (!voiceCommandsDisabled && 
                                 currentPage !== 'speech' && 
                                 !isMainListening && 
                                 !shouldKeepListening) {
                                 try {
-                                    console.log('🔄 SILENT restart after command execution');
+                                    console.log('🔄 IMMEDIATE restart after "Hey Leslie" execution');
                                     voiceCommandRecognition.start();
                                 } catch (e) {
                                     console.log('Immediate restart failed:', e);
                                 }
                             }
-                        }, 1000); // 1 second restart after command
+                        }, 500); // Half-second restart after "Hey Leslie"
+                    } else {
+                        console.log('🚫 No "Hey Leslie" detected in:', result[0].transcript);
                     }
                 }
             };
@@ -1221,7 +1360,7 @@
         }
         
         function stopVoiceCommands() {
-            console.log('🛑 Stopping voice commands...');
+            console.log('🛑 Stopping "Hey Leslie" commands...');
             voiceCommandsDisabled = true;
             
             if (voiceCommandRestartTimer) {
@@ -1240,11 +1379,11 @@
         }
         
         function startVoiceCommands() {
-            console.log('🔄 Starting voice commands IMMEDIATELY...');
+            console.log('🔄 Starting "Hey Leslie" commands IMMEDIATELY...');
             voiceCommandsDisabled = false;
             
             if (currentPage === 'speech' || isMainListening || shouldKeepListening) {
-                console.log('🚫 Not starting voice commands - speech page active');
+                console.log('🚫 Not starting "Hey Leslie" - speech page active');
                 return;
             }
             
@@ -1253,9 +1392,9 @@
             if (voiceCommandCreated) {
                 try {
                     voiceCommandRecognition.start();
-                    console.log('✅ Voice commands started IMMEDIATELY');
+                    console.log('✅ "Hey Leslie" commands started IMMEDIATELY');
                 } catch (error) {
-                    console.log('⚠️ Voice commands failed to start:', error.message);
+                    console.log('⚠️ "Hey Leslie" commands failed to start:', error.message);
                     // Quick retry
                     setTimeout(() => {
                         if (!voiceCommandsDisabled && currentPage !== 'speech') {
@@ -1263,7 +1402,7 @@
                                 voiceCommandRecognition.start();
                             } catch (e) {}
                         }
-                    }, 1000);
+                    }, 500);
                 }
             }
         }
@@ -1304,32 +1443,34 @@
             }
         }
 
-        // SPEECH SYNTHESIS - FIX FREEZING AFTER SPEECH
+        // SPEECH SYNTHESIS - ENHANCED SILENCE AFTER SPEECH
         function speakCompletePhrase(phrase) {
-            console.log('🔊 Speaking COMPLETE phrase without freezing:', phrase);
+            console.log('🔊 Speaking phrase with ENHANCED silence protection:', phrase);
             
             if (isSpeaking) {
                 console.log('🔊 Already speaking, skipping');
                 return;
             }
             
-            console.log('🔊 Starting speech for FULL phrase:', phrase);
+            console.log('🔊 Starting speech for phrase:', phrase);
             isSpeaking = true;
             lastSpokenPhrase = phrase;
             lastSpokenTime = Date.now();
             
             updateStatus('🔊 Speaking: "' + phrase + '"');
             
-            // Complete speech cleanup
+            // Enhanced speech cleanup
             try {
                 speechSynth.cancel();
                 if (currentSpeechUtterance) {
                     currentSpeechUtterance = null;
                 }
+                // Force audio muting before speech
+                muteSystemAudio();
             } catch (e) {}
             
             try {
-                console.log('🔊 Creating utterance for COMPLETE text:', phrase);
+                console.log('🔊 Creating utterance for text:', phrase);
                 const utterance = new SpeechSynthesisUtterance(phrase);
                 utterance.text = phrase;
                 utterance.lang = 'en-US';
@@ -1338,25 +1479,26 @@
                 utterance.volume = 1.0;
                 
                 utterance.onstart = function() {
-                    console.log('🔊 ✅ Speech STARTED for complete phrase');
+                    console.log('🔊 ✅ Speech STARTED');
                     updateStatus('🔊 Speaking: "' + phrase + '"');
                 };
                 
                 utterance.onend = function() {
-                    console.log('🔊 ✅ Speech COMPLETED - preparing for next phrase');
+                    console.log('🔊 ✅ Speech COMPLETED - enforcing silence');
                     isSpeaking = false;
                     currentSpeechUtterance = null;
                     updateStatus('🎤 Ready for next phrase...');
                     
-                    // Clear display and prepare for next phrase
+                    // ENHANCED silence enforcement after speech
                     setTimeout(() => {
+                        muteSystemAudio(); // Re-mute everything
+                        
                         const recognizedTextEl = document.getElementById('recognizedText');
                         if (recognizedTextEl && shouldKeepListening) {
                             recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
                         }
                         
-                        // CRITICAL FIX: Don't restart recognition here - let the main onend handler do it
-                        console.log('🎤 Speech complete - waiting for recognition restart cycle');
+                        console.log('🎤 Speech complete - ready for next recognition cycle');
                         updateStatus('🎤 Listening for your next phrase...');
                         
                     }, 500);
@@ -1367,6 +1509,8 @@
                     isSpeaking = false;
                     currentSpeechUtterance = null;
                     updateStatus('❌ Speech error - continuing...');
+                    // Force silence on speech error
+                    muteSystemAudio();
                 };
                 
                 currentSpeechUtterance = utterance;
@@ -1378,21 +1522,35 @@
                 isSpeaking = false;
                 currentSpeechUtterance = null;
                 updateStatus('❌ Speech failed - continuing...');
+                muteSystemAudio();
             }
         }
 
-        // === VOICE COMMANDS ===
+        // === ENHANCED "HEY LESLIE" VOICE COMMANDS ===
         function isVoiceCommand(phrase) {
             const normalizedPhrase = phrase.toLowerCase().trim();
-            return normalizedPhrase.includes('hey leslie') || normalizedPhrase.startsWith('leslie');
+            
+            // Enhanced "Hey Leslie" detection with variations
+            const heyLeslieVariations = [
+                'hey leslie',
+                'hey lesly',
+                'hey lesley',
+                'leslie',
+                'lesly',
+                'lesley',
+                'hey lessie',
+                'lessie'
+            ];
+            
+            return heyLeslieVariations.some(variation => normalizedPhrase.includes(variation));
         }
 
         function processVoiceCommand(phrase) {
             const normalizedPhrase = phrase.toLowerCase().trim();
-            console.log('🗣️ Processing voice command:', normalizedPhrase);
+            console.log('🗣️ Processing "Hey Leslie" command:', normalizedPhrase);
             
             if (normalizedPhrase === lastVoiceCommand && (Date.now() - lastVoiceCommandTime) < 3000) {
-                console.log('🚫 Duplicate voice command ignored');
+                console.log('🚫 Duplicate "Hey Leslie" command ignored');
                 return;
             }
             
@@ -1400,17 +1558,33 @@
             lastVoiceCommandTime = Date.now();
             
             let command = '';
-            if (normalizedPhrase.includes('hey leslie')) {
-                command = normalizedPhrase.split('hey leslie')[1].trim();
-            } else if (normalizedPhrase.startsWith('leslie')) {
-                command = normalizedPhrase.substring(6).trim();
+            
+            // Extract command after "Hey Leslie" variations
+            const heyLeslieVariations = ['hey leslie', 'hey lesly', 'hey lesley', 'hey lessie'];
+            
+            for (const variation of heyLeslieVariations) {
+                if (normalizedPhrase.includes(variation)) {
+                    command = normalizedPhrase.split(variation)[1].trim();
+                    break;
+                }
+            }
+            
+            // If no "hey" prefix, try just "leslie" variants
+            if (!command) {
+                const leslieVariations = ['leslie', 'lesly', 'lesley', 'lessie'];
+                for (const variation of leslieVariations) {
+                    if (normalizedPhrase.startsWith(variation)) {
+                        command = normalizedPhrase.substring(variation.length).trim();
+                        break;
+                    }
+                }
             }
             
             executeVoiceCommand(command);
         }
 
         function executeVoiceCommand(cmd) {
-            console.log('🎯 Executing voice command:', cmd);
+            console.log('🎯 Executing "Hey Leslie" command:', cmd);
             
             // Navigation commands
             if (cmd.includes('home')) {
@@ -1518,20 +1692,34 @@
                 return;
             }
             
-            console.log('❓ Unknown voice command:', cmd);
+            console.log('❓ Unknown "Hey Leslie" command:', cmd);
             speakResponse('I did not understand that command');
         }
 
         function speakResponse(text) {
-            if (!settings.speakVoiceCommands) return;
+            if (!settings.speakVoiceCommands) {
+                console.log('🔇 Voice command speech disabled - not speaking response:', text);
+                return;
+            }
             
-            console.log('🔊 Speaking response:', text);
+            console.log('🔊 Speaking "Hey Leslie" response:', text);
             speechSynth.cancel();
+            
+            // Force silence before speaking response
+            muteSystemAudio();
             
             setTimeout(() => {
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.rate = settings.speechSpeed || 1.0;
                 utterance.volume = 0.8;
+                
+                utterance.onend = function() {
+                    // Force silence after response
+                    setTimeout(() => {
+                        muteSystemAudio();
+                    }, 100);
+                };
+                
                 speechSynth.speak(utterance);
             }, 100);
         }
@@ -1553,7 +1741,7 @@
                 
                 if (status === 'active') {
                     statusEl.classList.add('active');
-                    statusEl.textContent = '🎤 Voice Commands Active';
+                    statusEl.textContent = '🎤 "Hey Leslie" Active';
                 } else if (status === 'permission-needed') {
                     statusEl.classList.add('permission-needed');
                     statusEl.textContent = '🎤 Microphone Permission Needed';
@@ -1589,7 +1777,7 @@
             }
         }
 
-        // Speech page controls - FIXED
+        // Speech page controls - ENHANCED
         function toggleListening() {
             if (isMainListening || shouldKeepListening) {
                 stopListening();
@@ -1599,14 +1787,17 @@
         }
 
         function startListening() {
-            console.log('🎤 Starting speech page listening...');
+            console.log('🎤 Starting speech page listening with ENHANCED silence...');
             
             if (shouldKeepListening) {
                 console.log('⚠️ Already listening');
                 return;
             }
             
-            // FIXED: Clear any existing restart timers
+            // Force complete silence before starting
+            muteSystemAudio();
+            
+            // Clear any existing restart timers
             if (restartTimer) {
                 clearTimeout(restartTimer);
                 restartTimer = null;
@@ -1614,10 +1805,10 @@
             
             shouldKeepListening = true;
             userStoppedManually = false;
-            isRestarting = false; // Clear restart flag
+            isRestarting = false;
             isSpeaking = false;
             
-            updateStatus('🎤 Preparing continuous recognition...');
+            updateStatus('🎤 Preparing SILENT continuous recognition...');
             
             const recognitionCreated = createSpeechRecognition();
             
@@ -1628,7 +1819,7 @@
             }
             
             try {
-                updateStatus('🎤 Starting continuous listening...');
+                updateStatus('🎤 Starting SILENT continuous listening...');
                 speechRecognition.start();
             } catch (error) {
                 console.error('❌ Failed to start recognition:', error);
@@ -1645,9 +1836,9 @@
             
             shouldKeepListening = false;
             userStoppedManually = true;
-            isRestarting = false; // Clear restart flag
+            isRestarting = false;
             
-            // FIXED: Clear restart timer when manually stopping
+            // Clear restart timer when manually stopping
             if (restartTimer) {
                 clearTimeout(restartTimer);
                 restartTimer = null;
@@ -1669,12 +1860,15 @@
                 }
             }
             
+            // Force silence after stopping
+            muteSystemAudio();
+            
             isMainListening = false;
             updateListenButton();
             updateStatus('🛑 Stopped - Click "START TALKING" to begin again');
         }
 
-        // === UI FUNCTIONS - RESTORE VOICE COMMAND MANAGEMENT ===
+        // === UI FUNCTIONS - ENHANCED VOICE COMMAND MANAGEMENT ===
         function showPage(pageId) {
             console.log('📄 Showing page:', pageId);
             
@@ -1685,15 +1879,15 @@
                     stopListening();
                 }
                 
-                // Manage voice commands properly
+                // Enhanced voice command management
                 if (pageId === 'speech') {
-                    console.log('🛑 Entering speech page - stopping voice commands...');
+                    console.log('🛑 Entering speech page - stopping "Hey Leslie" commands...');
                     stopVoiceCommands();
                 } else if (currentPage === 'speech' && pageId !== 'speech') {
-                    console.log('🔄 Leaving speech page - re-enabling voice commands...');
+                    console.log('🔄 Leaving speech page - re-enabling "Hey Leslie" commands...');
                     setTimeout(() => {
                         startVoiceCommands();
-                    }, 2000);
+                    }, 1000); // Faster restart
                 }
                 
                 document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
@@ -2464,7 +2658,7 @@
             const switchEl = document.getElementById('speakVoiceCommandsSwitch');
             
             if (label) {
-                label.textContent = 'Voice Command Speech: ' + (checked ? 'ON' : 'OFF');
+                label.textContent = 'Speak Voice Commands: ' + (checked ? 'ON' : 'OFF');
             }
             if (switchEl) {
                 switchEl.checked = checked;
@@ -2515,9 +2709,9 @@
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
 
-        // === INITIALIZATION - SILENT AUDIO SETUP ===
+        // === INITIALIZATION - ENHANCED SILENCE SETUP ===
         function initApp() {
-            console.log('🚀 Initializing Leslie Speech Assistant...');
+            console.log('🚀 Initializing Leslie Speech Assistant with ENHANCED silence...');
             
             if (isInitialized) {
                 console.log('⚠️ App already initialized');
@@ -2525,6 +2719,10 @@
             }
             
             try {
+                // IMMEDIATE and comprehensive audio muting
+                console.log('🔇 Activating ENHANCED audio muting...');
+                muteSystemAudio();
+                
                 loadSettings();
                 setupEventHandlers();
                 
@@ -2534,11 +2732,7 @@
                     return;
                 }
                 
-                console.log('✅ Speech Recognition supported');
-                
-                // SETUP AUDIO MUTING FIRST
-                console.log('🔇 Setting up audio muting...');
-                muteSystemAudio();
+                console.log('✅ Speech Recognition supported with ENHANCED silence');
                 
                 initializeContacts();
                 setupSwipeGestures();
@@ -2546,15 +2740,15 @@
                 updateEnhancedSectionVisibility();
                 updateTextSpeakButton();
                 
-                // START voice commands IMMEDIATELY on home page
+                // START "Hey Leslie" commands IMMEDIATELY on home page
                 if (currentPage !== 'speech') {
-                    console.log('🗣️ Starting SILENT voice commands immediately...');
+                    console.log('🗣️ Starting "Hey Leslie" commands with ENHANCED silence...');
                     // Start right away - no delay
                     startVoiceCommands();
                 }
                 
                 isInitialized = true;
-                console.log('✅ Leslie initialized with SILENT operation');
+                console.log('✅ Leslie initialized with ENHANCED SILENT operation');
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -2569,7 +2763,7 @@
 
         // === EVENT LISTENERS ===
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('🚀 DOM loaded, initializing Leslie...');
+            console.log('🚀 DOM loaded, initializing Leslie with ENHANCED silence...');
             try {
                 initApp();
             } catch (error) {
@@ -2579,7 +2773,7 @@
 
         window.addEventListener('load', function() {
             if (!isInitialized) {
-                console.log('🔄 Window loaded - backup initialization...');
+                console.log('🔄 Window loaded - backup initialization with ENHANCED silence...');
                 try {
                     initApp();
                 } catch (error) {
@@ -2587,6 +2781,21 @@
                 }
             }
         });
+
+        // === IMMEDIATE SILENCE ENFORCEMENT ===
+        // Additional silence enforcement on any user interaction
+        document.addEventListener('click', function() {
+            muteSystemAudio();
+        });
+
+        document.addEventListener('touchstart', function() {
+            muteSystemAudio();
+        });
+
+        // Periodic silence enforcement
+        setInterval(function() {
+            muteSystemAudio();
+        }, 5000); // Re-mute every 5 seconds
     </script>
 </body>
 </html>
