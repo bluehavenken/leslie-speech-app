@@ -875,153 +875,132 @@
     </div>
 
     <script>
-        // === ENHANCED AUDIO MUTING - COMPLETE SILENCE SYSTEM ===
+        // === CRITICAL AUDIO MUTING - STOPS ALL PINGING ===
         function muteSystemAudio() {
             try {
-                console.log('🔇 Activating COMPLETE audio muting system...');
+                console.log('🔇 CRITICAL: Stopping ALL audio pings...');
                 
-                // Method 1: Silent audio context with gain control
-                if (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined') {
-                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                    if (!window.silentAudioContext) {
-                        window.silentAudioContext = new AudioCtx();
+                // CRITICAL: Override SpeechRecognition to be completely silent
+                if (window.SpeechRecognition || window.webkitSpeechRecognition) {
+                    const OriginalSpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    
+                    function SilentSpeechRecognition() {
+                        const recognition = new OriginalSpeechRecognition();
                         
-                        // Create multiple silent nodes to mask system sounds
-                        for (let i = 0; i < 3; i++) {
-                            const oscillator = window.silentAudioContext.createOscillator();
-                            const gainNode = window.silentAudioContext.createGain();
+                        // Override all event handlers to prevent system sounds
+                        const originalOnStart = recognition.onstart;
+                        const originalOnEnd = recognition.onend;
+                        const originalOnError = recognition.onerror;
+                        
+                        recognition.onstart = function(event) {
+                            // Immediately mute everything when recognition starts
+                            try {
+                                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                                document.querySelectorAll('audio, video').forEach(el => {
+                                    el.muted = true;
+                                    el.volume = 0;
+                                    el.pause();
+                                });
+                            } catch (e) {}
                             
-                            // Set gain to absolute zero
-                            gainNode.gain.setValueAtTime(0, window.silentAudioContext.currentTime);
-                            oscillator.frequency.setValueAtTime(20, window.silentAudioContext.currentTime);
+                            if (originalOnStart) originalOnStart.call(this, event);
+                        };
+                        
+                        recognition.onend = function(event) {
+                            // Mute everything when recognition ends
+                            try {
+                                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                            } catch (e) {}
                             
-                            oscillator.connect(gainNode);
-                            gainNode.connect(window.silentAudioContext.destination);
-                            oscillator.start();
-                        }
+                            if (originalOnEnd) originalOnEnd.call(this, event);
+                        };
                         
-                        // Create master volume control and set to zero
-                        if (window.silentAudioContext.destination.volume !== undefined) {
-                            window.silentAudioContext.destination.volume = 0;
-                        }
+                        recognition.onerror = function(event) {
+                            // Mute everything on errors
+                            try {
+                                if (window.speechSynthesis) window.speechSynthesis.cancel();
+                            } catch (e) {}
+                            
+                            if (originalOnError) originalOnError.call(this, event);
+                        };
                         
-                        console.log('🔇 Silent audio context with multiple masking nodes created');
+                        return recognition;
+                    }
+                    
+                    // Replace the constructors
+                    if (window.SpeechRecognition) {
+                        window.SpeechRecognition = SilentSpeechRecognition;
+                    }
+                    if (window.webkitSpeechRecognition) {
+                        window.webkitSpeechRecognition = SilentSpeechRecognition;
                     }
                 }
                 
-                // Method 2: Override ALL audio-related APIs
-                const originalAudio = window.Audio;
-                window.Audio = function(...args) {
-                    const audio = new originalAudio(...args);
-                    audio.muted = true;
-                    audio.volume = 0;
-                    audio.play = function() { return Promise.resolve(); }; // Prevent playing
-                    return audio;
-                };
-                
-                // Method 3: Override HTMLMediaElement methods
-                if (HTMLMediaElement && HTMLMediaElement.prototype) {
-                    const originalPlay = HTMLMediaElement.prototype.play;
-                    HTMLMediaElement.prototype.play = function() {
-                        this.muted = true;
-                        this.volume = 0;
-                        return Promise.resolve(); // Silent success
-                    };
-                }
-                
-                // Method 4: Intercept Web Audio API
-                if (window.AudioContext || window.webkitAudioContext) {
-                    const OriginalAudioContext = window.AudioContext || window.webkitAudioContext;
-                    const AudioContextWrapper = function(...args) {
-                        const ctx = new OriginalAudioContext(...args);
-                        const originalCreateGain = ctx.createGain;
-                        
-                        ctx.createGain = function() {
-                            const gainNode = originalCreateGain.call(this);
-                            gainNode.gain.setValueAtTime(0, ctx.currentTime);
-                            return gainNode;
-                        };
-                        
-                        return ctx;
-                    };
+                // CRITICAL: Cancel all speech synthesis immediately
+                if (window.speechSynthesis) {
+                    window.speechSynthesis.cancel();
                     
-                    if (window.AudioContext) window.AudioContext = AudioContextWrapper;
-                    if (window.webkitAudioContext) window.webkitAudioContext = AudioContextWrapper;
-                }
-                
-                // Method 5: Override Notification API
-                if ('Notification' in window) {
-                    const originalNotification = window.Notification;
-                    window.Notification = function(...args) {
-                        const options = args[1] || {};
-                        options.silent = true;
-                        args[1] = options;
-                        return new originalNotification(...args);
+                    // Override speak method to ensure controlled speech only
+                    const originalSpeak = window.speechSynthesis.speak;
+                    window.speechSynthesis.speak = function(utterance) {
+                        // Only allow our controlled speech
+                        if (utterance && utterance._controlledSpeech) {
+                            return originalSpeak.call(this, utterance);
+                        }
+                        // Block all other speech
+                        console.log('🔇 Blocking uncontrolled speech');
                     };
-                    
-                    // Copy static methods
-                    Object.setPrototypeOf(window.Notification, originalNotification);
-                    Object.assign(window.Notification, originalNotification);
                 }
                 
-                // Method 6: Comprehensive DOM audio element muting
-                const observer = new MutationObserver((mutations) => {
-                    mutations.forEach((mutation) => {
-                        mutation.addedNodes.forEach((node) => {
-                            if (node.nodeType === 1) { // Element node
-                                if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
-                                    node.muted = true;
-                                    node.volume = 0;
-                                    node.autoplay = false;
-                                    
-                                    // Override play method
-                                    node.play = function() { return Promise.resolve(); };
-                                }
-                                
-                                // Check children too
-                                const audioElements = node.querySelectorAll && node.querySelectorAll('audio, video');
-                                if (audioElements) {
-                                    audioElements.forEach(el => {
-                                        el.muted = true;
-                                        el.volume = 0;
-                                        el.autoplay = false;
-                                        el.play = function() { return Promise.resolve(); };
-                                    });
-                                }
-                            }
-                        });
-                    });
-                });
-                observer.observe(document.body, { childList: true, subtree: true });
-                
-                // Method 7: Mute existing audio elements
+                // CRITICAL: Mute all existing audio
                 document.querySelectorAll('audio, video').forEach(el => {
                     el.muted = true;
                     el.volume = 0;
-                    el.autoplay = false;
+                    el.pause();
+                    el.removeAttribute('autoplay');
                 });
                 
-                // Method 8: Override window sound methods
-                if (window.beep) window.beep = function() {};
-                if (window.alert) {
-                    const originalAlert = window.alert;
-                    window.alert = function(msg) {
-                        console.log('Alert (silenced):', msg);
-                        return originalAlert(msg);
+                // CRITICAL: Override Audio constructor
+                if (window.Audio) {
+                    const OriginalAudio = window.Audio;
+                    window.Audio = function(...args) {
+                        const audio = new OriginalAudio(...args);
+                        audio.muted = true;
+                        audio.volume = 0;
+                        audio.play = function() { return Promise.resolve(); };
+                        return audio;
                     };
                 }
                 
-                console.log('🔇 COMPLETE audio muting system activated - ALL sounds should be silenced');
+                // CRITICAL: Disable notification sounds
+                if ('Notification' in window) {
+                    const OriginalNotification = window.Notification;
+                    window.Notification = function(...args) {
+                        const options = args[1] || {};
+                        options.silent = true;
+                        options.sound = undefined;
+                        args[1] = options;
+                        return new OriginalNotification(...args);
+                    };
+                    Object.setPrototypeOf(window.Notification, OriginalNotification);
+                    Object.assign(window.Notification, OriginalNotification);
+                }
+                
+                console.log('🔇 CRITICAL audio muting ACTIVE - All pings should be stopped');
                 
             } catch (error) {
-                console.log('Audio muting setup error (non-critical):', error);
+                console.log('🔇 Audio muting error (continuing):', error);
             }
         }
 
-        // === IMMEDIATE MUTING ON LOAD ===
+        // === IMMEDIATE CRITICAL MUTING ===
         (function() {
-            console.log('🔇 Immediate audio muting activation...');
             muteSystemAudio();
+            
+            // Mute again after a short delay to catch delayed audio
+            setTimeout(muteSystemAudio, 100);
+            setTimeout(muteSystemAudio, 500);
+            setTimeout(muteSystemAudio, 1000);
         })();
 
         let speechRecognition = null; // For speech page continuous listening
@@ -1067,14 +1046,14 @@
             enhancedMode: false
         };
 
-        // === SPEECH PAGE RECOGNITION - ENHANCED SILENCE ===
+        // === FIXED SPEECH PAGE RECOGNITION - NO MORE FREEZING ===
         function createSpeechRecognition() {
-            console.log('🎤 Creating ULTRA-SILENT speech recognition...');
+            console.log('🎤 Creating FIXED speech recognition (no freezing)...');
             
-            // Enhanced audio muting before recognition
+            // Critical audio muting before recognition
             muteSystemAudio();
             
-            // Clean up existing recognition
+            // Clean up existing recognition completely
             if (speechRecognition) {
                 try {
                     speechRecognition.abort();
@@ -1095,51 +1074,38 @@
             }
             
             speechRecognition = new SpeechRecognition();
-            speechRecognition.continuous = false; // Single phrase mode for complete capture
+            speechRecognition.continuous = false; // CRITICAL: Single phrase to prevent freezing
             speechRecognition.interimResults = true;
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
 
-            let completeTranscript = '';
-            let isProcessingResult = false;
+            let hasProcessedFinalResult = false; // CRITICAL: Prevent double processing
 
             speechRecognition.onstart = function() {
-                console.log('🎤 ✅ ULTRA-SILENT recognition started');
+                console.log('🎤 ✅ FIXED recognition started (no freeze)');
                 isMainListening = true;
-                completeTranscript = '';
-                isProcessingResult = false;
+                hasProcessedFinalResult = false; // Reset flag
                 updateListenButton();
-                updateStatus('🎤 Listening for complete phrase... Speak now!');
+                updateStatus('🎤 Listening... Speak your phrase!');
                 resetSessionTimeout();
                 
-                // Ensure complete silence
+                // CRITICAL: Force complete silence
                 muteSystemAudio();
-                
-                // Additional silence measures
-                if (window.speechSynthesis) {
-                    window.speechSynthesis.cancel();
-                }
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended');
+                console.log('🎤 Recognition ended - FIXED restart cycle');
                 isMainListening = false;
                 updateListenButton();
                 
-                // Process final result if we have one and haven't processed it yet
-                if (completeTranscript.trim() && !isProcessingResult) {
-                    console.log('📝 Processing complete phrase on end:', completeTranscript);
-                    isProcessingResult = true;
-                    processSpeechPhrase(completeTranscript.trim());
-                }
-                
-                // Auto-restart for continuous mode (with delay to prevent truncation)
+                // CRITICAL: Auto-restart ONLY if we should keep listening and user hasn't stopped
                 if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !isSpeaking) {
+                    // FIXED: Shorter delay and better restart logic
                     setTimeout(() => {
                         if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !isSpeaking) {
                             try {
-                                console.log('🔄 Restarting for next complete phrase...');
-                                createSpeechRecognition();
+                                console.log('🔄 FIXED restart - no freeze');
+                                createSpeechRecognition(); // Recreate fresh recognition
                                 speechRecognition.start();
                             } catch (e) {
                                 console.log('Restart failed:', e);
@@ -1147,7 +1113,7 @@
                                 updateStatus('❌ Recognition failed - click START TALKING');
                             }
                         }
-                    }, 2000); // 2 second delay for complete phrase processing
+                    }, 1500); // FIXED: Shorter delay to prevent freeze
                 } else {
                     updateStatus('✅ Stopped listening');
                     shouldKeepListening = false;
@@ -1158,8 +1124,9 @@
                 console.error('🎤 Speech recognition error:', event.error);
                 isMainListening = false;
                 updateListenButton();
+                hasProcessedFinalResult = false; // Reset on error
                 
-                // Force audio muting on any error
+                // CRITICAL: Force audio muting on any error
                 muteSystemAudio();
                 
                 if (event.error === 'not-allowed') {
@@ -1167,26 +1134,24 @@
                     shouldKeepListening = false;
                     userStoppedManually = true;
                 } else if (event.error === 'no-speech') {
-                    updateStatus('🤫 No speech heard - trying again...');
+                    updateStatus('🤫 No speech heard - ready for next phrase...');
                 } else {
                     console.log('Recognition error - will attempt recovery');
-                    updateStatus('🎤 Error - trying again...');
+                    updateStatus('🎤 Error - ready for next phrase...');
                 }
             };
 
             speechRecognition.onresult = function(event) {
                 let interimTranscript = '';
-                let newFinalText = '';
+                let finalTranscript = '';
                 
-                // Process ALL results to capture complete phrases
+                // FIXED: Better result processing to prevent freezing
                 for (let i = 0; i < event.results.length; i++) {
                     const result = event.results[i];
                     const transcript = result[0].transcript;
                     
                     if (result.isFinal) {
-                        console.log('✅ FINAL result:', transcript);
-                        newFinalText += transcript;
-                        completeTranscript += transcript; // Build complete transcript
+                        finalTranscript += transcript;
                     } else {
                         interimTranscript += transcript;
                     }
@@ -1197,12 +1162,11 @@
                     displayInterimPhrase(interimTranscript.trim());
                 }
                 
-                // Process final text immediately when we get it
-                if (newFinalText.trim() && !isProcessingResult) {
-                    console.log('📝 Processing final text immediately:', newFinalText.trim());
-                    isProcessingResult = true;
-                    completeTranscript = newFinalText.trim(); // Use the final text
-                    processSpeechPhrase(completeTranscript);
+                // CRITICAL: Process final result only once to prevent freezing
+                if (finalTranscript.trim() && !hasProcessedFinalResult) {
+                    console.log('📝 Processing final phrase:', finalTranscript.trim());
+                    hasProcessedFinalResult = true; // CRITICAL: Set flag to prevent double processing
+                    processSpeechPhrase(finalTranscript.trim());
                 }
                 
                 resetSessionTimeout();
@@ -1211,11 +1175,43 @@
             return true;
         }
 
-        // === VOICE COMMANDS - ENHANCED "HEY LESLIE" RECOGNITION ===
-        function createVoiceCommandRecognition() {
-            console.log('🗣️ Creating ENHANCED "Hey Leslie" voice commands...');
+        // === CRITICAL PINGING FIX - STOPS HOME PAGE PINGING ===
+        function stopAllAudioPinging() {
+            console.log('🔇 CRITICAL: Stopping ALL pinging on home page...');
             
-            // Enhanced audio muting for voice commands
+            // CRITICAL: Stop voice commands when they might cause pinging
+            if (voiceCommandRecognition && isVoiceCommandListening) {
+                try {
+                    voiceCommandRecognition.abort();
+                    isVoiceCommandListening = false;
+                    console.log('🔇 Stopped voice commands to prevent pinging');
+                } catch (e) {}
+            }
+            
+            // CRITICAL: Cancel all speech synthesis
+            if (window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+            }
+            
+            // CRITICAL: Pause and mute all media
+            document.querySelectorAll('audio, video').forEach(el => {
+                try {
+                    el.pause();
+                    el.muted = true;
+                    el.volume = 0;
+                    el.currentTime = 0;
+                } catch (e) {}
+            });
+            
+            // CRITICAL: Force audio muting
+            muteSystemAudio();
+        }
+
+        // === FIXED VOICE COMMANDS - NO PINGING ===
+        function createVoiceCommandRecognition() {
+            console.log('🗣️ Creating NO-PING voice commands...');
+            
+            // CRITICAL: Enhanced audio muting for voice commands
             muteSystemAudio();
             
             if (voiceCommandRecognition) {
@@ -1237,31 +1233,26 @@
             }
             
             voiceCommandRecognition = new SpeechRecognition();
-            voiceCommandRecognition.continuous = false; // Single-shot for fast restart
+            voiceCommandRecognition.continuous = false;
             voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
-            voiceCommandRecognition.maxAlternatives = 3; // Better "Hey Leslie" detection
+            voiceCommandRecognition.maxAlternatives = 3;
 
             voiceCommandRecognition.onstart = function() {
-                console.log('🗣️ ✅ "Hey Leslie" commands ACTIVE and SILENT');
+                console.log('🗣️ ✅ NO-PING voice commands active');
                 isVoiceCommandListening = true;
                 updateVoiceCommandStatus('active');
                 
-                // Ensure complete silence for voice commands
+                // CRITICAL: Ensure complete silence for voice commands
                 muteSystemAudio();
-                
-                // Cancel any ongoing speech synthesis
-                if (window.speechSynthesis) {
-                    window.speechSynthesis.cancel();
-                }
             };
 
             voiceCommandRecognition.onend = function() {
-                console.log('🗣️ Voice commands ended - INSTANT SILENT restart');
+                console.log('🗣️ Voice commands ended - NO-PING restart');
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
-                // ULTRA-FAST restart for immediate "Hey Leslie" availability
+                // CRITICAL: Only restart if safe and not causing pinging
                 if (!voiceCommandsDisabled && 
                     currentPage !== 'speech' && 
                     !isMainListening && 
@@ -1273,21 +1264,16 @@
                             !isMainListening && 
                             !shouldKeepListening) {
                             try {
-                                console.log('🔄 INSTANT "Hey Leslie" restart...');
+                                console.log('🔄 NO-PING restart of voice commands...');
+                                // CRITICAL: Mute before restarting
+                                muteSystemAudio();
                                 voiceCommandRecognition.start();
                             } catch (e) {
                                 console.log('Voice command restart failed:', e);
-                                // Retry once after short delay
-                                setTimeout(() => {
-                                    if (!voiceCommandsDisabled) {
-                                        try {
-                                            voiceCommandRecognition.start();
-                                        } catch (e2) {}
-                                    }
-                                }, 1000);
+                                // Don't retry aggressively to prevent pinging
                             }
                         }
-                    }, 1500); // Even faster restart - 1.5 seconds
+                    }, 5000); // CRITICAL: Longer delay to prevent pinging
                 }
             };
 
@@ -1296,21 +1282,15 @@
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
-                // Force audio muting on error
+                // CRITICAL: Force audio muting on error
                 muteSystemAudio();
                 
                 if (event.error === 'not-allowed') {
                     voiceCommandsDisabled = true;
                     console.log('❌ Voice commands disabled - permission denied');
                 } else {
-                    // Ultra-quick retry on other errors
-                    setTimeout(() => {
-                        if (!voiceCommandsDisabled && currentPage !== 'speech') {
-                            try {
-                                voiceCommandRecognition.start();
-                            } catch (e) {}
-                        }
-                    }, 1000);
+                    // CRITICAL: Don't retry aggressively to prevent pinging
+                    console.log('🔇 Voice command error - will not retry to prevent pinging');
                 }
             };
 
@@ -1336,20 +1316,21 @@
                         console.log('🎯 "Hey Leslie" detected! Executing:', bestTranscript);
                         processVoiceCommand(bestTranscript);
                         
-                        // IMMEDIATE restart after "Hey Leslie" command
+                        // CRITICAL: Careful restart after command to prevent pinging
                         setTimeout(() => {
                             if (!voiceCommandsDisabled && 
                                 currentPage !== 'speech' && 
                                 !isMainListening && 
                                 !shouldKeepListening) {
                                 try {
-                                    console.log('🔄 IMMEDIATE restart after "Hey Leslie" execution');
+                                    console.log('🔄 Careful restart after "Hey Leslie"');
+                                    muteSystemAudio(); // CRITICAL: Mute before restart
                                     voiceCommandRecognition.start();
                                 } catch (e) {
-                                    console.log('Immediate restart failed:', e);
+                                    console.log('Restart after command failed:', e);
                                 }
                             }
-                        }, 500); // Half-second restart after "Hey Leslie"
+                        }, 2000); // CRITICAL: Longer delay
                     } else {
                         console.log('🚫 No "Hey Leslie" detected in:', result[0].transcript);
                     }
@@ -1359,50 +1340,30 @@
             return true;
         }
         
-        function stopVoiceCommands() {
-            console.log('🛑 Stopping "Hey Leslie" commands...');
-            voiceCommandsDisabled = true;
-            
-            if (voiceCommandRestartTimer) {
-                clearTimeout(voiceCommandRestartTimer);
-                voiceCommandRestartTimer = null;
-            }
-            
-            if (voiceCommandRecognition) {
-                try {
-                    voiceCommandRecognition.abort();
-                } catch (e) {}
-            }
-            
-            isVoiceCommandListening = false;
-            updateVoiceCommandStatus('inactive');
-        }
-        
         function startVoiceCommands() {
-            console.log('🔄 Starting "Hey Leslie" commands IMMEDIATELY...');
+            console.log('🔄 Starting NO-PING voice commands...');
             voiceCommandsDisabled = false;
             
             if (currentPage === 'speech' || isMainListening || shouldKeepListening) {
-                console.log('🚫 Not starting "Hey Leslie" - speech page active');
+                console.log('🚫 Not starting voice commands - speech page active');
                 return;
             }
             
-            // START IMMEDIATELY - no delays
+            // CRITICAL: Enhanced muting before starting voice commands
+            muteSystemAudio();
+            
             const voiceCommandCreated = createVoiceCommandRecognition();
             if (voiceCommandCreated) {
                 try {
-                    voiceCommandRecognition.start();
-                    console.log('✅ "Hey Leslie" commands started IMMEDIATELY');
-                } catch (error) {
-                    console.log('⚠️ "Hey Leslie" commands failed to start:', error.message);
-                    // Quick retry
+                    // CRITICAL: Brief delay to ensure muting takes effect
                     setTimeout(() => {
                         if (!voiceCommandsDisabled && currentPage !== 'speech') {
-                            try {
-                                voiceCommandRecognition.start();
-                            } catch (e) {}
+                            voiceCommandRecognition.start();
+                            console.log('✅ NO-PING voice commands started');
                         }
-                    }, 500);
+                    }, 1000);
+                } catch (error) {
+                    console.log('⚠️ Voice commands failed to start:', error.message);
                 }
             }
         }
@@ -1443,34 +1404,34 @@
             }
         }
 
-        // SPEECH SYNTHESIS - ENHANCED SILENCE AFTER SPEECH
+        // FIXED SPEECH SYNTHESIS - NO FREEZING AFTER SPEECH
         function speakCompletePhrase(phrase) {
-            console.log('🔊 Speaking phrase with ENHANCED silence protection:', phrase);
+            console.log('🔊 Speaking phrase with FREEZE PROTECTION:', phrase);
             
             if (isSpeaking) {
                 console.log('🔊 Already speaking, skipping');
                 return;
             }
             
-            console.log('🔊 Starting speech for phrase:', phrase);
+            console.log('🔊 Starting FIXED speech synthesis');
             isSpeaking = true;
             lastSpokenPhrase = phrase;
             lastSpokenTime = Date.now();
             
             updateStatus('🔊 Speaking: "' + phrase + '"');
             
-            // Enhanced speech cleanup
+            // CRITICAL: Enhanced speech cleanup to prevent freezing
             try {
                 speechSynth.cancel();
                 if (currentSpeechUtterance) {
                     currentSpeechUtterance = null;
                 }
-                // Force audio muting before speech
+                // CRITICAL: Force audio muting before speech
                 muteSystemAudio();
             } catch (e) {}
             
             try {
-                console.log('🔊 Creating utterance for text:', phrase);
+                console.log('🔊 Creating FIXED utterance for text:', phrase);
                 const utterance = new SpeechSynthesisUtterance(phrase);
                 utterance.text = phrase;
                 utterance.lang = 'en-US';
@@ -1478,18 +1439,21 @@
                 utterance.pitch = 1.0;
                 utterance.volume = 1.0;
                 
+                // CRITICAL: Mark as controlled speech
+                utterance._controlledSpeech = true;
+                
                 utterance.onstart = function() {
-                    console.log('🔊 ✅ Speech STARTED');
+                    console.log('🔊 ✅ FIXED speech STARTED');
                     updateStatus('🔊 Speaking: "' + phrase + '"');
                 };
                 
                 utterance.onend = function() {
-                    console.log('🔊 ✅ Speech COMPLETED - enforcing silence');
+                    console.log('🔊 ✅ FIXED speech COMPLETED - no freeze');
                     isSpeaking = false;
                     currentSpeechUtterance = null;
                     updateStatus('🎤 Ready for next phrase...');
                     
-                    // ENHANCED silence enforcement after speech
+                    // CRITICAL: Quick cleanup and prepare for next phrase
                     setTimeout(() => {
                         muteSystemAudio(); // Re-mute everything
                         
@@ -1498,10 +1462,10 @@
                             recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
                         }
                         
-                        console.log('🎤 Speech complete - ready for next recognition cycle');
+                        console.log('🎤 FIXED: Speech complete - ready for next recognition');
                         updateStatus('🎤 Listening for your next phrase...');
                         
-                    }, 500);
+                    }, 200); // CRITICAL: Shorter delay to prevent freeze
                 };
                 
                 utterance.onerror = function(event) {
@@ -1509,12 +1473,12 @@
                     isSpeaking = false;
                     currentSpeechUtterance = null;
                     updateStatus('❌ Speech error - continuing...');
-                    // Force silence on speech error
+                    // CRITICAL: Force silence on speech error
                     muteSystemAudio();
                 };
                 
                 currentSpeechUtterance = utterance;
-                console.log('🔊 Starting speech synthesis...');
+                console.log('🔊 Starting FIXED speech synthesis...');
                 speechSynth.speak(utterance);
                 
             } catch (error) {
@@ -2709,9 +2673,9 @@
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
 
-        // === INITIALIZATION - ENHANCED SILENCE SETUP ===
+        // === FIXED INITIALIZATION - NO PINGING, NO FREEZING ===
         function initApp() {
-            console.log('🚀 Initializing Leslie Speech Assistant with ENHANCED silence...');
+            console.log('🚀 Initializing Leslie with CRITICAL FIXES (no ping, no freeze)...');
             
             if (isInitialized) {
                 console.log('⚠️ App already initialized');
@@ -2719,9 +2683,10 @@
             }
             
             try {
-                // IMMEDIATE and comprehensive audio muting
-                console.log('🔇 Activating ENHANCED audio muting...');
+                // CRITICAL: Immediate and aggressive audio muting
+                console.log('🔇 CRITICAL: Stopping ALL audio pinging...');
                 muteSystemAudio();
+                stopAllAudioPinging();
                 
                 loadSettings();
                 setupEventHandlers();
@@ -2732,7 +2697,7 @@
                     return;
                 }
                 
-                console.log('✅ Speech Recognition supported with ENHANCED silence');
+                console.log('✅ Speech Recognition supported with CRITICAL FIXES');
                 
                 initializeContacts();
                 setupSwipeGestures();
@@ -2740,31 +2705,32 @@
                 updateEnhancedSectionVisibility();
                 updateTextSpeakButton();
                 
-                // START "Hey Leslie" commands IMMEDIATELY on home page
+                // CRITICAL: Delay voice commands start to prevent immediate pinging
                 if (currentPage !== 'speech') {
-                    console.log('🗣️ Starting "Hey Leslie" commands with ENHANCED silence...');
-                    // Start right away - no delay
-                    startVoiceCommands();
+                    console.log('🗣️ Will start voice commands after delay to prevent pinging...');
+                    setTimeout(() => {
+                        if (currentPage !== 'speech' && !isMainListening) {
+                            console.log('🗣️ Starting NO-PING voice commands...');
+                            startVoiceCommands();
+                        }
+                    }, 3000); // CRITICAL: 3 second delay to prevent pinging
                 }
                 
                 isInitialized = true;
-                console.log('✅ Leslie initialized with ENHANCED SILENT operation');
+                console.log('✅ Leslie initialized with CRITICAL FIXES - no ping, no freeze');
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
             }
         }
 
-        // === GLOBAL FUNCTIONS FOR INLINE HANDLERS ===
-        window.showCurrentWeather = showCurrentWeather;
-        window.showHourlyWeather = showHourlyWeather;
-        window.showWeeklyWeather = showWeeklyWeather;
-        window.hideWeather = hideWeather;
-
-        // === EVENT LISTENERS ===
+        // === EVENT LISTENERS WITH CRITICAL FIXES ===
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('🚀 DOM loaded, initializing Leslie with ENHANCED silence...');
+            console.log('🚀 DOM loaded, initializing with CRITICAL FIXES...');
             try {
+                // CRITICAL: Immediate muting
+                muteSystemAudio();
+                stopAllAudioPinging();
                 initApp();
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -2773,8 +2739,11 @@
 
         window.addEventListener('load', function() {
             if (!isInitialized) {
-                console.log('🔄 Window loaded - backup initialization with ENHANCED silence...');
+                console.log('🔄 Window loaded - backup initialization with CRITICAL FIXES...');
                 try {
+                    // CRITICAL: Immediate muting
+                    muteSystemAudio();
+                    stopAllAudioPinging();
                     initApp();
                 } catch (error) {
                     console.error('❌ Error during backup initialization:', error);
@@ -2782,20 +2751,43 @@
             }
         });
 
-        // === IMMEDIATE SILENCE ENFORCEMENT ===
-        // Additional silence enforcement on any user interaction
+        // === CRITICAL AUDIO CONTROL ===
+        // Stop pinging on any user interaction
         document.addEventListener('click', function() {
             muteSystemAudio();
+            stopAllAudioPinging();
         });
 
         document.addEventListener('touchstart', function() {
             muteSystemAudio();
+            stopAllAudioPinging();
         });
 
-        // Periodic silence enforcement
+        // CRITICAL: Aggressive periodic silence enforcement
         setInterval(function() {
             muteSystemAudio();
-        }, 5000); // Re-mute every 5 seconds
+            // Only stop audio pinging if on home page and voice commands are running
+            if (currentPage === 'home' && isVoiceCommandListening) {
+                stopAllAudioPinging();
+            }
+        }, 10000); // Re-mute every 10 seconds
+
+        // CRITICAL: Stop voice commands when visibility changes to prevent background pinging
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                console.log('🔇 Page hidden - stopping voice commands to prevent pinging');
+                stopAllAudioPinging();
+                voiceCommandsDisabled = true;
+            } else {
+                console.log('🔇 Page visible - will restart voice commands after delay');
+                setTimeout(() => {
+                    if (currentPage !== 'speech' && !isMainListening) {
+                        voiceCommandsDisabled = false;
+                        startVoiceCommands();
+                    }
+                }, 2000);
+            }
+        });
     </script>
 </body>
 </html>
