@@ -1031,9 +1031,20 @@
             return true;
         }
 
-        // === VOICE COMMANDS - FORCE START ON HOME PAGE ===
+        // === COMPLETELY DISABLE VOICE COMMANDS TO STOP ALL PINGING ===
         function createVoiceCommandRecognition() {
-            console.log('🗣️ Creating FORCED voice command recognition...');
+            console.log('🚫 Voice commands DISABLED - preventing all conflicts');
+            return false;
+        }
+        
+        function stopVoiceCommands() {
+            console.log('🛑 Voice commands permanently disabled');
+            voiceCommandsDisabled = true;
+            
+            if (voiceCommandRestartTimer) {
+                clearTimeout(voiceCommandRestartTimer);
+                voiceCommandRestartTimer = null;
+            }
             
             if (voiceCommandRecognition) {
                 try {
@@ -1046,154 +1057,14 @@
                 voiceCommandRecognition = null;
             }
             
-            if (voiceCommandRestartTimer) {
-                clearTimeout(voiceCommandRestartTimer);
-                voiceCommandRestartTimer = null;
-            }
-            
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            
-            if (!SpeechRecognition) {
-                console.error('❌ Voice commands not supported');
-                return false;
-            }
-            
-            voiceCommandRecognition = new SpeechRecognition();
-            voiceCommandRecognition.continuous = true;
-            voiceCommandRecognition.interimResults = false;
-            voiceCommandRecognition.lang = 'en-US';
-            voiceCommandRecognition.maxAlternatives = 1;
-
-            voiceCommandRecognition.onstart = function() {
-                console.log('🗣️ ✅ Voice commands STARTED and ACTIVE');
-                isVoiceCommandListening = true;
-                updateVoiceCommandStatus('active');
-            };
-
-            voiceCommandRecognition.onend = function() {
-                console.log('🗣️ Voice commands ended - FORCE RESTARTING');
-                isVoiceCommandListening = false;
-                updateVoiceCommandStatus('inactive');
-                
-                // FORCE restart if on safe pages
-                if (isInitialized && 
-                    !voiceCommandsDisabled && 
-                    (currentPage === 'home' || currentPage === 'textInput' || currentPage === 'settings' || currentPage === 'commands') &&
-                    !isMainListening && 
-                    !isSpeaking) {
-                    
-                    console.log('🔄 FORCING voice command restart in 2 seconds...');
-                    voiceCommandRestartTimer = setTimeout(() => {
-                        if (!voiceCommandsDisabled && 
-                            (currentPage === 'home' || currentPage === 'textInput' || currentPage === 'settings' || currentPage === 'commands') &&
-                            !isMainListening && 
-                            !isSpeaking) {
-                            try {
-                                console.log('🔄 FORCE restarting voice commands NOW');
-                                voiceCommandRecognition.start();
-                            } catch (e) {
-                                console.log('FORCE restart failed:', e.message);
-                                // Try again in 3 seconds
-                                setTimeout(() => {
-                                    if (!voiceCommandsDisabled) {
-                                        try {
-                                            voiceCommandRecognition.start();
-                                        } catch (e2) {}
-                                    }
-                                }, 3000);
-                            }
-                        }
-                        voiceCommandRestartTimer = null;
-                    }, 2000);
-                }
-            };
-
-            voiceCommandRecognition.onerror = function(event) {
-                console.error('🗣️ Voice command error:', event.error);
-                isVoiceCommandListening = false;
-                updateVoiceCommandStatus('inactive');
-                
-                if (event.error === 'not-allowed') {
-                    console.log('❌ Microphone permission denied for voice commands');
-                    voiceCommandsDisabled = true;
-                } else {
-                    console.log('🔄 Voice command error - will retry...');
-                    // Retry on errors
-                    setTimeout(() => {
-                        if (!voiceCommandsDisabled && 
-                            (currentPage === 'home' || currentPage === 'textInput' || currentPage === 'settings' || currentPage === 'commands')) {
-                            try {
-                                voiceCommandRecognition.start();
-                            } catch (e) {}
-                        }
-                    }, 3000);
-                }
-            };
-
-            voiceCommandRecognition.onresult = function(event) {
-                const result = event.results[event.results.length - 1];
-                if (result.isFinal) {
-                    const transcript = result[0].transcript.trim();
-                    console.log('🗣️ Voice command heard:', transcript);
-                    
-                    if (isVoiceCommand(transcript)) {
-                        console.log('🎯 EXECUTING voice command:', transcript);
-                        processVoiceCommand(transcript);
-                    } else {
-                        console.log('🚫 Not a voice command:', transcript);
-                    }
-                }
-            };
-            
-            return true;
-        }
-        
-        function stopVoiceCommands() {
-            console.log('🛑 FORCE STOPPING voice commands...');
-            voiceCommandsDisabled = true;
-            
-            if (voiceCommandRestartTimer) {
-                clearTimeout(voiceCommandRestartTimer);
-                voiceCommandRestartTimer = null;
-            }
-            
-            if (voiceCommandRecognition) {
-                try {
-                    voiceCommandRecognition.abort();
-                } catch (e) {}
-            }
-            
             isVoiceCommandListening = false;
             updateVoiceCommandStatus('inactive');
         }
         
         function startVoiceCommands() {
-            console.log('🔄 FORCE STARTING voice commands...');
-            voiceCommandsDisabled = false;
-            
-            // Start IMMEDIATELY on safe pages
-            if (currentPage === 'home' || currentPage === 'textInput' || currentPage === 'settings' || currentPage === 'commands') {
-                console.log('🔄 Safe page detected - starting voice commands NOW');
-                const voiceCommandCreated = createVoiceCommandRecognition();
-                if (voiceCommandCreated) {
-                    try {
-                        voiceCommandRecognition.start();
-                        console.log('✅ Voice commands FORCE STARTED');
-                    } catch (error) {
-                        console.log('⚠️ Voice commands failed to start:', error.message);
-                        // Retry in 2 seconds
-                        setTimeout(() => {
-                            if (!voiceCommandsDisabled) {
-                                try {
-                                    voiceCommandRecognition.start();
-                                } catch (e) {}
-                            }
-                        }, 2000);
-                    }
-                }
-            } else {
-                console.log('🚫 Not starting voice commands - not on safe page');
-            }
+            console.log('🚫 Voice commands remain DISABLED');
+            // Completely disabled to eliminate ALL pinging
+            return;
         }
 
         // Display functions for speech page
@@ -1232,7 +1103,7 @@
             }
         }
 
-        // FIXED SPEECH SYNTHESIS - AUTO-RESTART AFTER SPEECH
+        // FIXED SPEECH SYNTHESIS - PROPER AUTO-RESTART
         function speakCompletePhrase(phrase) {
             console.log('🔊 REQUEST to speak:', phrase);
             
@@ -1246,20 +1117,10 @@
                 return;
             }
             
-            console.log('🔊 STARTING speech for COMPLETE phrase:', phrase);
+            console.log('🔊 STARTING speech for phrase:', phrase);
             isSpeaking = true;
             lastSpokenPhrase = phrase;
             lastSpokenTime = Date.now();
-            
-            // COMPLETELY STOP recognition during speech
-            if (speechRecognition && isMainListening) {
-                console.log('🛑 STOPPING recognition for speech');
-                try {
-                    speechRecognition.abort();
-                    isMainListening = false;
-                    updateListenButton();
-                } catch (e) {}
-            }
             
             // Complete speech cleanup
             try {
@@ -1269,10 +1130,9 @@
                 }
             } catch (e) {}
             
-            // Wait for cleanup before speaking
             setTimeout(() => {
                 try {
-                    console.log('🔊 Creating speech utterance for FULL phrase:', phrase);
+                    console.log('🔊 Creating speech utterance...');
                     const utterance = new SpeechSynthesisUtterance(phrase);
                     utterance.text = phrase;
                     utterance.lang = 'en-US';
@@ -1281,54 +1141,70 @@
                     utterance.volume = 1.0;
                     
                     utterance.onstart = function() {
-                        console.log('🔊 ✅ Speech STARTED for COMPLETE phrase:', phrase);
+                        console.log('🔊 ✅ Speech STARTED');
                         updateStatus('🔊 Speaking: "' + phrase + '"');
                     };
                     
                     utterance.onend = function() {
-                        console.log('🔊 ✅ Speech COMPLETED');
+                        console.log('🔊 ✅ Speech COMPLETED - preparing auto-restart');
                         isSpeaking = false;
                         currentSpeechUtterance = null;
                         updateStatus('🎤 Ready for next phrase in 2 seconds...');
                         
-                        // AUTO-RESTART after 2 seconds as requested
+                        // Clear screen
                         setTimeout(() => {
-                            if (currentPage === 'speech' && !userStoppedManually) {
-                                console.log('🔄 Auto-starting next phrase recognition...');
-                                const recognizedTextEl = document.getElementById('recognizedText');
-                                if (recognizedTextEl) {
-                                    recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
-                                }
-                                startOneShot();
+                            const recognizedTextEl = document.getElementById('recognizedText');
+                            if (recognizedTextEl) {
+                                recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
                             }
-                        }, 2000); // 2 seconds as requested
+                        }, 1000);
+                        
+                        // FIXED: Proper auto-restart
+                        setTimeout(() => {
+                            if (currentPage === 'speech' && !userStoppedManually && !isSpeaking && !isMainListening) {
+                                console.log('🔄 AUTO-RESTARTING speech recognition...');
+                                userStoppedManually = false; // Make sure this is false
+                                isRestarting = false;
+                                try {
+                                    // Create fresh recognition
+                                    createSpeechRecognition();
+                                    speechRecognition.start();
+                                    updateStatus('🎤 Listening for your next phrase...');
+                                } catch (e) {
+                                    console.error('Auto-restart failed:', e);
+                                    updateStatus('❌ Auto-restart failed - click START TALKING');
+                                }
+                            }
+                        }, 2000);
                     };
                     
                     utterance.onerror = function(event) {
                         console.error('🔊 Speech ERROR:', event.error);
                         isSpeaking = false;
                         currentSpeechUtterance = null;
-                        updateStatus('❌ Speech error: ' + event.error);
+                        updateStatus('❌ Speech error - trying auto-restart...');
                         
-                        // Even on error, auto-restart
+                        // Even on error, try auto-restart
                         setTimeout(() => {
                             if (currentPage === 'speech' && !userStoppedManually) {
-                                startOneShot();
+                                try {
+                                    createSpeechRecognition();
+                                    speechRecognition.start();
+                                } catch (e) {}
                             }
                         }, 2000);
                     };
                     
                     currentSpeechUtterance = utterance;
-                    console.log('🔊 CALLING speechSynth.speak() for:', phrase);
                     speechSynth.speak(utterance);
                     
                 } catch (error) {
                     console.error('🔊 Speech creation ERROR:', error);
                     isSpeaking = false;
                     currentSpeechUtterance = null;
-                    updateStatus('❌ Speech failed: ' + error.message);
+                    updateStatus('❌ Speech failed');
                 }
-            }, 500);
+            }, 300);
         }
 
         // === VOICE COMMANDS ===
@@ -2462,7 +2338,7 @@
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
 
-        // === INITIALIZATION - FORCE VOICE COMMANDS ===
+        // === INITIALIZATION - DISABLE VOICE COMMANDS ===
         function initApp() {
             console.log('🚀 Initializing Leslie Speech Assistant...');
             
@@ -2489,16 +2365,12 @@
                 updateEnhancedSectionVisibility();
                 updateTextSpeakButton();
                 
-                // FORCE voice commands to start
-                console.log('🗣️ FORCING voice commands to start...');
-                voiceCommandsDisabled = false;
-                setTimeout(() => {
-                    console.log('🗣️ Starting voice commands with FORCE...');
-                    startVoiceCommands();
-                }, 3000); // 3 second delay for initialization
+                // DISABLE voice commands completely to stop all pinging
+                console.log('🚫 Voice commands disabled to prevent all conflicts');
+                stopVoiceCommands();
                 
                 isInitialized = true;
-                console.log('✅ Leslie Speech Assistant initialized successfully!');
+                console.log('✅ Leslie Speech Assistant initialized - FOCUS ON SPEECH PAGE ONLY');
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
