@@ -994,8 +994,8 @@
             window.visualViewport.addEventListener('resize', preventOrientationFreeze);
         }
 
-        // === CRITICAL AUDIO SILENCE FUNCTION ===
-        function silenceAllAudio() {
+        // === CRITICAL AUDIO SILENCE FUNCTION - SELECTIVE ===
+        function silenceAllAudio(allowLeslieVoiceCommands = false) {
             try {
                 // 1. Override speechSynthesis to only allow approved speech
                 if (window.speechSynthesis && !window.speechSynthesis._silenced) {
@@ -1006,13 +1006,16 @@
                         if (utterance && utterance._leslieApproved) {
                             return originalSpeak.call(this, utterance);
                         }
+                        if (allowLeslieVoiceCommands && utterance && utterance._leslieVoiceCommand) {
+                            return originalSpeak.call(this, utterance);
+                        }
                         return; // Block all other speech
                     };
                     window.speechSynthesis._silenced = true;
                 }
                 
-                // 2. Override Audio constructor
-                if (window.Audio && !window.Audio._silenced) {
+                // 2. Override Audio constructor - but not for voice commands
+                if (window.Audio && !window.Audio._silenced && !allowLeslieVoiceCommands) {
                     window.Audio = function() {
                         return {
                             play: () => Promise.resolve(),
@@ -1032,16 +1035,18 @@
                     window.Audio._silenced = true;
                 }
                 
-                // 3. Mute all existing media elements
-                document.querySelectorAll('audio, video').forEach(el => {
-                    try {
-                        el.muted = true;
-                        el.volume = 0;
-                        el.pause();
-                        el.currentTime = 0;
-                        el.play = () => Promise.resolve();
-                    } catch (e) {}
-                });
+                // 3. Mute all existing media elements - but not during voice commands
+                if (!allowLeslieVoiceCommands) {
+                    document.querySelectorAll('audio, video').forEach(el => {
+                        try {
+                            el.muted = true;
+                            el.volume = 0;
+                            el.pause();
+                            el.currentTime = 0;
+                            el.play = () => Promise.resolve();
+                        } catch (e) {}
+                    });
+                }
                 
             } catch (error) {
                 // Silent error handling
@@ -1429,6 +1434,12 @@
         function actuallySpeak(text, clearTextAfter) {
             console.log('🔊 Starting SINGLE speech for:', text);
             
+            // CRITICAL: Check if this exact text is already being spoken
+            if (currentSpeechUtterance && currentSpeechUtterance.text === text) {
+                console.log('🚫 Same text already being spoken, ignoring');
+                return;
+            }
+            
             // FORCE stop any existing speech
             if (speechSynth.speaking) {
                 speechSynth.cancel();
@@ -1439,9 +1450,6 @@
             
             isCurrentlySpeaking = true;
             isSpeaking = true;
-            
-            // Complete silence before speaking
-            silenceAllAudio();
             
             setTimeout(() => {
                 if (!isCurrentlySpeaking) return; // Cancelled during delay
@@ -1471,7 +1479,7 @@
                     
                     console.log('🔊 Speech ended ONCE:', text);
                     
-                    // Clean up
+                    // Clean up IMMEDIATELY
                     isCurrentlySpeaking = false;
                     isSpeaking = false;
                     currentSpeechUtterance = null;
@@ -1480,6 +1488,12 @@
                     const index = speechQueue.indexOf(text);
                     if (index > -1) {
                         speechQueue.splice(index, 1);
+                    }
+                    
+                    // Clear ALL instances of this text from queue
+                    while (speechQueue.includes(text)) {
+                        const idx = speechQueue.indexOf(text);
+                        speechQueue.splice(idx, 1);
                     }
                     
                     // Clear text if requested (for text input page)
@@ -1500,8 +1514,6 @@
                             }
                         }, 300);
                     }
-                    
-                    silenceAllAudio();
                 };
                 
                 utterance.onerror = function(event) {
@@ -1510,15 +1522,15 @@
                     
                     console.error('Speech error:', event);
                     
-                    // Clean up
+                    // Clean up IMMEDIATELY
                     isCurrentlySpeaking = false;
                     isSpeaking = false;
                     currentSpeechUtterance = null;
                     
-                    // Remove from queue
-                    const index = speechQueue.indexOf(text);
-                    if (index > -1) {
-                        speechQueue.splice(index, 1);
+                    // Remove ALL instances from queue
+                    while (speechQueue.includes(text)) {
+                        const idx = speechQueue.indexOf(text);
+                        speechQueue.splice(idx, 1);
                     }
                     
                     if (clearTextAfter && currentPage === 'textInput') {
@@ -1532,8 +1544,6 @@
                     if (currentPage === 'speech') {
                         updateStatus('🎤 Ready for next phrase...');
                     }
-                    
-                    silenceAllAudio();
                 };
                 
                 currentSpeechUtterance = utterance;
@@ -2642,7 +2652,7 @@
 
         // === EVENT HANDLERS ===
         function setupEventHandlers() {
-            silenceAllAudio();
+            // NO silenceAllAudio() call here - was causing pinging
             
             setTimeout(() => {
                 // Start Talking button with maximum reliability
@@ -2654,14 +2664,14 @@
                         console.log('🎯 START TALKING clicked!');
                         e && e.preventDefault();
                         e && e.stopPropagation();
-                        silenceAllAudio();
+                        // NO silenceAllAudio() call here
                         showPage('speech');
                     };
                     
                     btnStartTalking.addEventListener('click', function(e) {
                         e.preventDefault();
                         e.stopPropagation();
-                        silenceAllAudio();
+                        // NO silenceAllAudio() call here
                         showPage('speech');
                     });
                     
@@ -2847,21 +2857,25 @@
         // === EVENT LISTENERS ===
         document.addEventListener('DOMContentLoaded', function() {
             console.log('🚀 DOM loaded, initializing...');
-            silenceAllAudio();
+            // NO silenceAllAudio() call here - was causing pinging
             initApp();
         });
 
         window.addEventListener('load', function() {
             if (!isInitialized) {
                 console.log('🔄 Window loaded - backup initialization...');
-                silenceAllAudio();
+                // NO silenceAllAudio() call here - was causing pinging
                 initApp();
             }
         });
 
-        // Prevent pinging with user interactions
-        document.addEventListener('click', silenceAllAudio);
-        document.addEventListener('touchstart', silenceAllAudio);
+        // Prevent pinging with user interactions - NO MORE SILENCE CALLS
+        document.addEventListener('click', function() {
+            // Don't call silenceAllAudio() - this was causing pinging
+        });
+        document.addEventListener('touchstart', function() {
+            // Don't call silenceAllAudio() - this was causing pinging
+        });
 
         // Page visibility handling - UPDATED FOR HOME PAGE VOICE COMMANDS
         document.addEventListener('visibilitychange', function() {
