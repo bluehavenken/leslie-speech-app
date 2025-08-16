@@ -875,7 +875,52 @@
     </div>
 
     <script>
-        // === GLOBAL STATE MANAGEMENT - COMPLETELY FIXED ===
+        // === AUDIO MUTING - SILENCE BROWSER SPEECH RECOGNITION PINGS ===
+        function muteSystemAudio() {
+            try {
+                // Method 1: Create silent audio context to override system sounds
+                if (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined') {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (!window.silentAudioContext) {
+                        window.silentAudioContext = new AudioCtx();
+                        const oscillator = window.silentAudioContext.createOscillator();
+                        const gainNode = window.silentAudioContext.createGain();
+                        gainNode.gain.setValueAtTime(0, window.silentAudioContext.currentTime);
+                        oscillator.connect(gainNode);
+                        gainNode.connect(window.silentAudioContext.destination);
+                        oscillator.start();
+                        console.log('🔇 Silent audio context created to mask system sounds');
+                    }
+                }
+                
+                // Method 2: Override notification sounds
+                if ('Notification' in window) {
+                    const originalNotification = window.Notification;
+                    window.Notification = function(...args) {
+                        // Silent notifications
+                        return new originalNotification(...args, { silent: true });
+                    };
+                }
+                
+                // Method 3: Mute any audio elements that might be created
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach((mutation) => {
+                        mutation.addedNodes.forEach((node) => {
+                            if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
+                                node.muted = true;
+                                node.volume = 0;
+                            }
+                        });
+                    });
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+                
+                console.log('🔇 Audio muting systems activated');
+                
+            } catch (error) {
+                console.log('Audio muting setup failed:', error);
+            }
+        }
         let speechRecognition = null; // For speech page continuous listening
         let voiceCommandRecognition = null; // For global voice commands
         let isMainListening = false; // Speech page listening
@@ -919,9 +964,9 @@
             enhancedMode: false
         };
 
-        // === SPEECH PAGE RECOGNITION - CAPTURE COMPLETE PHRASES ===
+        // === SPEECH PAGE RECOGNITION - SILENT OPERATION ===
         function createSpeechRecognition() {
-            console.log('🎤 Creating recognition for COMPLETE phrases...');
+            console.log('🎤 Creating SILENT speech recognition...');
             
             // Clean up existing recognition
             if (speechRecognition) {
@@ -953,13 +998,16 @@
             let isProcessingResult = false;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 ✅ Recognition started for complete phrase');
+                console.log('🎤 ✅ SILENT recognition started');
                 isMainListening = true;
                 completeTranscript = '';
                 isProcessingResult = false;
                 updateListenButton();
                 updateStatus('🎤 Listening for complete phrase... Speak now!');
                 resetSessionTimeout();
+                
+                // Ensure audio is muted
+                muteSystemAudio();
             };
 
             speechRecognition.onend = function() {
@@ -1049,9 +1097,9 @@
             return true;
         }
 
-        // === VOICE COMMANDS - IMMEDIATE START, FAST RESTART ===
+        // === VOICE COMMANDS - SILENT OPERATION ===
         function createVoiceCommandRecognition() {
-            console.log('🗣️ Creating IMMEDIATE voice commands...');
+            console.log('🗣️ Creating SILENT voice commands...');
             
             if (voiceCommandRecognition) {
                 try {
@@ -1078,13 +1126,16 @@
             voiceCommandRecognition.maxAlternatives = 1;
 
             voiceCommandRecognition.onstart = function() {
-                console.log('🗣️ ✅ Voice commands ACTIVE');
+                console.log('🗣️ ✅ SILENT voice commands active');
                 isVoiceCommandListening = true;
                 updateVoiceCommandStatus('active');
+                
+                // Ensure audio is muted for voice commands too
+                muteSystemAudio();
             };
 
             voiceCommandRecognition.onend = function() {
-                console.log('🗣️ Voice commands ended - FAST restart');
+                console.log('🗣️ Voice commands ended - SILENT restart');
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
@@ -1100,7 +1151,7 @@
                             !isMainListening && 
                             !shouldKeepListening) {
                             try {
-                                console.log('🔄 FAST restarting voice commands...');
+                                console.log('🔄 SILENT restart of voice commands...');
                                 voiceCommandRecognition.start();
                             } catch (e) {
                                 console.log('Voice command restart failed:', e);
@@ -1155,7 +1206,7 @@
                                 !isMainListening && 
                                 !shouldKeepListening) {
                                 try {
-                                    console.log('🔄 Immediate restart after command execution');
+                                    console.log('🔄 SILENT restart after command execution');
                                     voiceCommandRecognition.start();
                                 } catch (e) {
                                     console.log('Immediate restart failed:', e);
@@ -2464,7 +2515,7 @@
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
 
-        // === INITIALIZATION - IMMEDIATE VOICE COMMANDS ON HOME ===
+        // === INITIALIZATION - SILENT AUDIO SETUP ===
         function initApp() {
             console.log('🚀 Initializing Leslie Speech Assistant...');
             
@@ -2485,6 +2536,10 @@
                 
                 console.log('✅ Speech Recognition supported');
                 
+                // SETUP AUDIO MUTING FIRST
+                console.log('🔇 Setting up audio muting...');
+                muteSystemAudio();
+                
                 initializeContacts();
                 setupSwipeGestures();
                 getUserLocation();
@@ -2493,13 +2548,13 @@
                 
                 // START voice commands IMMEDIATELY on home page
                 if (currentPage !== 'speech') {
-                    console.log('🗣️ Starting voice commands IMMEDIATELY on home page...');
+                    console.log('🗣️ Starting SILENT voice commands immediately...');
                     // Start right away - no delay
                     startVoiceCommands();
                 }
                 
                 isInitialized = true;
-                console.log('✅ Leslie initialized with IMMEDIATE voice commands');
+                console.log('✅ Leslie initialized with SILENT operation');
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
