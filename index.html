@@ -1106,23 +1106,36 @@
             }
         }
 
-        // SPEECH SYNTHESIS - NO INTERRUPTION OF CONTINUOUS LISTENING
+        // SPEECH SYNTHESIS - PROPER ISOLATION FROM RECOGNITION
         function speakCompletePhrase(phrase) {
-            console.log('🔊 Speaking phrase during continuous listening:', phrase);
+            console.log('🔊 Speaking COMPLETE phrase:', phrase);
             
             if (isSpeaking) {
                 console.log('🔊 Already speaking, skipping');
                 return;
             }
             
+            console.log('🔊 Starting speech for FULL phrase:', phrase);
             isSpeaking = true;
             lastSpokenPhrase = phrase;
             lastSpokenTime = Date.now();
             
-            // DON'T stop recognition - let it continue in background
+            // CRITICAL: Temporarily pause recognition during speech to prevent conflicts
+            let wasListening = isMainListening;
+            if (speechRecognition && isMainListening) {
+                console.log('🛑 Temporarily pausing recognition for speech');
+                try {
+                    speechRecognition.abort();
+                    isMainListening = false;
+                    updateListenButton();
+                } catch (e) {
+                    console.log('Recognition pause error:', e);
+                }
+            }
+            
             updateStatus('🔊 Speaking: "' + phrase + '"');
             
-            // Quick cleanup
+            // Complete speech cleanup
             try {
                 speechSynth.cancel();
                 if (currentSpeechUtterance) {
@@ -1130,49 +1143,117 @@
                 }
             } catch (e) {}
             
-            try {
-                const utterance = new SpeechSynthesisUtterance(phrase);
-                utterance.text = phrase;
-                utterance.lang = 'en-US';
-                utterance.rate = Math.max(0.5, Math.min(2.0, settings.speechSpeed || 1.0));
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
-                
-                utterance.onstart = function() {
-                    console.log('🔊 ✅ Speech started - recognition continues');
-                };
-                
-                utterance.onend = function() {
-                    console.log('🔊 ✅ Speech completed - still listening');
-                    isSpeaking = false;
-                    currentSpeechUtterance = null;
-                    updateStatus('🎤 Listening continuously... Speak anytime!');
+            // Wait a moment for cleanup
+            setTimeout(() => {
+                try {
+                    console.log('🔊 Creating utterance for FULL text:', phrase);
+                    const utterance = new SpeechSynthesisUtterance(phrase);
+                    utterance.text = phrase; // Ensure complete text
+                    utterance.lang = 'en-US';
+                    utterance.rate = Math.max(0.5, Math.min(2.0, settings.speechSpeed || 1.0));
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
                     
-                    // Clear display but don't restart recognition (it's already running)
-                    setTimeout(() => {
-                        const recognizedTextEl = document.getElementById('recognizedText');
-                        if (recognizedTextEl && shouldKeepListening) {
-                            recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
+                    utterance.onstart = function() {
+                        console.log('🔊 ✅ Speech STARTED for complete phrase');
+                        updateStatus('🔊 Speaking: "' + phrase + '"');
+                    };
+                    
+                    utterance.onend = function() {
+                        console.log('🔊 ✅ Speech COMPLETED - resuming recognition');
+                        isSpeaking = false;
+                        currentSpeechUtterance = null;
+                        
+                        // Resume recognition if we were listening before
+                        if (wasListening && shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
+                            console.log('🔄 Resuming recognition after speech');
+                            updateStatus('🎤 Resuming listening...');
+                            
+                            setTimeout(() => {
+                                if (shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
+                                    try {
+                                        createSpeechRecognition();
+                                        speechRecognition.start();
+                                        updateStatus('🎤 Listening continuously... Speak anytime!');
+                                    } catch (e) {
+                                        console.log('Failed to resume recognition:', e);
+                                        updateStatus('❌ Failed to resume - click START TALKING');
+                                    }
+                                }
+                            }, 1000); // 1 second delay to ensure clean restart
+                        } else {
+                            updateStatus('✅ Speech complete');
                         }
-                    }, 1000);
-                };
-                
-                utterance.onerror = function(event) {
-                    console.error('🔊 Speech error:', event.error);
+                        
+                        // Clear display
+                        setTimeout(() => {
+                            const recognizedTextEl = document.getElementById('recognizedText');
+                            if (recognizedTextEl && shouldKeepListening) {
+                                recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
+                            }
+                        }, 1500);
+                    };
+                    
+                    utterance.onerror = function(event) {
+                        console.error('🔊 Speech error:', event.error);
+                        isSpeaking = false;
+                        currentSpeechUtterance = null;
+                        updateStatus('❌ Speech error - resuming listening');
+                        
+                        // Resume recognition even on error
+                        if (wasListening && shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
+                            setTimeout(() => {
+                                try {
+                                    createSpeechRecognition();
+                                    speechRecognition.start();
+                                } catch (e) {}
+                            }, 1000);
+                        }
+                    };
+                    
+                    utterance.onboundary = function(event) {
+                        // Log word boundaries to debug truncation
+                        console.log('🔊 Speech boundary:', event.name, 'at', event.charIndex);
+                    };
+                    
+                    currentSpeechUtterance = utterance;
+                    
+                    // Force speech synthesis to speak the complete phrase
+                    console.log('🔊 FORCING speech of complete phrase:', phrase);
+                    speechSynth.speak(utterance);
+                    
+                    // Fallback check to ensure speech starts
+                    setTimeout(() => {
+                        if (isSpeaking && !speechSynth.speaking) {
+                            console.log('🔊 Speech seems stuck - forcing restart');
+                            try {
+                                speechSynth.cancel();
+                                speechSynth.speak(utterance);
+                            } catch (e) {
+                                console.error('🔊 Speech restart failed');
+                                isSpeaking = false;
+                                currentSpeechUtterance = null;
+                            }
+                        }
+                    }, 500);
+                    
+                } catch (error) {
+                    console.error('🔊 Speech synthesis error:', error);
                     isSpeaking = false;
                     currentSpeechUtterance = null;
-                    updateStatus('🎤 Listening continuously... Speak anytime!');
-                };
-                
-                currentSpeechUtterance = utterance;
-                speechSynth.speak(utterance);
-                
-            } catch (error) {
-                console.error('🔊 Speech synthesis error:', error);
-                isSpeaking = false;
-                currentSpeechUtterance = null;
-                updateStatus('🎤 Listening continuously... Speak anytime!');
-            }
+                    updateStatus('❌ Speech failed');
+                    
+                    // Resume recognition on error
+                    if (wasListening && shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
+                        setTimeout(() => {
+                            try {
+                                createSpeechRecognition();
+                                speechRecognition.start();
+                            } catch (e) {}
+                        }, 1000);
+                    }
+                }
+            }, 200); // Short delay for cleanup
         }
 
         // === VOICE COMMANDS ===
