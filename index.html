@@ -1143,13 +1143,13 @@
                 isMainListening = false;
                 updateListenButton();
                 
-                // FIXED: Immediate restart for continuous listening, no delays
-                if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !orientationLock && !isCurrentlySpeaking) {
+                // FIXED: Always restart immediately if listening should continue
+                if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !orientationLock) {
                     console.log('🔄 Immediately restarting speech recognition...');
                     
-                    // IMMEDIATE restart - no ping delays
+                    // IMMEDIATE restart - no blocking on speech
                     setTimeout(() => {
-                        if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !orientationLock && !isCurrentlySpeaking) {
+                        if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !orientationLock) {
                             try {
                                 console.log('🔄 Creating new recognition instance...');
                                 createSpeechRecognition();
@@ -1161,7 +1161,7 @@
                                 shouldKeepListening = false;
                             }
                         }
-                    }, 500); // Minimal 500ms delay only
+                    }, 300); // Very fast restart
                 } else {
                     updateStatus('🎤 Click "START TALKING" to begin');
                     shouldKeepListening = false;
@@ -1221,19 +1221,9 @@
         const MAX_VOICE_RETRIES = 3;
         
         function createVoiceCommandRecognition() {
-            console.log('🗣️ Creating COMPLETELY WORKING voice commands...');
+            console.log('🗣️ Creating SILENT voice commands...');
             
-            // COMPLETE silence enforcement
-            silenceAllAudio();
-            if (speechSynth.speaking) {
-                speechSynth.cancel();
-            }
-            
-            // Wait for silence
-            setTimeout(() => {
-                silenceAllAudio();
-            }, 200);
-            
+            // COMPLETE SILENCE - no audio operations at all
             if (voiceCommandRecognition) {
                 try {
                     voiceCommandRecognition.abort();
@@ -1257,29 +1247,28 @@
             voiceCommandRecognition.continuous = false;
             voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
-            voiceCommandRecognition.maxAlternatives = 3; // More alternatives for better detection
+            voiceCommandRecognition.maxAlternatives = 3;
 
             voiceCommandRecognition.onstart = function() {
-                console.log('🗣️ ✅ COMPLETELY WORKING voice commands active');
+                console.log('🗣️ ✅ SILENT voice commands active');
                 isVoiceCommandListening = true;
                 updateVoiceCommandStatus('ready');
-                voiceCommandRetryCount = 0; // Reset retry count on successful start
-                silenceAllAudio();
+                voiceCommandRetryCount = 0;
+                // NO SILENCE CALLS HERE - causes pinging
             };
 
             voiceCommandRecognition.onend = function() {
-                console.log('🗣️ Voice commands ended - checking restart...');
+                console.log('🗣️ Voice commands ended - SILENT restart');
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
-                // FIXED: Fast restart for home page, minimal delays
+                // SILENT restart - no audio operations
                 if (voiceCommandsEnabled && 
                     currentPage !== 'speech' && 
                     !isMainListening && 
                     !shouldKeepListening && 
                     !orientationLock) {
                     
-                    // IMMEDIATE restart for home page
                     const restartDelay = currentPage === 'home' ? 1000 : 2000;
                     
                     setTimeout(() => {
@@ -1290,9 +1279,10 @@
                             !orientationLock) {
                             
                             try {
-                                console.log('🔄 Fast restart of voice commands...');
+                                console.log('🔄 SILENT restart of voice commands...');
+                                // NO silenceAllAudio() calls here
                                 voiceCommandRecognition.start();
-                                console.log('✅ Voice commands restarted successfully');
+                                console.log('✅ Voice commands restarted silently');
                             } catch (e) {
                                 console.log('Voice command restart failed:', e);
                                 voiceCommandRetryCount++;
@@ -1322,7 +1312,7 @@
                 console.error('🗣️ Voice command error:', event.error);
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
-                silenceAllAudio();
+                // NO silenceAllAudio() call here
                 
                 if (event.error === 'not-allowed') {
                     voiceCommandsEnabled = false;
@@ -1368,7 +1358,7 @@
         }
         
         function startVoiceCommands() {
-            console.log('🔄 Starting FAST voice commands...');
+            console.log('🔄 Starting SILENT voice commands...');
             
             // Don't start if speech recognition is active or should be active
             if (currentPage === 'speech' || 
@@ -1386,25 +1376,14 @@
             
             const voiceCommandCreated = createVoiceCommandRecognition();
             if (voiceCommandCreated) {
-                // FAST START: Immediate for home page, minimal delay for others
-                const startDelay = currentPage === 'home' ? 500 : 1500;
-                
-                setTimeout(() => {
-                    if (voiceCommandsEnabled && 
-                        currentPage !== 'speech' && 
-                        !isMainListening && 
-                        !shouldKeepListening &&
-                        !orientationLock) {
-                        
-                        try {
-                            voiceCommandRecognition.start();
-                            console.log('✅ FAST voice commands started');
-                        } catch (error) {
-                            console.log('⚠️ Voice commands failed to start:', error.message);
-                            updateVoiceCommandStatus('inactive');
-                        }
-                    }
-                }, startDelay);
+                // INSTANT START: No delays, no silence calls
+                try {
+                    voiceCommandRecognition.start();
+                    console.log('✅ INSTANT voice commands started');
+                } catch (error) {
+                    console.log('⚠️ Voice commands failed to start:', error.message);
+                    updateVoiceCommandStatus('inactive');
+                }
             }
         }
 
@@ -1580,11 +1559,13 @@
             console.log('✅ Processing speech phrase:', phrase);
             displayFinalPhrase(phrase);
             
-            if (!isSpeaking) {
-                setTimeout(() => {
-                    speakText(phrase);
-                }, 300);
-            }
+            // FIXED: Don't block restart while speaking
+            setTimeout(() => {
+                speakText(phrase);
+            }, 300);
+            
+            // CRITICAL: Don't set isSpeaking flag that blocks restart
+            // This was causing the hanging issue
         }
 
         function displayFinalPhrase(phrase) {
@@ -1671,7 +1652,7 @@
         }
 
         function executeVoiceCommand(cmd) {
-            silenceAllAudio();
+            // NO silenceAllAudio() call here to prevent pinging
             
             // Navigation commands
             if (cmd.includes('home')) {
@@ -1788,7 +1769,7 @@
                 return;
             }
             
-            silenceAllAudio();
+            // NO silenceAllAudio() call here to prevent pinging
             
             setTimeout(() => {
                 const utterance = new SpeechSynthesisUtterance(text);
@@ -1801,20 +1782,19 @@
                 utterance.onend = function() {
                     if (hasEnded) return;
                     hasEnded = true;
-                    silenceAllAudio();
-                    // FAST return to ready
+                    // NO silenceAllAudio() call here
                     setTimeout(() => updateVoiceCommandStatus('ready'), 500);
                 };
                 
                 utterance.onerror = function() {
                     if (hasEnded) return;
                     hasEnded = true;
-                    silenceAllAudio();
+                    // NO silenceAllAudio() call here
                     setTimeout(() => updateVoiceCommandStatus('ready'), 500);
                 };
                 
                 speechSynth.speak(utterance);
-            }, 100); // Much faster response
+            }, 100);
         }
 
         function adjustSpeechSpeed(delta) {
@@ -1978,15 +1958,11 @@
                     stopVoiceCommands();
                 } else {
                     if (currentPage === 'speech') {
-                        console.log('🗣️ Leaving speech page - enabling voice commands immediately');
-                        setTimeout(() => {
-                            startVoiceCommands();
-                        }, 1000);
+                        console.log('🗣️ Leaving speech page - enabling voice commands instantly');
+                        startVoiceCommands(); // Instant start
                     } else if (pageId === 'home') {
-                        console.log('🏠 Entering home page - enabling voice commands immediately');
-                        setTimeout(() => {
-                            startVoiceCommands();
-                        }, 500); // Very fast for home page
+                        console.log('🏠 Entering home page - enabling voice commands instantly');
+                        startVoiceCommands(); // Instant start for home
                     }
                 }
                 
@@ -2859,10 +2835,8 @@
                 
                 // IMMEDIATE voice command startup for home page
                 if (currentPage === 'home') {
-                    console.log('🏠 Starting voice commands immediately for home page');
-                    setTimeout(() => {
-                        startVoiceCommands();
-                    }, 1000); // Start very quickly
+                    console.log('🏠 Starting voice commands INSTANTLY for home page');
+                    startVoiceCommands(); // Start immediately, no delay
                 }
                 
             } catch (error) {
