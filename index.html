@@ -982,9 +982,9 @@
             enhancedMode: false
         };
 
-        // === FIXED SPEECH PAGE RECOGNITION - NO HANGING AFTER 2 PHRASES ===
+        // === NO PINGING SPEECH RECOGNITION ===
         function createSpeechRecognition() {
-            console.log('🎤 Creating BULLETPROOF speech recognition...');
+            console.log('🎤 Creating NO-PING speech recognition...');
             
             silenceAllAudio();
             
@@ -1014,7 +1014,7 @@
             speechRecognition.maxAlternatives = 1;
 
             speechRecognition.onstart = function() {
-                console.log('🎤 ✅ BULLETPROOF speech recognition started');
+                console.log('🎤 ✅ NO-PING speech recognition started');
                 isMainListening = true;
                 updateListenButton();
                 updateStatus('🎤 Listening... Speak your phrase!');
@@ -1023,41 +1023,33 @@
             };
 
             speechRecognition.onend = function() {
-                console.log('🎤 Speech recognition ended - FORCE restart if needed');
+                console.log('🎤 Speech recognition ended - NO-PING restart check...');
                 isMainListening = false;
                 updateListenButton();
                 
-                // BULLETPROOF: ALWAYS restart if supposed to be listening
+                // NO-PINGING: Longer delays to prevent audio conflicts
                 if (shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
-                    console.log('🔄 FORCE restarting speech recognition...');
+                    console.log('🔄 Will restart speech recognition after NO-PING delay...');
                     
-                    // SHORTER delay for better responsiveness
-                    const restartDelay = isSpeaking ? 2000 : 1000;
+                    // NO-PINGING: Wait longer if speaking, much longer base delay
+                    const restartDelay = isCurrentlySpeaking ? 4000 : 2500;
                     
                     setTimeout(() => {
-                        if (shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
+                        if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !isCurrentlySpeaking) {
                             try {
-                                console.log('🔄 BULLETPROOF restart executing...');
+                                console.log('🔄 NO-PING restart executing...');
                                 silenceAllAudio();
-                                // FORCE create fresh instance every time
-                                createSpeechRecognition();
-                                speechRecognition.start();
-                                console.log('✅ BULLETPROOF restart successful');
-                            } catch (e) {
-                                console.error('❌ Restart failed, trying again...', e);
-                                // FORCE retry once more
                                 setTimeout(() => {
-                                    if (shouldKeepListening && !userStoppedManually && currentPage === 'speech') {
-                                        try {
-                                            createSpeechRecognition();
-                                            speechRecognition.start();
-                                        } catch (e2) {
-                                            console.error('❌ Second restart failed', e2);
-                                            updateStatus('❌ Recognition failed - Click "START TALKING" to restart');
-                                            shouldKeepListening = false;
-                                        }
+                                    if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !isCurrentlySpeaking) {
+                                        createSpeechRecognition();
+                                        speechRecognition.start();
+                                        console.log('✅ NO-PING restart successful');
                                     }
-                                }, 1000);
+                                }, 500);
+                            } catch (e) {
+                                console.error('❌ Restart failed:', e);
+                                updateStatus('❌ Recognition failed - Click "START TALKING" to restart');
+                                shouldKeepListening = false;
                             }
                         }
                     }, restartDelay);
@@ -1078,7 +1070,7 @@
                     shouldKeepListening = false;
                     userStoppedManually = true;
                 } else {
-                    // DON'T stop on errors - let onend handle restart
+                    // Don't stop immediately on errors to prevent restart loops
                     updateStatus('🎤 Error - continuing to listen...');
                 }
             };
@@ -1103,7 +1095,7 @@
                     displayInterimPhrase(interimTranscript.trim());
                 }
                 
-                // Process final result
+                // Process final result ONCE
                 if (finalTranscript.trim()) {
                     console.log('📝 Processing final phrase:', finalTranscript.trim());
                     processSpeechPhrase(finalTranscript.trim());
@@ -1115,9 +1107,9 @@
             return true;
         }
 
-        // === FAST VOICE COMMANDS - INSTANT RESPONSE ===
+        // === WORKING VOICE COMMANDS ===
         function createVoiceCommandRecognition() {
-            console.log('🗣️ Creating FAST voice command recognition...');
+            console.log('🗣️ Creating WORKING voice command recognition...');
             
             silenceAllAudio();
             
@@ -1136,6 +1128,7 @@
             
             if (!SpeechRecognition) {
                 console.error('❌ Voice commands not supported');
+                updateVoiceCommandStatus('inactive');
                 return false;
             }
             
@@ -1146,42 +1139,31 @@
             voiceCommandRecognition.maxAlternatives = 1;
 
             voiceCommandRecognition.onstart = function() {
-                console.log('🗣️ ✅ FAST voice commands active');
+                console.log('🗣️ ✅ WORKING voice commands active');
                 isVoiceCommandListening = true;
                 updateVoiceCommandStatus('ready');
                 silenceAllAudio();
             };
 
             voiceCommandRecognition.onend = function() {
-                console.log('🗣️ Voice commands ended - FAST restart');
+                console.log('🗣️ Voice commands ended - WORKING restart');
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
-                // FAST RESTART: Much shorter delays for instant response
+                // WORKING RESTART: Proper timing
                 if (voiceCommandsEnabled && currentPage !== 'speech' && !isMainListening) {
-                    const restartDelay = 1500; // Much faster restart
+                    const restartDelay = 2000; // Reasonable delay
                     
                     setTimeout(() => {
                         if (voiceCommandsEnabled && currentPage !== 'speech' && !isMainListening) {
                             try {
-                                console.log('🔄 FAST restart of voice commands...');
+                                console.log('🔄 WORKING restart of voice commands...');
                                 silenceAllAudio();
                                 voiceCommandRecognition.start();
-                                updateVoiceCommandStatus('ready');
+                                console.log('✅ Voice commands restarted successfully');
                             } catch (e) {
                                 console.log('Voice command restart failed:', e);
-                                // Quick retry
-                                setTimeout(() => {
-                                    if (voiceCommandsEnabled && currentPage !== 'speech' && !isMainListening) {
-                                        try {
-                                            voiceCommandRecognition.start();
-                                            updateVoiceCommandStatus('ready');
-                                        } catch (e2) {
-                                            console.log('Second restart failed');
-                                            updateVoiceCommandStatus('inactive');
-                                        }
-                                    }
-                                }, 1000);
+                                updateVoiceCommandStatus('inactive');
                             }
                         }
                     }, restartDelay);
@@ -1199,7 +1181,7 @@
                     console.log('❌ Voice commands disabled - permission denied');
                     updateVoiceCommandStatus('permission-needed');
                 } else {
-                    console.log('🔇 Voice command error - will retry quickly');
+                    console.log('🔇 Voice command error - will retry');
                 }
             };
 
@@ -1216,8 +1198,8 @@
                         processVoiceCommand(transcript);
                     } else {
                         console.log('🚫 No "Hey Leslie" detected');
-                        // FAST return to ready state
-                        setTimeout(() => updateVoiceCommandStatus('ready'), 500);
+                        // Return to ready state
+                        setTimeout(() => updateVoiceCommandStatus('ready'), 1000);
                     }
                 }
             };
@@ -1226,7 +1208,7 @@
         }
         
         function startVoiceCommands() {
-            console.log('🔄 Starting FAST voice commands...');
+            console.log('🔄 Starting WORKING voice commands...');
             
             // Don't start if speech recognition is active
             if (currentPage === 'speech' || isMainListening) {
@@ -1241,16 +1223,15 @@
             
             const voiceCommandCreated = createVoiceCommandRecognition();
             if (voiceCommandCreated) {
-                // FAST START: Much shorter delays
-                const startDelay = currentPage === 'home' ? 2000 : 1000;
+                // WORKING START: Reasonable delays
+                const startDelay = 2000; // 2 seconds for all pages
                 
                 setTimeout(() => {
                     if (voiceCommandsEnabled && currentPage !== 'speech' && !isMainListening) {
                         try {
                             silenceAllAudio();
                             voiceCommandRecognition.start();
-                            updateVoiceCommandStatus('ready');
-                            console.log('✅ FAST voice commands started');
+                            console.log('✅ WORKING voice commands started');
                         } catch (error) {
                             console.log('⚠️ Voice commands failed to start:', error.message);
                             updateVoiceCommandStatus('inactive');
@@ -1274,38 +1255,50 @@
             updateVoiceCommandStatus('inactive');
         }
 
-        // === CLEAN SPEECH SYNTHESIS - NO DOUBLE SPEAKING ===
+        // === SINGLE SPEECH SYNTHESIS - NO REPEATING ===
+        let speechQueue = []; // Prevent multiple speeches
+        let isCurrentlySpeaking = false;
+        
         function speakText(text, clearTextAfter = false) {
             if (!text || text.trim() === '') return;
             
-            // CRITICAL: Stop any current speech completely
-            if (isSpeaking || currentSpeechUtterance) {
-                speechSynth.cancel();
-                if (currentSpeechUtterance) {
-                    currentSpeechUtterance = null;
-                }
-                isSpeaking = false;
-                
-                // Wait for cancellation to complete
-                setTimeout(() => {
-                    actuallySpeak(text, clearTextAfter);
-                }, 300);
+            console.log('🔊 speakText called with:', text);
+            
+            // CRITICAL: Prevent multiple calls for same text
+            if (isCurrentlySpeaking) {
+                console.log('🚫 Already speaking, ignoring duplicate request');
                 return;
             }
             
-            actuallySpeak(text, clearTextAfter);
+            // Check if this exact text is already in queue
+            if (speechQueue.includes(text.trim())) {
+                console.log('🚫 Text already queued, ignoring duplicate');
+                return;
+            }
+            
+            speechQueue.push(text.trim());
+            actuallySpeak(text.trim(), clearTextAfter);
         }
         
         function actuallySpeak(text, clearTextAfter) {
-            console.log('🔊 Speaking ONCE:', text);
+            console.log('🔊 Starting SINGLE speech for:', text);
+            
+            // FORCE stop any existing speech
+            if (speechSynth.speaking) {
+                speechSynth.cancel();
+            }
+            if (currentSpeechUtterance) {
+                currentSpeechUtterance = null;
+            }
+            
+            isCurrentlySpeaking = true;
             isSpeaking = true;
             
             // Complete silence before speaking
             silenceAllAudio();
             
-            // Extra delay to prevent static and ensure no double speaking
             setTimeout(() => {
-                if (!isSpeaking) return; // Check if cancelled during delay
+                if (!isCurrentlySpeaking) return; // Cancelled during delay
                 
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.text = text;
@@ -1317,22 +1310,31 @@
                 // Mark as approved speech
                 utterance._leslieApproved = true;
                 
-                let hasEnded = false; // Prevent double onend calls
+                let hasCompleted = false; // Prevent double completion
                 
                 utterance.onstart = function() {
-                    console.log('🔊 Speech started:', text);
+                    console.log('🔊 Speech started ONCE:', text);
                     if (currentPage === 'speech') {
                         updateStatus('🔊 Speaking: "' + text + '"');
                     }
                 };
                 
                 utterance.onend = function() {
-                    if (hasEnded) return; // Prevent double execution
-                    hasEnded = true;
+                    if (hasCompleted) return;
+                    hasCompleted = true;
                     
-                    console.log('🔊 Speech ended:', text);
+                    console.log('🔊 Speech ended ONCE:', text);
+                    
+                    // Clean up
+                    isCurrentlySpeaking = false;
                     isSpeaking = false;
                     currentSpeechUtterance = null;
+                    
+                    // Remove from queue
+                    const index = speechQueue.indexOf(text);
+                    if (index > -1) {
+                        speechQueue.splice(index, 1);
+                    }
                     
                     // Clear text if requested (for text input page)
                     if (clearTextAfter && currentPage === 'textInput') {
@@ -1350,19 +1352,28 @@
                             if (recognizedTextEl && shouldKeepListening) {
                                 recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
                             }
-                        }, 500); // Longer delay
+                        }, 300);
                     }
                     
                     silenceAllAudio();
                 };
                 
                 utterance.onerror = function(event) {
-                    if (hasEnded) return; // Prevent double execution
-                    hasEnded = true;
+                    if (hasCompleted) return;
+                    hasCompleted = true;
                     
                     console.error('Speech error:', event);
+                    
+                    // Clean up
+                    isCurrentlySpeaking = false;
                     isSpeaking = false;
                     currentSpeechUtterance = null;
+                    
+                    // Remove from queue
+                    const index = speechQueue.indexOf(text);
+                    if (index > -1) {
+                        speechQueue.splice(index, 1);
+                    }
                     
                     if (clearTextAfter && currentPage === 'textInput') {
                         const textField = document.getElementById('largeTextInputField');
@@ -1382,7 +1393,7 @@
                 currentSpeechUtterance = utterance;
                 speechSynth.speak(utterance);
                 
-            }, 300); // Longer delay to prevent static and double speaking
+            }, 200);
         }
 
         // Display functions for speech page
