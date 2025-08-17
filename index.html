@@ -994,24 +994,16 @@
             window.visualViewport.addEventListener('resize', preventOrientationFreeze);
         }
 
-        // === COMPLETE AUDIO SILENCE - NO PINGING ===
-        function completeAudioSilence() {
-            // Block ALL audio APIs completely
+        // === MINIMAL AUDIO CONTROL - RESTORE FUNCTIONALITY ===
+        function minimalAudioControl() {
+            // Only block external audio, keep speech recognition working
             if (typeof window !== 'undefined') {
-                // Override speechSynthesis completely
-                const originalSpeechSynthesis = window.speechSynthesis;
-                window.speechSynthesis = {
-                    speak: function() { /* blocked */ },
-                    cancel: function() { /* blocked */ },
-                    pause: function() { /* blocked */ },
-                    resume: function() { /* blocked */ },
-                    getVoices: function() { return []; },
-                    speaking: false,
-                    pending: false,
-                    paused: false
-                };
+                // Store original speech synthesis for Leslie's use
+                if (!window._originalSpeechSynthesis) {
+                    window._originalSpeechSynthesis = window.speechSynthesis;
+                }
                 
-                // Override Audio constructor
+                // Override Audio constructor only
                 window.Audio = function() {
                     return {
                         play: () => Promise.resolve(),
@@ -1028,21 +1020,18 @@
                         dispatchEvent: () => false
                     };
                 };
-                
-                // Store original for Leslie's use only
-                window._originalSpeechSynthesis = originalSpeechSynthesis;
             }
         }
 
-        // APPLY COMPLETE SILENCE IMMEDIATELY
-        completeAudioSilence();
+        // Apply minimal control
+        minimalAudioControl();
 
         // Global variables
         let speechRecognition = null;
         let voiceCommandRecognition = null;
         let isMainListening = false;
         let isVoiceCommandListening = false;
-        let speechSynth = window.speechSynthesis;
+        let speechSynth = window.speechSynthesis; // Restore speechSynth
         let currentPage = 'home';
         let contacts = [];
         let filteredContacts = [];
@@ -1355,29 +1344,24 @@
             updateVoiceCommandStatus('inactive');
         }
 
-        // === SINGLE SPEECH SYNTHESIS - COMPLETELY REWRITTEN ===
-        let activeUtterance = null;
-        let isLeslieSpeaking = false;
+        // === SIMPLE SPEECH SYNTHESIS - RESTORED ===
+        let currentSpeechUtterance = null;
+        let isSpeaking = false;
         
-        function leslieSpeak(text, clearTextAfter = false) {
+        function speakText(text, clearTextAfter = false) {
             if (!text || text.trim() === '') return;
             
-            console.log('🔊 Leslie speaking:', text);
+            console.log('🔊 Speaking:', text);
             
-            // CRITICAL: Stop any existing speech immediately
-            if (activeUtterance) {
-                try {
-                    window._originalSpeechSynthesis.cancel();
-                    activeUtterance = null;
-                } catch (e) {}
+            // Stop any existing speech
+            if (speechSynth.speaking) {
+                speechSynth.cancel();
+            }
+            if (currentSpeechUtterance) {
+                currentSpeechUtterance = null;
             }
             
-            if (isLeslieSpeaking) {
-                console.log('🚫 Already speaking, stopping');
-                return;
-            }
-            
-            isLeslieSpeaking = true;
+            isSpeaking = true;
             
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.text = text;
@@ -1386,7 +1370,7 @@
             utterance.pitch = 1.0;
             utterance.volume = 1.0;
             
-            let speechEnded = false;
+            let hasCompleted = false;
             
             utterance.onstart = function() {
                 console.log('🔊 Speech started:', text);
@@ -1396,14 +1380,14 @@
             };
             
             utterance.onend = function() {
-                if (speechEnded) return;
-                speechEnded = true;
+                if (hasCompleted) return;
+                hasCompleted = true;
                 
                 console.log('🔊 Speech ended:', text);
                 
-                // IMMEDIATE cleanup
-                activeUtterance = null;
-                isLeslieSpeaking = false;
+                // Clean up
+                isSpeaking = false;
+                currentSpeechUtterance = null;
                 
                 if (clearTextAfter && currentPage === 'textInput') {
                     const textField = document.getElementById('largeTextInputField');
@@ -1419,27 +1403,20 @@
             };
             
             utterance.onerror = function(event) {
-                if (speechEnded) return;
-                speechEnded = true;
+                if (hasCompleted) return;
+                hasCompleted = true;
                 
                 console.error('Speech error:', event);
-                activeUtterance = null;
-                isLeslieSpeaking = false;
+                isSpeaking = false;
+                currentSpeechUtterance = null;
                 
                 if (currentPage === 'speech') {
                     updateStatus('🎤 Ready for next phrase...');
                 }
             };
             
-            activeUtterance = utterance;
-            
-            try {
-                window._originalSpeechSynthesis.speak(utterance);
-            } catch (e) {
-                console.error('Speech failed:', e);
-                activeUtterance = null;
-                isLeslieSpeaking = false;
-            }
+            currentSpeechUtterance = utterance;
+            speechSynth.speak(utterance);
         }
 
         // Display functions for speech page
@@ -1459,8 +1436,8 @@
             console.log('✅ Processing speech phrase:', phrase);
             displayFinalPhrase(phrase);
             
-            // FIXED: Simple speech call with no blocking
-            leslieSpeak(phrase);
+            // Speak the phrase once
+            speakText(phrase);
         }
 
         function displayFinalPhrase(phrase) {
@@ -1479,7 +1456,7 @@
         function speakTextInput() {
             const textField = document.getElementById('largeTextInputField');
             if (textField && textField.value.trim()) {
-                leslieSpeak(textField.value.trim(), true); // Clear text after speaking
+                speakText(textField.value.trim(), true);
             }
         }
 
@@ -1660,12 +1637,29 @@
 
         function speakResponse(text) {
             if (!settings.speakVoiceCommands) {
-                setTimeout(() => updateVoiceCommandStatus('ready'), 300);
+                setTimeout(() => updateVoiceCommandStatus('ready'), 500);
                 return;
             }
             
-            leslieSpeak(text);
-            setTimeout(() => updateVoiceCommandStatus('ready'), 1000);
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = settings.speechSpeed || 1.0;
+            utterance.volume = 0.8;
+            
+            let hasEnded = false;
+            
+            utterance.onend = function() {
+                if (hasEnded) return;
+                hasEnded = true;
+                setTimeout(() => updateVoiceCommandStatus('ready'), 500);
+            };
+            
+            utterance.onerror = function() {
+                if (hasEnded) return;
+                hasEnded = true;
+                setTimeout(() => updateVoiceCommandStatus('ready'), 500);
+            };
+            
+            speechSynth.speak(utterance);
         }
 
         function adjustSpeechSpeed(delta) {
@@ -1902,14 +1896,8 @@
         function clearSpeechText() {
             console.log('🗑️ Clearing speech display...');
             
-            // Stop any active speech
-            if (activeUtterance) {
-                try {
-                    window._originalSpeechSynthesis.cancel();
-                    activeUtterance = null;
-                } catch (e) {}
-            }
-            isLeslieSpeaking = false;
+            speechSynth.cancel();
+            isSpeaking = false;
             
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
@@ -2681,7 +2669,7 @@
 
         // === INITIALIZATION ===
         function initApp() {
-            console.log('🚀 Initializing Leslie with FIXES...');
+            console.log('🚀 Initializing Leslie...');
             
             if (isInitialized) {
                 console.log('⚠️ App already initialized');
@@ -2689,8 +2677,6 @@
             }
             
             try {
-                silenceAllAudio();
-                
                 loadSettings();
                 setupEventHandlers();
                 
@@ -2710,10 +2696,12 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // IMMEDIATE voice command startup for home page
+                // Start voice commands on home page immediately
                 if (currentPage === 'home') {
-                    console.log('🏠 Starting voice commands INSTANTLY for home page');
-                    startVoiceCommands(); // Start immediately, no delay
+                    console.log('🏠 Starting voice commands for home page');
+                    setTimeout(() => {
+                        startVoiceCommands();
+                    }, 1000);
                 }
                 
             } catch (error) {
