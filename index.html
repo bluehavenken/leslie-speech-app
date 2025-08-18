@@ -1022,14 +1022,14 @@
             window.visualViewport.addEventListener('resize', preventOrientationFreeze);
         }
 
-        // === SPEECH SYNTHESIS - FIXED STATIC ISSUE ===
+        // === SPEECH SYNTHESIS - ELIMINATE STATIC ===
         function speakText(text, clearTextAfter = false) {
             if (!text || text.trim() === '') return;
             
             console.log('🔊 speakText called:', text);
             
-            // FIXED: Add delay before speaking to prevent static
-            speechQueue.push({ text: text.trim(), clearTextAfter, delay: 500 });
+            // FIXED: Longer delay to completely eliminate static
+            speechQueue.push({ text: text.trim(), clearTextAfter, delay: 1000 });
             processSpeechQueue();
         }
 
@@ -1043,87 +1043,89 @@
             
             console.log('🔊 Processing speech from queue:', text);
             
-            // FIXED: Add delay before speaking to prevent static
+            // FIXED: Longer delay before speaking to completely prevent static
             setTimeout(() => {
-                // Stop any existing speech
-                if (speechSynth.speaking) {
-                    speechSynth.cancel();
-                }
-                if (currentSpeechUtterance) {
-                    currentSpeechUtterance = null;
-                }
+                // Stop any existing speech and clear completely
+                speechSynth.cancel();
                 
-                isSpeaking = true;
-                speechCompleted = false;
-                
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.text = text;
-                utterance.lang = 'en-US';
-                utterance.rate = Math.max(0.5, Math.min(2.0, settings.speechSpeed || 1.0));
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
-                
-                let hasCompleted = false;
-                
-                utterance.onstart = function() {
-                    console.log('🔊 Speech started:', text);
-                    if (currentPage === 'speech') {
-                        updateStatus('🔊 Speaking: "' + text + '"');
+                // FIXED: Additional pause to ensure clean audio
+                setTimeout(() => {
+                    if (currentSpeechUtterance) {
+                        currentSpeechUtterance = null;
                     }
-                };
-                
-                utterance.onend = function() {
-                    if (hasCompleted) return;
-                    hasCompleted = true;
                     
-                    console.log('🔊 Speech completed:', text);
+                    isSpeaking = true;
+                    speechCompleted = false;
                     
-                    // IMMEDIATE cleanup
-                    isSpeaking = false;
-                    speechCompleted = true;
-                    currentSpeechUtterance = null;
-                    isProcessingSpeech = false;
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.text = text;
+                    utterance.lang = 'en-US';
+                    utterance.rate = Math.max(0.5, Math.min(2.0, settings.speechSpeed || 1.0));
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
                     
-                    if (clearTextAfter && currentPage === 'textInput') {
-                        const textField = document.getElementById('largeTextInputField');
-                        if (textField) {
-                            textField.value = '';
-                            updateTextSpeakButton();
+                    let hasCompleted = false;
+                    
+                    utterance.onstart = function() {
+                        console.log('🔊 Speech started cleanly:', text);
+                        if (currentPage === 'speech') {
+                            updateStatus('🔊 Speaking: "' + text + '"');
                         }
-                    }
+                    };
                     
-                    if (currentPage === 'speech') {
-                        updateStatus('🎤 Ready for next phrase...');
-                    }
+                    utterance.onend = function() {
+                        if (hasCompleted) return;
+                        hasCompleted = true;
+                        
+                        console.log('🔊 Speech completed:', text);
+                        
+                        // IMMEDIATE cleanup
+                        isSpeaking = false;
+                        speechCompleted = true;
+                        currentSpeechUtterance = null;
+                        isProcessingSpeech = false;
+                        
+                        if (clearTextAfter && currentPage === 'textInput') {
+                            const textField = document.getElementById('largeTextInputField');
+                            if (textField) {
+                                textField.value = '';
+                                updateTextSpeakButton();
+                            }
+                        }
+                        
+                        if (currentPage === 'speech') {
+                            updateStatus('🎤 Ready for next phrase...');
+                        }
+                        
+                        // Process next item in queue
+                        setTimeout(() => {
+                            processSpeechQueue();
+                        }, 200);
+                    };
                     
-                    // Process next item in queue
-                    setTimeout(() => {
-                        processSpeechQueue();
-                    }, 300);
-                };
-                
-                utterance.onerror = function(event) {
-                    if (hasCompleted) return;
-                    hasCompleted = true;
+                    utterance.onerror = function(event) {
+                        if (hasCompleted) return;
+                        hasCompleted = true;
+                        
+                        console.error('Speech error:', event);
+                        isSpeaking = false;
+                        speechCompleted = true;
+                        currentSpeechUtterance = null;
+                        isProcessingSpeech = false;
+                        
+                        if (currentPage === 'speech') {
+                            updateStatus('🎤 Ready for next phrase...');
+                        }
+                        
+                        // Process next item in queue
+                        setTimeout(() => {
+                            processSpeechQueue();
+                        }, 200);
+                    };
                     
-                    console.error('Speech error:', event);
-                    isSpeaking = false;
-                    speechCompleted = true;
-                    currentSpeechUtterance = null;
-                    isProcessingSpeech = false;
-                    
-                    if (currentPage === 'speech') {
-                        updateStatus('🎤 Ready for next phrase...');
-                    }
-                    
-                    // Process next item in queue
-                    setTimeout(() => {
-                        processSpeechQueue();
-                    }, 300);
-                };
-                
-                currentSpeechUtterance = utterance;
-                speechSynth.speak(utterance);
+                    currentSpeechUtterance = utterance;
+                    speechSynth.speak(utterance);
+                }, 200); // Additional pause for clean audio
             }, delay || 0);
         }
 
@@ -1212,9 +1214,10 @@
                     shouldKeepListening = false;
                     userStoppedManually = true;
                 } else if (event.error === 'no-speech') {
-                    updateStatus('🎤 No speech detected - continuing to listen...');
+                    // FIXED: Don't restart on no-speech, continuous mode handles this
+                    console.log('🎤 No speech detected, continuing...');
                 } else {
-                    updateStatus('🎤 Error - continuing to listen...');
+                    updateStatus('🎤 Error occurred, continuing to listen...');
                 }
             };
 
@@ -1320,16 +1323,17 @@
 
             voiceCommandRecognition.onerror = function(event) {
                 console.error('🗣️ Voice command error:', event.error);
-                isVoiceCommandListening = false;
-                voiceCommandActive = false;
-                updateVoiceCommandStatus('inactive');
                 
                 if (event.error === 'not-allowed') {
                     voiceCommandsEnabled = false;
+                    voiceCommandActive = false;
+                    isVoiceCommandListening = false;
                     updateVoiceCommandStatus('permission-needed');
                 } else if (event.error === 'no-speech') {
-                    // Don't restart on no-speech, let it continue listening
-                    console.log('🗣️ No speech detected, continuing...');
+                    // FIXED: Don't stop on no-speech, continuous mode handles this
+                    console.log('🗣️ No speech detected, continuing to listen...');
+                } else {
+                    console.log('🗣️ Voice command error, but continuing to listen...');
                 }
             };
 
@@ -1356,8 +1360,9 @@
                         console.log('🎯 "Hey Leslie" detected! Executing:', bestTranscript);
                         processVoiceCommand(bestTranscript);
                     } else {
-                        console.log('🚫 No "Hey Leslie" detected');
-                        setTimeout(() => updateVoiceCommandStatus('ready'), 1000);
+                        console.log('🚫 No "Hey Leslie" detected, continuing to listen...');
+                        // FIXED: Don't change status, keep listening continuously
+                        updateVoiceCommandStatus('ready');
                     }
                 }
             };
@@ -1623,7 +1628,8 @@
 
         function speakResponse(text) {
             if (!settings.speakVoiceCommands) {
-                setTimeout(() => updateVoiceCommandStatus('ready'), 500);
+                // FIXED: Return to ready state immediately without delay
+                updateVoiceCommandStatus('ready');
                 return;
             }
             
@@ -1636,13 +1642,15 @@
             utterance.onend = function() {
                 if (hasEnded) return;
                 hasEnded = true;
-                setTimeout(() => updateVoiceCommandStatus('ready'), 500);
+                // FIXED: Return to ready state immediately for continuous listening
+                updateVoiceCommandStatus('ready');
             };
             
             utterance.onerror = function() {
                 if (hasEnded) return;
                 hasEnded = true;
-                setTimeout(() => updateVoiceCommandStatus('ready'), 500);
+                // FIXED: Return to ready state immediately for continuous listening
+                updateVoiceCommandStatus('ready');
             };
             
             speechSynth.speak(utterance);
