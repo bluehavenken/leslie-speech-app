@@ -538,6 +538,10 @@
             color: white;
             display: block;
             border-color: rgba(220, 53, 69, 0.3);
+            animation: bounce 2s infinite;
+            transform: scale(1.1);
+            font-size: 16px;
+            padding: 12px 18px;
         }
         .voice-command-status.ready {
             background: rgba(40, 167, 69, 0.9);
@@ -555,6 +559,11 @@
             0% { transform: scale(1); }
             50% { transform: scale(1.05); }
             100% { transform: scale(1); }
+        }
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0) scale(1.1); }
+            40% { transform: translateY(-4px) scale(1.1); }
+            60% { transform: translateY(-2px) scale(1.1); }
         }
         @media (max-width: 768px) {
             .container { padding: 8px; }
@@ -603,8 +612,9 @@
                 </button>
                 <div class="tips-box">
                     💡 Tips:<br>
-                    • Voice commands work on ALL pages including home - just say "Hey Leslie" + command<br>
-                    • Watch the green indicator (top-right) for voice command status<br>
+                    • <strong>First time?</strong> Click the red microphone indicator (top-right) to allow microphone access<br>
+                    • Voice commands work on ALL pages - just say "Hey Leslie" + command<br>
+                    • Watch the green indicator for voice command status<br>
                     • START TALKING page has continuous speech recognition<br>
                     • Use Enhanced Recognition for better accuracy<br>
                     • Swipe gestures: bottom center (weather), left/right sides (forecasts)
@@ -899,21 +909,20 @@
         let userLocation = null;
         let isInitialized = false;
         
-        // FIXED: Voice commands with intelligent restart to stop pinging
+        // ANTI-PINGING: Simple state management
         let voiceCommandsEnabled = true;
         let voiceCommandActive = false;
-        let voiceCommandFailureCount = 0;
+        let voiceCommandRestartTimer = null;
         let lastVoiceCommand = '';
         let lastVoiceCommandTime = 0;
-        let voiceCommandRestartDelay = 3000; // Start with 3 second delay
         
-        // FIXED: Speech page with proper continuous listening
-        let shouldKeepListening = false;
-        let userStoppedManually = false;
-        let speechSessionActive = false;
-        let speechInactivityTimer = null;
+        // ANTI-PINGING: Speech page state
+        let continuousListeningActive = false;
+        let userRequestedStop = false;
         let speechRestartTimer = null;
-        const SPEECH_INACTIVITY_TIMEOUT = 120000; // 2 minutes
+        let inactivityTimer = null;
+        const INACTIVITY_TIMEOUT = 120000; // 2 minutes
+        const RESTART_DELAY = 2000; // 2 seconds between restarts
         
         // Speech processing - fixed to prevent duplicates and ensure speaking works
         let isSpeaking = false;
@@ -1101,12 +1110,15 @@
                 updateListenButton();
                 
                 if (event.error === 'not-allowed') {
-                    updateStatus('❌ Microphone access denied');
+                    console.log('🔴 Microphone permission denied for speech recognition');
+                    updateStatus('🔴 Microphone permission denied - See instructions above');
+                    showMicrophoneInstructions();
                     stopListening();
                 } else if (event.error === 'no-speech') {
                     updateStatus('🎤 No speech detected - Continuing to listen...');
                 } else {
                     updateStatus('🎤 Listening... (Error: ' + event.error + ')');
+                    console.log('🎤 Speech recognition error:', event.error);
                 }
             };
 
@@ -1353,6 +1365,7 @@ After enabling, click "START TALKING" to test!
         }
 
         // === FIXED VOICE COMMANDS - NO MORE PINGING ===
+        // === ANTI-PINGING VOICE COMMANDS ===
         function createVoiceCommandRecognition() {
             console.log('🗣️ Creating voice command recognition...');
             
@@ -1371,99 +1384,69 @@ After enabling, click "START TALKING" to test!
             }
             
             voiceCommandRecognition = new SpeechRecognition();
-            voiceCommandRecognition.continuous = true;
+            voiceCommandRecognition.continuous = false; // ANTI-PINGING: Use single recognition
             voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
-            voiceCommandRecognition.maxAlternatives = 3;
+            voiceCommandRecognition.maxAlternatives = 1;
 
             voiceCommandRecognition.onstart = () => {
-                console.log('🗣️ ✅ Voice commands started');
-                isVoiceCommandListening = true;
+                console.log('🗣️ ✅ Voice commands listening');
                 voiceCommandActive = true;
-                voiceCommandFailureCount = 0; // Reset on successful start
                 updateVoiceCommandStatus('ready');
             };
 
             voiceCommandRecognition.onend = () => {
                 console.log('🗣️ Voice commands ended');
-                isVoiceCommandListening = false;
                 voiceCommandActive = false;
                 
-                // FIXED: Intelligent restart with exponential backoff to prevent pinging
-                if (voiceCommandsEnabled) {
-                    // Calculate delay based on failure count (exponential backoff)
-                    voiceCommandRestartDelay = Math.min(3000 + (voiceCommandFailureCount * 2000), 15000); // 3s to 15s max
-                    
-                    console.log(`🔄 Voice commands will restart in ${voiceCommandRestartDelay}ms (failures: ${voiceCommandFailureCount})`);
+                // ANTI-PINGING: Only restart if enabled and no current timer
+                if (voiceCommandsEnabled && !voiceCommandRestartTimer) {
                     updateVoiceCommandStatus('inactive');
                     
-                    setTimeout(() => {
+                    voiceCommandRestartTimer = setTimeout(() => {
+                        voiceCommandRestartTimer = null;
                         if (voiceCommandsEnabled && !voiceCommandActive) {
-                            try {
-                                voiceCommandRecognition.start();
-                                console.log('✅ Voice commands restarted');
-                            } catch (e) {
-                                console.log('Voice command restart failed:', e);
-                                voiceCommandFailureCount++;
-                                updateVoiceCommandStatus('inactive');
-                            }
+                            startVoiceCommands();
                         }
-                    }, voiceCommandRestartDelay);
-                } else {
-                    updateVoiceCommandStatus('inactive');
+                    }, 5000); // ANTI-PINGING: 5 second delay between restarts
                 }
             };
 
             voiceCommandRecognition.onerror = (event) => {
-                console.error('🗣️ Voice command error:', event.error);
-                voiceCommandFailureCount++;
+                console.log('🗣️ Voice command error:', event.error);
+                voiceCommandActive = false;
                 
                 if (event.error === 'not-allowed') {
+                    console.log('🔴 Microphone permission denied for voice commands');
                     voiceCommandsEnabled = false;
-                    voiceCommandActive = false;
                     updateVoiceCommandStatus('permission-needed');
-                } else if (event.error !== 'no-speech') {
-                    // Increase delay for non-speech errors
-                    voiceCommandFailureCount++;
+                    return; // ANTI-PINGING: Don't restart on permission error
                 }
+                
+                // ANTI-PINGING: Don't restart on any error, wait for natural end event
             };
 
             voiceCommandRecognition.onresult = (event) => {
-                const result = event.results[event.results.length - 1];
+                const result = event.results[0];
                 if (!result.isFinal) return;
                 
-                updateVoiceCommandStatus('processing');
+                const transcript = result[0].transcript.trim().toLowerCase();
+                console.log('🗣️ Voice result:', transcript);
                 
-                // Check all alternatives for "Hey Leslie"
-                let bestMatch = '';
-                let foundCommand = false;
-                
-                for (let i = 0; i < result.length; i++) {
-                    const transcript = result[i].transcript.trim().toLowerCase();
-                    console.log(`🗣️ Voice alternative ${i}:`, transcript);
-                    
-                    if (isVoiceCommand(transcript)) {
-                        bestMatch = transcript;
-                        foundCommand = true;
-                        break;
-                    }
+                if (isVoiceCommand(transcript)) {
+                    console.log('🎯 "Hey Leslie" command detected:', transcript);
+                    updateVoiceCommandStatus('processing');
+                    processVoiceCommand(transcript);
                 }
-                
-                if (foundCommand) {
-                    console.log('🎯 "Hey Leslie" command detected:', bestMatch);
-                    processVoiceCommand(bestMatch);
-                } else {
-                    console.log('🚫 No "Hey Leslie" detected');
-                    setTimeout(() => updateVoiceCommandStatus('ready'), 1000);
-                }
+                // ANTI-PINGING: Recognition will end naturally and restart after delay
             };
             
             return true;
         }
 
         function startVoiceCommands() {
+            // ANTI-PINGING: Don't start if already active or disabled
             if (voiceCommandActive || !voiceCommandsEnabled) {
-                console.log('🚫 Voice commands already active or disabled');
                 return;
             }
             
@@ -1479,20 +1462,8 @@ After enabling, click "START TALKING" to test!
                 voiceCommandRecognition.start();
             } catch (error) {
                 console.log('⚠️ Voice commands failed to start:', error);
-                voiceCommandFailureCount++;
+                voiceCommandActive = false;
                 updateVoiceCommandStatus('inactive');
-                
-                // Retry with longer delay
-                setTimeout(() => {
-                    if (voiceCommandsEnabled && !voiceCommandActive) {
-                        try {
-                            voiceCommandRecognition.start();
-                        } catch (e) {
-                            console.log('Voice commands retry failed');
-                            voiceCommandFailureCount++;
-                        }
-                    }
-                }, 5000);
             }
         }
 
@@ -1500,6 +1471,12 @@ After enabling, click "START TALKING" to test!
             console.log('🛑 Stopping voice commands...');
             voiceCommandsEnabled = false;
             voiceCommandActive = false;
+            
+            // ANTI-PINGING: Clear restart timer
+            if (voiceCommandRestartTimer) {
+                clearTimeout(voiceCommandRestartTimer);
+                voiceCommandRestartTimer = null;
+            }
             
             if (voiceCommandRecognition) {
                 try {
@@ -1657,7 +1634,7 @@ After enabling, click "START TALKING" to test!
             }
             
             if (cmd.includes('stop listening')) {
-                stopListening();
+                stopContinuousListening(); // ANTI-PINGING: Use new function name
                 if (!silent) speakResponse('Stopping speech recognition');
                 return;
             }
@@ -1732,7 +1709,7 @@ After enabling, click "START TALKING" to test!
             // Handle leaving speech page
             if (currentPage === 'speech' && pageId !== 'speech') {
                 console.log('🧹 Leaving speech page - stopping speech recognition');
-                stopListening();
+                stopContinuousListening(); // ANTI-PINGING: Use new function name
             }
             
             // Hide all pages
@@ -1756,10 +1733,10 @@ After enabling, click "START TALKING" to test!
                     updateStatus('🎤 Starting automatic listening...');
                     updateListenButton();
                     
-                    // Auto-start listening after short delay
+                    // ANTI-PINGING: Auto-start listening after short delay
                     setTimeout(() => {
                         if (currentPage === 'speech') {
-                            startListening();
+                            startContinuousListening(); // ANTI-PINGING: Use new function name
                         }
                     }, 1000);
                 }
@@ -1778,17 +1755,17 @@ After enabling, click "START TALKING" to test!
         }
 
         function toggleListening() {
-            if (isMainListening || shouldKeepListening) {
-                stopListening();
+            if (isMainListening || continuousListeningActive) {
+                stopContinuousListening();
             } else {
-                startListening();
+                startContinuousListening();
             }
         }
 
         function updateListenButton() {
             const button = document.getElementById('listenButton');
             if (button) {
-                if (isMainListening || shouldKeepListening) {
+                if (isMainListening || continuousListeningActive) { // ANTI-PINGING: Use new state variable
                     button.textContent = 'STOP LISTENING';
                     button.className = 'control-btn btn-stop';
                 } else {
@@ -1811,7 +1788,7 @@ After enabling, click "START TALKING" to test!
             
             const textEl = document.getElementById('recognizedText');
             if (textEl) {
-                if (shouldKeepListening && speechSessionActive) {
+                if (continuousListeningActive) { // ANTI-PINGING: Use new state variable
                     textEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
                 } else {
                     textEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for speech recognition...</div>';
@@ -2607,12 +2584,13 @@ After enabling, click "START TALKING" to test!
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Start voice commands after delay to prevent immediate pinging
+                // ANTI-PINGING: Start voice commands with reasonable delay to prevent immediate restart loops
+                console.log('🏠 Starting voice commands after initialization delay');
                 setTimeout(() => {
                     if (!voiceCommandActive) {
                         startVoiceCommands();
                     }
-                }, 2000); // 2 second delay
+                }, 3000); // ANTI-PINGING: 3 second delay to prevent startup pinging
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -2643,12 +2621,13 @@ After enabling, click "START TALKING" to test!
                 }
             } else {
                 console.log('🔇 Page visible - restarting voice commands');
-                if (!voiceCommandActive) {
+                // ANTI-PINGING: Only restart if not already active and with delay
+                if (!voiceCommandActive && voiceCommandsEnabled) {
                     setTimeout(() => {
-                        if (!voiceCommandActive) {
+                        if (!voiceCommandActive && voiceCommandsEnabled) {
                             startVoiceCommands();
                         }
-                    }, 1000);
+                    }, 2000); // ANTI-PINGING: 2 second delay to prevent rapid restart
                 }
             }
         });
