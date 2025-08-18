@@ -908,13 +908,19 @@
         let shouldKeepListening = false;
         let userStoppedManually = false;
         let sessionTimeoutId = null;
-        let restartTimer = null;
-        const SESSION_TIMEOUT = 2 * 60 * 1000;
+        const SESSION_TIMEOUT = 5 * 60 * 1000; // Extended to 5 minutes
         
-        // Speech processing control
+        // Speech processing control - FIXED: Prevent repeats
         let isSpeaking = false;
         let currentSpeechUtterance = null;
-        let speechCompleted = true; // NEW: Track if speech is completed
+        let speechCompleted = true;
+        let speechQueue = [];
+        let isProcessingSpeech = false;
+        
+        // FIXED: Recognition restart timing
+        let recognitionRestartDelay = 3000; // 3 seconds instead of 1
+        let lastRecognitionEnd = 0;
+        let minRestartInterval = 2000; // Minimum 2 seconds between restarts
         
         // Settings
         let settings = {
@@ -970,6 +976,8 @@
             isSpeaking = false;
             currentSpeechUtterance = null;
             speechCompleted = true;
+            speechQueue = [];
+            isProcessingSpeech = false;
             
             isMainListening = false;
             isVoiceCommandListening = false;
@@ -989,11 +997,11 @@
                     setTimeout(() => {
                         voiceCommandsEnabled = true;
                         startVoiceCommands();
-                    }, 2000);
+                    }, 3000); // Extended delay
                 }
                 
                 orientationRestartTimer = null;
-            }, 2000);
+            }, 3000); // Extended delay
         }
         
         window.addEventListener('orientationchange', preventOrientationFreeze);
@@ -1007,24 +1015,33 @@
             resizeTimer = setTimeout(() => {
                 preventOrientationFreeze();
                 resizeTimer = null;
-            }, 100);
+            }, 200);
         });
         
         if (window.visualViewport) {
             window.visualViewport.addEventListener('resize', preventOrientationFreeze);
         }
 
-        // === SPEECH SYNTHESIS - FIXED NO REPEATS ===
+        // === SPEECH SYNTHESIS - FIXED QUEUE SYSTEM ===
         function speakText(text, clearTextAfter = false) {
             if (!text || text.trim() === '') return;
             
             console.log('🔊 speakText called:', text);
             
-            // FIXED: Don't speak if already speaking or not completed
-            if (isSpeaking || !speechCompleted) {
-                console.log('🚫 Already speaking or not completed');
+            // FIXED: Add to queue instead of immediate processing
+            speechQueue.push({ text: text.trim(), clearTextAfter });
+            processSpeechQueue();
+        }
+
+        function processSpeechQueue() {
+            if (isProcessingSpeech || speechQueue.length === 0) {
                 return;
             }
+            
+            isProcessingSpeech = true;
+            const { text, clearTextAfter } = speechQueue.shift();
+            
+            console.log('🔊 Processing speech from queue:', text);
             
             // Stop any existing speech
             if (speechSynth.speaking) {
@@ -1035,7 +1052,7 @@
             }
             
             isSpeaking = true;
-            speechCompleted = false; // Mark as not completed
+            speechCompleted = false;
             
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.text = text;
@@ -1057,12 +1074,13 @@
                 if (hasCompleted) return;
                 hasCompleted = true;
                 
-                console.log('🔊 Speech ended:', text);
+                console.log('🔊 Speech completed:', text);
                 
                 // IMMEDIATE cleanup
                 isSpeaking = false;
-                speechCompleted = true; // Mark as completed
+                speechCompleted = true;
                 currentSpeechUtterance = null;
+                isProcessingSpeech = false;
                 
                 if (clearTextAfter && currentPage === 'textInput') {
                     const textField = document.getElementById('largeTextInputField');
@@ -1075,6 +1093,11 @@
                 if (currentPage === 'speech') {
                     updateStatus('🎤 Ready for next phrase...');
                 }
+                
+                // Process next item in queue
+                setTimeout(() => {
+                    processSpeechQueue();
+                }, 500);
             };
             
             utterance.onerror = function(event) {
@@ -1083,19 +1106,25 @@
                 
                 console.error('Speech error:', event);
                 isSpeaking = false;
-                speechCompleted = true; // Mark as completed
+                speechCompleted = true;
                 currentSpeechUtterance = null;
+                isProcessingSpeech = false;
                 
                 if (currentPage === 'speech') {
                     updateStatus('🎤 Ready for next phrase...');
                 }
+                
+                // Process next item in queue
+                setTimeout(() => {
+                    processSpeechQueue();
+                }, 500);
             };
             
             currentSpeechUtterance = utterance;
             speechSynth.speak(utterance);
         }
 
-        // === SPEECH RECOGNITION - FAST RESTART ===
+        // === SPEECH RECOGNITION - FIXED TIMING ===
         function createSpeechRecognition() {
             console.log('🎤 Creating speech recognition...');
             
@@ -1119,7 +1148,7 @@
             }
             
             speechRecognition = new SpeechRecognition();
-            speechRecognition.continuous = false;
+            speechRecognition.continuous = false; // Keep as false to control restarts
             speechRecognition.interimResults = true;
             speechRecognition.lang = 'en-US';
             speechRecognition.maxAlternatives = 1;
@@ -1136,15 +1165,32 @@
                 console.log('🎤 Speech recognition ended');
                 isMainListening = false;
                 updateListenButton();
+                lastRecognitionEnd = Date.now();
                 
-                // FIXED: Fast restart only if speech is completed
-                if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !orientationLock && speechCompleted) {
-                    console.log('🔄 Restarting speech recognition...');
+                // FIXED: Only restart if conditions are met AND speech is completed
+                if (shouldKeepListening && 
+                    !userStoppedManually && 
+                    currentPage === 'speech' && 
+                    !orientationLock && 
+                    speechCompleted && 
+                    !isProcessingSpeech) {
+                    
+                    console.log('🔄 Scheduling speech recognition restart...');
+                    
+                    // FIXED: Use longer delay and check timing
+                    const timeSinceLastEnd = Date.now() - lastRecognitionEnd;
+                    const delayNeeded = Math.max(recognitionRestartDelay, minRestartInterval - timeSinceLastEnd);
                     
                     setTimeout(() => {
-                        if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !orientationLock && speechCompleted) {
+                        if (shouldKeepListening && 
+                            !userStoppedManually && 
+                            currentPage === 'speech' && 
+                            !orientationLock && 
+                            speechCompleted && 
+                            !isProcessingSpeech) {
+                            
                             try {
-                                console.log('🔄 Creating new recognition...');
+                                console.log('🔄 Restarting speech recognition...');
                                 createSpeechRecognition();
                                 speechRecognition.start();
                                 console.log('✅ Speech recognition restarted');
@@ -1154,7 +1200,7 @@
                                 shouldKeepListening = false;
                             }
                         }
-                    }, 1000); // 1 second delay
+                    }, delayNeeded);
                 } else {
                     updateStatus('🎤 Click "START TALKING" to begin');
                     shouldKeepListening = false;
@@ -1170,6 +1216,8 @@
                     updateStatus('❌ Microphone access denied');
                     shouldKeepListening = false;
                     userStoppedManually = true;
+                } else if (event.error === 'no-speech') {
+                    updateStatus('🎤 No speech detected - continuing to listen...');
                 } else {
                     updateStatus('🎤 Error - continuing to listen...');
                 }
@@ -1205,9 +1253,10 @@
             return true;
         }
 
-        // === VOICE COMMANDS - FAST STARTUP ===
+        // === VOICE COMMANDS - REDUCED FREQUENCY ===
         let voiceCommandRetryCount = 0;
         const MAX_VOICE_RETRIES = 3;
+        let voiceCommandRestartDelay = 5000; // FIXED: 5 seconds instead of 2
         
         function createVoiceCommandRecognition() {
             console.log('🗣️ Creating voice commands...');
@@ -1245,6 +1294,7 @@
                 isVoiceCommandListening = false;
                 updateVoiceCommandStatus('inactive');
                 
+                // FIXED: Longer delay for voice command restarts
                 if (voiceCommandsEnabled && 
                     currentPage !== 'speech' && 
                     !isMainListening && 
@@ -1265,7 +1315,7 @@
                                 console.log('Voice command restart failed:', e);
                             }
                         }
-                    }, 2000);
+                    }, voiceCommandRestartDelay); // FIXED: 5 second delay
                 }
             };
 
@@ -1345,7 +1395,7 @@
                             updateVoiceCommandStatus('inactive');
                         }
                     }
-                }, 1500); // 1.5 second delay
+                }, 2000); // Longer initial delay
             }
         }
 
@@ -1380,8 +1430,8 @@
             console.log('✅ Processing speech phrase:', phrase);
             displayFinalPhrase(phrase);
             
-            // FIXED: Only speak if speech is completed
-            if (speechCompleted) {
+            // FIXED: Only add to speech queue if speech is completed
+            if (speechCompleted && !isProcessingSpeech) {
                 speakText(phrase);
             }
         }
@@ -1650,9 +1700,9 @@
             
             sessionTimeoutId = setTimeout(() => {
                 if (shouldKeepListening && currentPage === 'speech') {
-                    console.log('⏰ 2-minute session timeout reached');
+                    console.log('⏰ 5-minute session timeout reached');
                     stopListening();
-                    updateStatus('⏰ Session timeout (2 minutes) - Click "START TALKING" to restart');
+                    updateStatus('⏰ Session timeout (5 minutes) - Click "START TALKING" to restart');
                 }
                 sessionTimeoutId = null;
             }, SESSION_TIMEOUT);
@@ -1682,14 +1732,11 @@
                 return;
             }
             
-            if (restartTimer) {
-                clearTimeout(restartTimer);
-                restartTimer = null;
-            }
-            
             shouldKeepListening = true;
             userStoppedManually = false;
-            speechCompleted = true; // Reset speech completion flag
+            speechCompleted = true;
+            speechQueue = [];
+            isProcessingSpeech = false;
             
             updateStatus('🎤 Preparing continuous recognition...');
             
@@ -1719,19 +1766,17 @@
             shouldKeepListening = false;
             userStoppedManually = true;
             
-            if (restartTimer) {
-                clearTimeout(restartTimer);
-                restartTimer = null;
-            }
-            
             clearSessionTimeout();
             
+            // Stop all speech
             speechSynth.cancel();
             if (currentSpeechUtterance) {
                 currentSpeechUtterance = null;
             }
             isSpeaking = false;
             speechCompleted = true;
+            speechQueue = [];
+            isProcessingSpeech = false;
             
             if (speechRecognition) {
                 try {
@@ -1766,12 +1811,12 @@
                         console.log('🗣️ Leaving speech page - enabling voice commands');
                         setTimeout(() => {
                             startVoiceCommands();
-                        }, 1000);
+                        }, 2000); // Longer delay
                     } else if (pageId === 'home') {
                         console.log('🏠 Entering home page - enabling voice commands');
                         setTimeout(() => {
                             startVoiceCommands();
-                        }, 1000);
+                        }, 2500); // Longer delay
                     }
                 }
                 
@@ -1843,6 +1888,8 @@
             speechSynth.cancel();
             isSpeaking = false;
             speechCompleted = true;
+            speechQueue = [];
+            isProcessingSpeech = false;
             
             const recognizedTextEl = document.getElementById('recognizedText');
             if (recognizedTextEl) {
@@ -2628,12 +2675,12 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Start voice commands on home page
+                // Start voice commands on home page with longer delay
                 if (currentPage === 'home') {
                     console.log('🏠 Starting voice commands for home page');
                     setTimeout(() => {
                         startVoiceCommands();
-                    }, 1500); // 1.5 second delay
+                    }, 3000); // Extended delay
                 }
                 
             } catch (error) {
@@ -2665,7 +2712,7 @@
                     if (currentPage !== 'speech' && !isMainListening) {
                         startVoiceCommands();
                     }
-                }, 1000);
+                }, 2000); // Extended delay
             }
         });
 
