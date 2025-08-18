@@ -900,6 +900,8 @@
         // Global variables
         let speechRecognition = null;
         let voiceCommandRecognition = null;
+        let isMainListening = false;
+        let isVoiceCommandListening = false;
         let speechSynth = window.speechSynthesis;
         let currentPage = 'home';
         let contacts = [];
@@ -907,17 +909,20 @@
         let userLocation = null;
         let isInitialized = false;
         
-        // ANTI-PINGING: Minimal state management - NO automatic restarts
+        // FIXED: Voice command state management
         let voiceCommandsEnabled = true;
         let voiceCommandActive = false;
+        let voiceCommandRestartTimer = null;
         let lastVoiceCommand = '';
         let lastVoiceCommandTime = 0;
         
-        // ANTI-PINGING: Speech page state - NO automatic restarts  
-        let speechListening = false;
-        let userWantsListening = false;
-        let inactivityTimer = null;
-        const INACTIVITY_TIMEOUT = 120000; // 2 minutes
+        // FIXED: Speech page state management - defined all missing variables
+        let shouldKeepListening = false;
+        let userStoppedManually = false;
+        let speechSessionActive = false;
+        let speechRestartTimer = null;
+        let speechInactivityTimer = null;
+        const SPEECH_INACTIVITY_TIMEOUT = 120000; // 2 minutes
         
         // Speech processing - fixed to prevent duplicates and ensure speaking works
         let isSpeaking = false;
@@ -1026,7 +1031,7 @@
             speechSynth.speak(utterance);
         }
 
-        // === FIXED SPEECH RECOGNITION - NO MORE PINGING ===
+        // === FIXED SPEECH RECOGNITION ===
         function createSpeechRecognition() {
             console.log('🎤 Creating speech recognition...');
             
@@ -1149,8 +1154,9 @@
             return true;
         }
 
-        function startListening() {
-            console.log('🎤 Starting speech listening...');
+        // FIXED: Define missing functions for speech recognition
+        function startContinuousListening() {
+            console.log('🎤 Starting continuous speech listening...');
             
             shouldKeepListening = true;
             userStoppedManually = false;
@@ -1191,8 +1197,8 @@
             }
         }
 
-        function stopListening() {
-            console.log('🛑 Stopping speech listening...');
+        function stopContinuousListening() {
+            console.log('🛑 Stopping continuous speech listening...');
             
             shouldKeepListening = false;
             userStoppedManually = true;
@@ -1220,6 +1226,15 @@
             updateStatus('🛑 Stopped - Click "START TALKING" to begin again');
         }
 
+        // FIXED: Legacy function names for compatibility
+        function startListening() {
+            startContinuousListening();
+        }
+
+        function stopListening() {
+            stopContinuousListening();
+        }
+
         function resetSpeechInactivityTimer() {
             if (speechInactivityTimer) {
                 clearTimeout(speechInactivityTimer);
@@ -1228,7 +1243,7 @@
             speechInactivityTimer = setTimeout(() => {
                 if (speechSessionActive && currentPage === 'speech') {
                     console.log('⏰ Speech inactivity timeout');
-                    stopListening();
+                    stopContinuousListening();
                     updateStatus('⏰ No speech for 2 minutes - Click "START TALKING" to restart');
                 }
             }, SPEECH_INACTIVITY_TIMEOUT);
@@ -1316,7 +1331,6 @@
                 
                 console.log('✅ Microphone permission granted');
                 voiceCommandsEnabled = true;
-                voiceCommandFailureCount = 0; // Reset failure count
                 
                 // Restart voice commands after short delay
                 setTimeout(() => {
@@ -1359,11 +1373,11 @@ After enabling, click "START TALKING" to test!
             updateVoiceCommandStatus('permission-needed');
         }
 
-        // === FIXED VOICE COMMANDS - NO MORE PINGING ===
-        // === NO PINGING VOICE COMMANDS ===
+        // === FIXED VOICE COMMANDS ===
         function createVoiceCommandRecognition() {
             console.log('🗣️ Creating voice command recognition...');
             
+            // Clean up existing
             if (voiceCommandRecognition) {
                 try {
                     voiceCommandRecognition.abort();
@@ -1378,7 +1392,7 @@ After enabling, click "START TALKING" to test!
             }
             
             voiceCommandRecognition = new SpeechRecognition();
-            voiceCommandRecognition.continuous = false; // NO PINGING: Single use only
+            voiceCommandRecognition.continuous = false; // Use single recognition to prevent hanging
             voiceCommandRecognition.interimResults = false;
             voiceCommandRecognition.lang = 'en-US';
             voiceCommandRecognition.maxAlternatives = 1;
@@ -1392,10 +1406,18 @@ After enabling, click "START TALKING" to test!
             voiceCommandRecognition.onend = () => {
                 console.log('🗣️ Voice commands ended');
                 voiceCommandActive = false;
-                updateVoiceCommandStatus('inactive');
                 
-                // NO PINGING: Do not automatically restart - wait for user interaction
-                console.log('🗣️ Voice commands stopped - will restart on next user interaction');
+                // FIXED: Only restart if enabled and not manually stopped
+                if (voiceCommandsEnabled && !voiceCommandRestartTimer) {
+                    updateVoiceCommandStatus('ready');
+                    
+                    voiceCommandRestartTimer = setTimeout(() => {
+                        voiceCommandRestartTimer = null;
+                        if (voiceCommandsEnabled && !voiceCommandActive) {
+                            startVoiceCommands();
+                        }
+                    }, 3000); // 3 second delay between restarts
+                }
             };
 
             voiceCommandRecognition.onerror = (event) => {
@@ -1406,11 +1428,11 @@ After enabling, click "START TALKING" to test!
                     console.log('🔴 Microphone permission denied for voice commands');
                     voiceCommandsEnabled = false;
                     updateVoiceCommandStatus('permission-needed');
-                } else {
-                    updateVoiceCommandStatus('inactive');
+                    return;
                 }
                 
-                // NO PINGING: No restart on any error
+                // Don't restart on error, wait for natural end event
+                updateVoiceCommandStatus('ready');
             };
 
             voiceCommandRecognition.onresult = (event) => {
@@ -1425,21 +1447,25 @@ After enabling, click "START TALKING" to test!
                     updateVoiceCommandStatus('processing');
                     processVoiceCommand(transcript);
                 } else {
-                    updateVoiceCommandStatus('inactive');
+                    // Not a command, restart listening
+                    setTimeout(() => {
+                        if (voiceCommandsEnabled && !voiceCommandActive) {
+                            updateVoiceCommandStatus('ready');
+                        }
+                    }, 1000);
                 }
-                
-                // NO PINGING: Recognition will end naturally - no restart
             };
             
             return true;
         }
 
         function startVoiceCommands() {
+            // Don't start if already active or disabled
             if (voiceCommandActive || !voiceCommandsEnabled) {
                 return;
             }
             
-            console.log('🗣️ Starting voice commands (one-time listen)...');
+            console.log('🗣️ Starting voice commands...');
             
             const created = createVoiceCommandRecognition();
             if (!created) {
@@ -1453,6 +1479,17 @@ After enabling, click "START TALKING" to test!
                 console.log('⚠️ Voice commands failed to start:', error);
                 voiceCommandActive = false;
                 updateVoiceCommandStatus('inactive');
+                
+                // Try again after delay if permission error
+                if (error.name === 'NotAllowedError') {
+                    updateVoiceCommandStatus('permission-needed');
+                } else {
+                    setTimeout(() => {
+                        if (voiceCommandsEnabled && !voiceCommandActive) {
+                            startVoiceCommands();
+                        }
+                    }, 5000);
+                }
             }
         }
 
@@ -1461,6 +1498,12 @@ After enabling, click "START TALKING" to test!
             voiceCommandsEnabled = false;
             voiceCommandActive = false;
             
+            // Clear restart timer
+            if (voiceCommandRestartTimer) {
+                clearTimeout(voiceCommandRestartTimer);
+                voiceCommandRestartTimer = null;
+            }
+            
             if (voiceCommandRecognition) {
                 try {
                     voiceCommandRecognition.abort();
@@ -1468,14 +1511,6 @@ After enabling, click "START TALKING" to test!
             }
             
             updateVoiceCommandStatus('inactive');
-        }
-
-        // NO PINGING: Start voice commands on user interaction
-        function restartVoiceCommandsOnUserAction() {
-            if (!voiceCommandActive && voiceCommandsEnabled) {
-                console.log('🗣️ User interaction - restarting voice commands');
-                startVoiceCommands();
-            }
         }
 
         // === VOICE COMMAND PROCESSING ===
@@ -1625,7 +1660,7 @@ After enabling, click "START TALKING" to test!
             }
             
             if (cmd.includes('stop listening')) {
-                stopSpeechListening(); // NO PINGING: Use new function name
+                stopContinuousListening();
                 if (!silent) speakResponse('Stopping speech recognition');
                 return;
             }
@@ -1637,7 +1672,7 @@ After enabling, click "START TALKING" to test!
 
         function speakResponse(text) {
             if (!settings.speakVoiceCommands) {
-                updateVoiceCommandStatus('ready');
+                setTimeout(() => updateVoiceCommandStatus('ready'), 500);
                 return;
             }
             
@@ -1670,11 +1705,15 @@ After enabling, click "START TALKING" to test!
                     statusEl.classList.add('ready');
                     statusEl.textContent = '🟢 "Hey Leslie" Ready';
                     statusEl.style.display = 'block';
+                    statusEl.style.cursor = 'default';
+                    statusEl.onclick = null;
                     break;
                 case 'processing':
                     statusEl.classList.add('processing');
                     statusEl.textContent = '🟡 Processing Command...';
                     statusEl.style.display = 'block';
+                    statusEl.style.cursor = 'default';
+                    statusEl.onclick = null;
                     break;
                 case 'permission-needed':
                     statusEl.classList.add('permission-needed');
@@ -1700,7 +1739,7 @@ After enabling, click "START TALKING" to test!
             // Handle leaving speech page
             if (currentPage === 'speech' && pageId !== 'speech') {
                 console.log('🧹 Leaving speech page - stopping speech recognition');
-                stopSpeechListening(); // NO PINGING: Use new function name
+                stopContinuousListening();
             }
             
             // Hide all pages
@@ -1711,9 +1750,6 @@ After enabling, click "START TALKING" to test!
             if (targetPage) {
                 targetPage.classList.add('active');
                 currentPage = pageId;
-                
-                // NO PINGING: Restart voice commands on page change (user interaction)
-                restartVoiceCommandsOnUserAction();
                 
                 // Handle entering speech page
                 if (pageId === 'speech') {
@@ -1727,10 +1763,10 @@ After enabling, click "START TALKING" to test!
                     updateStatus('🎤 Starting automatic listening...');
                     updateListenButton();
                     
-                    // NO PINGING: Auto-start listening after short delay
+                    // Auto-start listening after short delay
                     setTimeout(() => {
                         if (currentPage === 'speech') {
-                            startSpeechListening(); // NO PINGING: Use new function name
+                            startContinuousListening();
                         }
                     }, 1000);
                 }
@@ -1749,17 +1785,17 @@ After enabling, click "START TALKING" to test!
         }
 
         function toggleListening() {
-            if (speechListening || userWantsListening) {
-                stopSpeechListening();
+            if (isMainListening || shouldKeepListening) {
+                stopContinuousListening();
             } else {
-                startSpeechListening();
+                startContinuousListening();
             }
         }
 
         function updateListenButton() {
             const button = document.getElementById('listenButton');
             if (button) {
-                if (speechListening || userWantsListening) { // NO PINGING: Use new state variable
+                if (isMainListening || shouldKeepListening) {
                     button.textContent = 'STOP LISTENING';
                     button.className = 'control-btn btn-stop';
                 } else {
@@ -1782,7 +1818,7 @@ After enabling, click "START TALKING" to test!
             
             const textEl = document.getElementById('recognizedText');
             if (textEl) {
-                if (userWantsListening) { // NO PINGING: Use new state variable
+                if (shouldKeepListening) {
                     textEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
                 } else {
                     textEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for speech recognition...</div>';
@@ -2437,7 +2473,6 @@ After enabling, click "START TALKING" to test!
                     element.onclick = (e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        restartVoiceCommandsOnUserAction(); // NO PINGING: Restart on user action
                         showPage(btn.page);
                     };
                 }
@@ -2454,7 +2489,6 @@ After enabling, click "START TALKING" to test!
                     element.onclick = (e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        restartVoiceCommandsOnUserAction(); // NO PINGING: Restart on user action
                         showPage('home');
                     };
                 }
@@ -2468,7 +2502,6 @@ After enabling, click "START TALKING" to test!
                     element.onclick = (e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        restartVoiceCommandsOnUserAction(); // NO PINGING: Restart on user action
                         showPage('home');
                     };
                 }
@@ -2480,7 +2513,6 @@ After enabling, click "START TALKING" to test!
                 listenButton.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    restartVoiceCommandsOnUserAction(); // NO PINGING: Restart on user action
                     toggleListening();
                 };
             }
@@ -2490,7 +2522,6 @@ After enabling, click "START TALKING" to test!
                 clearButton.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    restartVoiceCommandsOnUserAction(); // NO PINGING: Restart on user action
                     clearSpeechText();
                 };
             }
@@ -2501,7 +2532,6 @@ After enabling, click "START TALKING" to test!
                 speakTextBtn.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    restartVoiceCommandsOnUserAction(); // NO PINGING: Restart on user action
                     speakTextInput();
                 };
             }
@@ -2526,7 +2556,6 @@ After enabling, click "START TALKING" to test!
                 loadAllBtn.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    restartVoiceCommandsOnUserAction(); // NO PINGING: Restart on user action
                     loadAllContacts();
                 };
             }
@@ -2535,7 +2564,6 @@ After enabling, click "START TALKING" to test!
                 loadSelectedBtn.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    restartVoiceCommandsOnUserAction(); // NO PINGING: Restart on user action
                     loadSelectedContacts();
                 };
             }
@@ -2586,15 +2614,13 @@ After enabling, click "START TALKING" to test!
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // NO PINGING: Start voice commands once on first user interaction only
-                console.log('🏠 Voice commands will start on first user interaction');
-                
-                // NO PINGING: Start voice commands immediately only once
+                // Start voice commands with delay to prevent startup issues
+                console.log('🏠 Starting voice commands after initialization delay');
                 setTimeout(() => {
-                    if (!voiceCommandActive && voiceCommandsEnabled) {
+                    if (!voiceCommandActive) {
                         startVoiceCommands();
                     }
-                }, 2000);
+                }, 2000); // 2 second delay
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -2624,8 +2650,15 @@ After enabling, click "START TALKING" to test!
                     } catch (e) {}
                 }
             } else {
-                console.log('🔇 Page visible - voice commands will restart on next user interaction');
-                // NO PINGING: Don't automatically restart - wait for user interaction
+                console.log('🔇 Page visible - restarting voice commands');
+                // Only restart if not already active and with delay
+                if (!voiceCommandActive && voiceCommandsEnabled) {
+                    setTimeout(() => {
+                        if (!voiceCommandActive && voiceCommandsEnabled) {
+                            startVoiceCommands();
+                        }
+                    }, 2000); // 2 second delay
+                }
             }
         });
 
