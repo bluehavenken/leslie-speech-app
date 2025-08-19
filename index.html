@@ -937,7 +937,12 @@
             enhancedMode: false
         };
 
-        // === SPEECH RECOGNITION - FIXED INITIALIZATION ===
+        // === SPEECH RECOGNITION - STABLE NO-PING VERSION ===
+        let speechRestartTimeout = null;
+        let commandRestartTimeout = null;
+        let speechStarting = false;
+        let commandStarting = false;
+
         function createSpeechRecognition() {
             console.log('🎤 Creating speech recognition for START TALKING page...');
             
@@ -954,33 +959,46 @@
 
             speechRecognition.onstart = () => {
                 console.log('🎤 ✅ Speech recognition started');
+                speechStarting = false;
                 appState.speechRecognitionActive = true;
                 updateUI();
             };
 
             speechRecognition.onend = () => {
                 console.log('🎤 Speech recognition ended');
+                speechStarting = false;
                 appState.speechRecognitionActive = false;
                 updateUI();
                 
-                // FIXED: Only restart if we're still on speech page and not manually stopped
+                // Clear any pending restart
+                if (speechRestartTimeout) {
+                    clearTimeout(speechRestartTimeout);
+                    speechRestartTimeout = null;
+                }
+                
+                // STABLE: Only restart if conditions are met and not already restarting
                 if (!appState.userStoppedManually && appState.speechPageActive && 
-                    !appState.isCurrentlySpeaking) {
-                    console.log('🔄 Auto-restart speech recognition');
-                    setTimeout(() => {
+                    !appState.isCurrentlySpeaking && !speechStarting) {
+                    speechRestartTimeout = setTimeout(() => {
                         if (!appState.speechRecognitionActive && !appState.userStoppedManually && 
-                            appState.speechPageActive && !appState.isCurrentlySpeaking) {
+                            appState.speechPageActive && !appState.isCurrentlySpeaking && !speechStarting) {
+                            console.log('🔄 Auto-restart speech recognition');
                             startSpeechRecognition();
                         }
-                    }, 300);
+                        speechRestartTimeout = null;
+                    }, 1000);
                 }
             };
 
             speechRecognition.onerror = (event) => {
                 console.log('🎤 Speech recognition error:', event.error);
+                speechStarting = false;
                 if (event.error === 'not-allowed') {
                     appState.userStoppedManually = true;
                     showPermissionError();
+                } else if (event.error === 'network') {
+                    // Don't restart on network errors
+                    console.log('🎤 Network error - not restarting');
                 }
             };
 
@@ -1007,30 +1025,43 @@
 
             commandRecognition.onstart = () => {
                 console.log('🎯 Command recognition started');
+                commandStarting = false;
                 appState.commandRecognitionActive = true;
                 updateVoiceCommandStatus('ready');
             };
 
             commandRecognition.onend = () => {
                 console.log('🎯 Command recognition ended');
+                commandStarting = false;
                 appState.commandRecognitionActive = false;
                 updateVoiceCommandStatus('inactive');
                 
-                // FIXED: Auto-restart command recognition after delay
-                if (!appState.isCurrentlySpeaking) {
-                    setTimeout(() => {
-                        if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking) {
+                // Clear any pending restart
+                if (commandRestartTimeout) {
+                    clearTimeout(commandRestartTimeout);
+                    commandRestartTimeout = null;
+                }
+                
+                // STABLE: Only restart if not speaking and not already restarting
+                if (!appState.isCurrentlySpeaking && !commandStarting) {
+                    commandRestartTimeout = setTimeout(() => {
+                        if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
                             console.log('🔄 Auto-restart command recognition');
                             startCommandRecognition();
                         }
-                    }, 1000);
+                        commandRestartTimeout = null;
+                    }, 2000); // Longer delay to prevent pinging
                 }
             };
 
             commandRecognition.onerror = (event) => {
                 console.log('🎯 Command recognition error:', event.error);
+                commandStarting = false;
                 if (event.error === 'not-allowed') {
                     showPermissionError();
+                } else if (event.error === 'network') {
+                    // Don't restart on network errors
+                    console.log('🎯 Network error - not restarting');
                 }
             };
 
@@ -1044,15 +1075,17 @@
         function startSpeechRecognition() {
             console.log('🎤 Starting speech recognition...');
             
-            if (appState.speechRecognitionActive || appState.isCurrentlySpeaking) {
-                console.log('🎤 Speech recognition already active or currently speaking');
+            if (appState.speechRecognitionActive || appState.isCurrentlySpeaking || speechStarting) {
+                console.log('🎤 Speech recognition already active or starting');
                 return;
             }
             
+            speechStarting = true;
             appState.userStoppedManually = false;
             
             if (!createSpeechRecognition()) {
                 console.error('❌ Cannot create speech recognition');
+                speechStarting = false;
                 return;
             }
             
@@ -1060,19 +1093,23 @@
                 speechRecognition.start();
             } catch (error) {
                 console.error('❌ Speech recognition start failed:', error);
+                speechStarting = false;
             }
         }
 
         function startCommandRecognition() {
             console.log('🎯 Starting command recognition...');
             
-            if (appState.commandRecognitionActive || appState.isCurrentlySpeaking) {
-                console.log('🎯 Command recognition already active or currently speaking');
+            if (appState.commandRecognitionActive || appState.isCurrentlySpeaking || commandStarting) {
+                console.log('🎯 Command recognition already active or starting');
                 return;
             }
             
+            commandStarting = true;
+            
             if (!createCommandRecognition()) {
                 console.error('❌ Cannot create command recognition');
+                commandStarting = false;
                 return;
             }
             
@@ -1080,6 +1117,7 @@
                 commandRecognition.start();
             } catch (error) {
                 console.error('❌ Command recognition start failed:', error);
+                commandStarting = false;
             }
         }
 
@@ -1088,11 +1126,16 @@
             
             appState.userStoppedManually = true;
             appState.speechPageActive = false;
+            speechStarting = false;
             
-            // Clear speech page timeout
+            // Clear timeouts
             if (speechPageTimeout) {
                 clearTimeout(speechPageTimeout);
                 speechPageTimeout = null;
+            }
+            if (speechRestartTimeout) {
+                clearTimeout(speechRestartTimeout);
+                speechRestartTimeout = null;
             }
             
             if (speechRecognition && appState.speechRecognitionActive) {
@@ -1106,6 +1149,14 @@
 
         function stopCommandRecognition() {
             console.log('🛑 Stopping command recognition...');
+            
+            commandStarting = false;
+            
+            // Clear timeout
+            if (commandRestartTimeout) {
+                clearTimeout(commandRestartTimeout);
+                commandRestartTimeout = null;
+            }
             
             if (commandRecognition && appState.commandRecognitionActive) {
                 try {
@@ -1370,14 +1421,22 @@
             restartCommandRecognitionAfterSpeaking();
         }
 
-        // FIXED: Restart command recognition after speaking
+        // FIXED: Restart command recognition after speaking - NO IMMEDIATE RESTART
         function restartCommandRecognitionAfterSpeaking() {
-            setTimeout(() => {
-                if (!appState.isCurrentlySpeaking && !appState.commandRecognitionActive) {
+            // Clear any existing restart timeout
+            if (commandRestartTimeout) {
+                clearTimeout(commandRestartTimeout);
+                commandRestartTimeout = null;
+            }
+            
+            // STABLE: Wait longer and check conditions before restarting
+            commandRestartTimeout = setTimeout(() => {
+                if (!appState.isCurrentlySpeaking && !appState.commandRecognitionActive && !commandStarting) {
                     console.log('🔄 Restarting command recognition after command execution');
                     startCommandRecognition();
                 }
-            }, 2000);
+                commandRestartTimeout = null;
+            }, 3000); // 3 seconds delay to prevent pinging
         }
 
         // === SPEECH PAGE HANDLING - FIXED WITH TIMEOUT ===
@@ -1495,14 +1554,22 @@
             }
         }
 
-        // === PAGE MANAGEMENT - FIXED SPEECH PAGE ACTIVATION ===
+        // === PAGE MANAGEMENT - STABLE SPEECH PAGE ACTIVATION ===
         function showPage(pageId) {
             console.log('📄 Showing page:', pageId);
             
-            // Clear any existing timeouts
+            // Clear timeouts
             if (speechPageTimeout) {
                 clearTimeout(speechPageTimeout);
                 speechPageTimeout = null;
+            }
+            if (speechRestartTimeout) {
+                clearTimeout(speechRestartTimeout);
+                speechRestartTimeout = null;
+            }
+            if (commandRestartTimeout) {
+                clearTimeout(commandRestartTimeout);
+                commandRestartTimeout = null;
             }
             
             // Update page state
@@ -1513,6 +1580,7 @@
             if (wasOnSpeechPage && pageId !== 'speech') {
                 if (speechRecognition && appState.speechRecognitionActive) {
                     appState.userStoppedManually = true;
+                    speechStarting = false;
                     try {
                         speechRecognition.stop();
                     } catch (e) {}
@@ -1528,40 +1596,49 @@
                 currentPage = pageId;
                 
                 if (pageId === 'speech') {
-                    console.log('🎤 ACTIVATING SPEECH PAGE');
+                    console.log('🎤 ACTIVATING SPEECH PAGE - STABLE VERSION');
                     
                     // Reset state for speech page
                     appState.phraseCount = 0;
                     appState.userStoppedManually = false;
+                    speechStarting = false;
                     
                     // Set initial display
                     const textEl = document.getElementById('recognizedText');
                     if (textEl) {
-                        textEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Ready for continuous speech!</div>';
+                        textEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Activating speech recognition...</div>';
                     }
                     
-                    // Start speech recognition immediately
+                    // STABLE: Start speech recognition with delay to prevent conflicts
                     setTimeout(() => {
-                        if (appState.speechPageActive && !appState.speechRecognitionActive && !appState.isCurrentlySpeaking) {
+                        if (appState.speechPageActive && !appState.speechRecognitionActive && 
+                            !appState.isCurrentlySpeaking && !speechStarting) {
                             console.log('🚀 Starting speech recognition for speech page');
                             startSpeechRecognition();
-                            resetSpeechPageTimeout(); // Start 2-minute timer
+                            
+                            // Set ready message after starting
+                            setTimeout(() => {
+                                if (appState.speechPageActive && textEl) {
+                                    textEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Ready for continuous speech!</div>';
+                                }
+                                resetSpeechPageTimeout(); // Start 2-minute timer
+                            }, 1000);
                         }
-                    }, 100);
+                    }, 500);
                     
-                    // Ensure command recognition is also running
+                    // STABLE: Ensure command recognition with longer delay
                     setTimeout(() => {
-                        if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking) {
+                        if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
                             startCommandRecognition();
                         }
-                    }, 200);
+                    }, 1500);
                 } else {
-                    // On other pages, make sure command recognition is running
+                    // STABLE: On other pages, ensure command recognition with delay
                     setTimeout(() => {
-                        if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking) {
+                        if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
                             startCommandRecognition();
                         }
-                    }, 300);
+                    }, 1000);
                 }
                 
                 if (pageId === 'phone') {
@@ -2512,29 +2589,31 @@ After enabling, the app will automatically start listening!`);
             }
         }
 
-        // === EVENT LISTENERS - SIMPLIFIED ===
+        // === EVENT LISTENERS - SIMPLIFIED STABLE VERSION ===
         document.addEventListener('DOMContentLoaded', initApp);
         window.addEventListener('load', () => { if (!isInitialized) initApp(); });
 
-        // SIMPLIFIED page visibility handling
+        // STABLE page visibility handling - NO CONSTANT RESTARTING
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
-                console.log('📱 Page visible - checking recognition status');
+                console.log('📱 Page visible - gentle recognition check');
                 
-                // Only restart if not currently active and not speaking
+                // STABLE: Only restart after longer delay and if really needed
                 setTimeout(() => {
-                    if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking) {
-                        console.log('🔄 Restarting command recognition');
+                    // Only restart command recognition if it's been off for a while
+                    if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
+                        console.log('🔄 Gentle restart of command recognition');
                         startCommandRecognition();
                     }
                     
+                    // Only restart speech recognition if on speech page and been off for a while
                     if (appState.speechPageActive && !appState.speechRecognitionActive && 
-                        !appState.userStoppedManually && !appState.isCurrentlySpeaking) {
-                        console.log('🔄 Restarting speech recognition for speech page');
+                        !appState.userStoppedManually && !appState.isCurrentlySpeaking && !speechStarting) {
+                        console.log('🔄 Gentle restart of speech recognition for speech page');
                         startSpeechRecognition();
                         resetSpeechPageTimeout();
                     }
-                }, 1000);
+                }, 3000); // Much longer delay to prevent constant pinging
             }
         });
 
