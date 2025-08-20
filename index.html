@@ -975,16 +975,16 @@
         let chunkTimer = null;
 
         // === PERMISSION MANAGEMENT - STOPS ALL PINGING ===
-        async function checkMicrophonePermission() {
-            console.log('🎤 Checking microphone permission...');
+        async function checkAndRequestMicrophonePermission() {
+            console.log('🎤 Automatically requesting microphone permission for accessibility...');
+            
+            if (permissionState.requesting) {
+                console.log('🎤 Permission request already in progress');
+                return false;
+            }
             
             try {
-                if (permissionState.requesting) {
-                    console.log('🎤 Permission request already in progress');
-                    return false;
-                }
-                
-                // Check if permission API is available
+                // First check if already granted
                 if ('permissions' in navigator) {
                     const permission = await navigator.permissions.query({ name: 'microphone' });
                     console.log('🎤 Permission state:', permission.state);
@@ -1000,8 +1000,10 @@
                     }
                 }
                 
-                // Fallback: try to get media stream to test permission
+                // ACCESSIBILITY: Automatically request permission 
+                console.log('🎤 Auto-requesting microphone access for accessibility...');
                 permissionState.requesting = true;
+                
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: { 
                         echoCancellation: false,
@@ -1010,14 +1012,14 @@
                     } 
                 });
                 
-                // Permission granted
-                stream.getTracks().forEach(track => track.stop()); // Clean up
+                // Permission granted - clean up test stream
+                stream.getTracks().forEach(track => track.stop());
                 permissionState.granted = true;
                 permissionState.denied = false;
                 permissionState.requesting = false;
                 permissionState.hasBeenRequested = true;
                 
-                console.log('✅ Microphone permission granted');
+                console.log('✅ Microphone permission auto-granted for accessibility');
                 return true;
                 
             } catch (error) {
@@ -1025,19 +1027,24 @@
                 permissionState.hasBeenRequested = true;
                 
                 if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-                    console.log('❌ Microphone permission denied');
+                    console.log('❌ Microphone permission denied by user');
                     permissionState.granted = false;
                     permissionState.denied = true;
                     return false;
                 } else {
-                    console.log('❌ Permission check failed:', error.name);
+                    console.log('❌ Permission request failed:', error.name);
                     return false;
                 }
             }
         }
 
+        // Backup function for any remaining references
+        async function checkMicrophonePermission() {
+            return await checkAndRequestMicrophonePermission();
+        }
+
         async function requestMicrophonePermission() {
-            console.log('🎤 Requesting microphone permission...');
+            console.log('🎤 User manually requesting microphone permission...');
             
             if (permissionState.requesting) {
                 console.log('🎤 Permission request already in progress');
@@ -1046,7 +1053,7 @@
             
             updateVoiceCommandStatus('permission-needed');
             
-            const hasPermission = await checkMicrophonePermission();
+            const hasPermission = await checkAndRequestMicrophonePermission();
             
             if (hasPermission) {
                 updateVoiceCommandStatus('ready');
@@ -1088,19 +1095,34 @@
                 isInitialized = true;
                 console.log('✅ Leslie Accessibility Assistant initialized successfully');
                 
-                // ACCESSIBILITY: Auto-start voice commands when permission available
+                // ACCESSIBILITY: Immediately request permission and start features
                 setTimeout(async () => {
-                    console.log('🎤 Checking microphone permission for accessibility features...');
-                    const hasPermission = await checkMicrophonePermission();
+                    console.log('🎤 Auto-requesting microphone permission for accessibility...');
+                    const hasPermission = await checkAndRequestMicrophonePermission();
                     
                     if (hasPermission) {
-                        console.log('✅ Permission available - starting voice commands for accessibility');
+                        console.log('✅ Permission granted - starting all accessibility features');
+                        
+                        // Start voice commands immediately
                         await startVoiceCommands();
+                        
+                        // Show success status
+                        updateVoiceCommandStatus('ready');
+                        console.log('🎯 Voice commands active and ready for accessibility');
+                        
                     } else {
-                        console.log('❌ No microphone permission - accessibility features need permission');
+                        console.log('❌ Permission denied - showing permission request');
                         updateVoiceCommandStatus('permission-needed');
+                        
+                        // Show user they need to grant permission
+                        if (!permissionState.hasBeenRequested) {
+                            console.log('🎤 Will try to request permission again');
+                            setTimeout(async () => {
+                                await checkAndRequestMicrophonePermission();
+                            }, 2000);
+                        }
                     }
-                }, 1000); // Quick start for accessibility
+                }, 500); // Very quick start for accessibility
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -2123,32 +2145,55 @@
                             textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} starting for accessibility...</div>`;
                         }
                         
-                        // ACCESSIBILITY: Auto-start speech recognition immediately
+                        // ACCESSIBILITY: Auto-request permission and start speech recognition
                         setTimeout(async () => {
                             if (!appState.speechPageActive) return;
                             
-                            console.log('🎤 Auto-starting speech recognition for accessibility');
-                            const hasPermission = await checkMicrophonePermission();
+                            console.log('🎤 Auto-requesting permission for speech page accessibility');
+                            const hasPermission = await checkAndRequestMicrophonePermission();
                             
                             if (hasPermission && appState.speechPageActive) {
                                 if (textEl) {
                                     const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                                    textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} READY - Speak your phrase!</div>`;
+                                    textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} STARTING - Get ready to speak!</div>`;
                                 }
                                 
+                                // Start speech recognition immediately for accessibility
                                 if (!appState.speechRecognitionActive && !appState.isCurrentlySpeaking && !appState.continuousRecording) {
                                     console.log('🚀 AUTO-STARTING speech recognition for accessibility');
                                     await startSpeechRecognition();
                                     resetSpeechPageTimeout();
+                                    
+                                    // Update display after starting
+                                    setTimeout(() => {
+                                        if (appState.speechPageActive && textEl) {
+                                            const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
+                                            textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} READY - Speak your phrase!</div>`;
+                                        }
+                                    }, 1000);
                                 }
+                                
+                                // Also start voice commands if not already running
+                                if (!appState.commandRecognitionActive) {
+                                    await startVoiceCommands();
+                                }
+                                
                             } else {
                                 if (textEl) {
-                                    textEl.innerHTML = `<div style="color: #cc0000; font-weight: bold; text-align: center; padding: 20px;">❌ Microphone permission needed for accessibility<br><br>Click status indicator to grant permission</div>`;
+                                    textEl.innerHTML = `<div style="color: #cc0000; font-weight: bold; text-align: center; padding: 20px;">❌ Microphone permission needed for accessibility<br><br>Please allow microphone access when prompted</div>`;
                                 }
                                 updateStatus('❌ Microphone permission needed for accessibility');
                                 updateVoiceCommandStatus('permission-needed');
+                                
+                                // Keep trying for accessibility
+                                setTimeout(async () => {
+                                    if (appState.speechPageActive && !permissionState.granted) {
+                                        console.log('🎤 Retrying permission request for accessibility');
+                                        await checkAndRequestMicrophonePermission();
+                                    }
+                                }, 3000);
                             }
-                        }, 500); // Quick start for accessibility
+                        }, 200); // Very quick start for accessibility
                     }
                     
                     if (pageId === 'phone') {
@@ -2298,7 +2343,7 @@
                         break;
                     case 'permission-needed':
                         statusEl.classList.add('permission-needed');
-                        statusEl.textContent = '🔴 Click to Allow Microphone';
+                        statusEl.textContent = '🔴 Allow Microphone for Accessibility';
                         statusEl.style.display = 'block';
                         statusEl.onclick = requestPermission;
                         break;
@@ -2316,26 +2361,26 @@
 
         function showPermissionError() {
             updateVoiceCommandStatus('permission-needed');
-            updateStatus('🔴 Microphone permission needed');
+            updateStatus('🔴 Microphone access needed for accessibility');
             
             const statusEl = document.getElementById('statusText');
             if (statusEl && appState.speechPageActive) {
                 statusEl.innerHTML = `<div style="color: #cc0000; text-align: center; font-weight: bold;">
-                    🎤 MICROPHONE ACCESS NEEDED<br><br>
-                    Click the "START" button below to grant permission<br>
-                    Then allow microphone access when prompted
+                    🎤 MICROPHONE ACCESS NEEDED FOR ACCESSIBILITY<br><br>
+                    The app will automatically request permission<br>
+                    Please ALLOW when prompted for accessibility features
                 </div>`;
             }
         }
 
         async function requestPermission() {
-            console.log('🎤 User requested microphone permission for accessibility');
+            console.log('🎤 User clicked to grant microphone permission for accessibility');
             
             try {
-                const hasPermission = await checkMicrophonePermission();
+                const hasPermission = await checkAndRequestMicrophonePermission();
                 
                 if (hasPermission) {
-                    console.log('✅ Permission granted - starting accessibility features');
+                    console.log('✅ Permission granted - starting all accessibility features');
                     appState.userStoppedManually = false;
                     
                     // ACCESSIBILITY: Start voice commands immediately
