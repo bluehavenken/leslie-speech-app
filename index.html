@@ -975,16 +975,16 @@
         let chunkTimer = null;
 
         // === PERMISSION MANAGEMENT - STOPS ALL PINGING ===
-        async function checkAndRequestMicrophonePermission() {
-            console.log('🎤 Automatically requesting microphone permission for accessibility...');
-            
-            if (permissionState.requesting) {
-                console.log('🎤 Permission request already in progress');
-                return false;
-            }
+        async function checkMicrophonePermission() {
+            console.log('🎤 Checking microphone permission...');
             
             try {
-                // First check if already granted
+                if (permissionState.requesting) {
+                    console.log('🎤 Permission request already in progress');
+                    return false;
+                }
+                
+                // Check if permission API is available
                 if ('permissions' in navigator) {
                     const permission = await navigator.permissions.query({ name: 'microphone' });
                     console.log('🎤 Permission state:', permission.state);
@@ -1000,10 +1000,8 @@
                     }
                 }
                 
-                // ACCESSIBILITY: Automatically request permission 
-                console.log('🎤 Auto-requesting microphone access for accessibility...');
+                // Fallback: try to get media stream to test permission
                 permissionState.requesting = true;
-                
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: { 
                         echoCancellation: false,
@@ -1012,14 +1010,14 @@
                     } 
                 });
                 
-                // Permission granted - clean up test stream
-                stream.getTracks().forEach(track => track.stop());
+                // Permission granted
+                stream.getTracks().forEach(track => track.stop()); // Clean up
                 permissionState.granted = true;
                 permissionState.denied = false;
                 permissionState.requesting = false;
                 permissionState.hasBeenRequested = true;
                 
-                console.log('✅ Microphone permission auto-granted for accessibility');
+                console.log('✅ Microphone permission granted');
                 return true;
                 
             } catch (error) {
@@ -1027,24 +1025,19 @@
                 permissionState.hasBeenRequested = true;
                 
                 if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-                    console.log('❌ Microphone permission denied by user');
+                    console.log('❌ Microphone permission denied');
                     permissionState.granted = false;
                     permissionState.denied = true;
                     return false;
                 } else {
-                    console.log('❌ Permission request failed:', error.name);
+                    console.log('❌ Permission check failed:', error.name);
                     return false;
                 }
             }
         }
 
-        // Backup function for any remaining references
-        async function checkMicrophonePermission() {
-            return await checkAndRequestMicrophonePermission();
-        }
-
         async function requestMicrophonePermission() {
-            console.log('🎤 User manually requesting microphone permission...');
+            console.log('🎤 Requesting microphone permission...');
             
             if (permissionState.requesting) {
                 console.log('🎤 Permission request already in progress');
@@ -1053,7 +1046,7 @@
             
             updateVoiceCommandStatus('permission-needed');
             
-            const hasPermission = await checkAndRequestMicrophonePermission();
+            const hasPermission = await checkMicrophonePermission();
             
             if (hasPermission) {
                 updateVoiceCommandStatus('ready');
@@ -1095,34 +1088,19 @@
                 isInitialized = true;
                 console.log('✅ Leslie Accessibility Assistant initialized successfully');
                 
-                // ACCESSIBILITY: Immediately request permission and start features
-                setTimeout(async () => {
-                    console.log('🎤 Auto-requesting microphone permission for accessibility...');
-                    const hasPermission = await checkAndRequestMicrophonePermission();
-                    
-                    if (hasPermission) {
-                        console.log('✅ Permission granted - starting all accessibility features');
-                        
-                        // Start voice commands immediately
-                        await startVoiceCommands();
-                        
-                        // Show success status
-                        updateVoiceCommandStatus('ready');
-                        console.log('🎯 Voice commands active and ready for accessibility');
-                        
-                    } else {
-                        console.log('❌ Permission denied - showing permission request');
-                        updateVoiceCommandStatus('permission-needed');
-                        
-                        // Show user they need to grant permission
-                        if (!permissionState.hasBeenRequested) {
-                            console.log('🎤 Will try to request permission again');
-                            setTimeout(async () => {
-                                await checkAndRequestMicrophonePermission();
-                            }, 2000);
-                        }
-                    }
-                }, 500); // Very quick start for accessibility
+                // ACCESSIBILITY: IMMEDIATE auto-start of voice commands
+                console.log('🎤 IMMEDIATELY checking permission and starting voice commands...');
+                
+                // Start immediately without delay for accessibility
+                const hasPermission = await checkMicrophonePermission();
+                
+                if (hasPermission) {
+                    console.log('✅ Permission available - IMMEDIATELY starting voice commands');
+                    await startVoiceCommands();
+                } else {
+                    console.log('❌ No permission - showing permission needed status');
+                    updateVoiceCommandStatus('permission-needed');
+                }
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -1522,73 +1500,43 @@
                 if (cmd.includes('home')) {
                     navigateToPage('home');
                     speak('Going to home page');
-                    // ACCESSIBILITY: Restart command recognition immediately
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    // Just update status back to ready - recognition should continue automatically
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('start talking') || cmd.includes('talking')) {
                     navigateToPage('speech');
                     speak('Starting speech recognition');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('start texting') || cmd.includes('texting')) {
                     navigateToPage('textInput');
                     speak('Opening text input');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('phone') || cmd.includes('contact')) {
                     navigateToPage('phone');
                     speak('Opening contacts');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('settings')) {
                     navigateToPage('settings');
                     speak('Opening settings');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('help') || cmd.includes('commands')) {
                     navigateToPage('commands');
                     speak('Showing voice commands');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
@@ -1596,48 +1544,28 @@
                 if (cmd.includes('weather') && !cmd.includes('close')) {
                     showCurrentWeather();
                     speak('Showing current weather');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('hourly')) {
                     showHourlyWeather();
                     speak('Showing hourly forecast');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('weekly') || cmd.includes('7 day')) {
                     showWeeklyWeather();
                     speak('Showing weekly forecast');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('close')) {
                     hideWeather();
                     speak('Closing weather');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
@@ -1645,24 +1573,14 @@
                 if (cmd.includes('free mode')) {
                     updateRecognitionMode('free');
                     speak('Switching to free mode');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('pro mode')) {
                     updateRecognitionMode('pro');
                     speak('Switching to pro mode');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
@@ -1670,82 +1588,47 @@
                 if (cmd.includes('speak faster')) {
                     adjustSpeechSpeed(0.2);
                     speak('Speech speed increased');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('speak slower')) {
                     adjustSpeechSpeed(-0.2);
                     speak('Speech speed decreased');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('pause more')) {
                     adjustPauseBetweenWords(0.3);
                     speak('Pause between words increased');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('pause less')) {
                     adjustPauseBetweenWords(-0.3);
                     speak('Pause between words decreased');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 if (cmd.includes('stop listening')) {
                     stopSpeechRecognition();
                     speak('Stopping speech recognition');
-                    setTimeout(() => {
-                        updateVoiceCommandStatus('ready');
-                        if (!appState.commandRecognitionActive && !permissionState.denied) {
-                            startVoiceCommands();
-                        }
-                    }, 100);
+                    setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                     return;
                 }
                 
                 // Unknown command
                 console.log('❓ Unknown command:', cmd);
                 speak('I did not understand that command');
-                setTimeout(() => {
-                    updateVoiceCommandStatus('ready');
-                    if (!appState.commandRecognitionActive && !permissionState.denied) {
-                        startVoiceCommands();
-                    }
-                }, 100);
+                setTimeout(() => updateVoiceCommandStatus('ready'), 100);
                 
             } catch (error) {
                 console.error('❌ Error executing command:', error);
                 updateVoiceCommandStatus('ready');
                 speak('Sorry, there was an error executing that command');
-                setTimeout(() => {
-                    if (!appState.commandRecognitionActive && !permissionState.denied) {
-                        startVoiceCommands();
-                    }
-                }, 100);
             }
         }
 
@@ -2137,6 +2020,7 @@
                         // Reset state for speech page
                         appState.phraseCount = 0;
                         appState.userStoppedManually = false;
+                        appState.speechPageActive = true; // Set this immediately
                         
                         // Set initial display
                         const textEl = document.getElementById('recognizedText');
@@ -2145,55 +2029,32 @@
                             textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} starting for accessibility...</div>`;
                         }
                         
-                        // ACCESSIBILITY: Auto-request permission and start speech recognition
+                        // ACCESSIBILITY: Auto-start speech recognition
                         setTimeout(async () => {
                             if (!appState.speechPageActive) return;
                             
-                            console.log('🎤 Auto-requesting permission for speech page accessibility');
-                            const hasPermission = await checkAndRequestMicrophonePermission();
+                            console.log('🎤 Auto-starting speech recognition for accessibility');
+                            const hasPermission = await checkMicrophonePermission();
                             
                             if (hasPermission && appState.speechPageActive) {
                                 if (textEl) {
                                     const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                                    textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} STARTING - Get ready to speak!</div>`;
+                                    textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} READY - Speak your phrase!</div>`;
                                 }
                                 
-                                // Start speech recognition immediately for accessibility
                                 if (!appState.speechRecognitionActive && !appState.isCurrentlySpeaking && !appState.continuousRecording) {
                                     console.log('🚀 AUTO-STARTING speech recognition for accessibility');
                                     await startSpeechRecognition();
                                     resetSpeechPageTimeout();
-                                    
-                                    // Update display after starting
-                                    setTimeout(() => {
-                                        if (appState.speechPageActive && textEl) {
-                                            const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                                            textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} READY - Speak your phrase!</div>`;
-                                        }
-                                    }, 1000);
                                 }
-                                
-                                // Also start voice commands if not already running
-                                if (!appState.commandRecognitionActive) {
-                                    await startVoiceCommands();
-                                }
-                                
                             } else {
                                 if (textEl) {
-                                    textEl.innerHTML = `<div style="color: #cc0000; font-weight: bold; text-align: center; padding: 20px;">❌ Microphone permission needed for accessibility<br><br>Please allow microphone access when prompted</div>`;
+                                    textEl.innerHTML = `<div style="color: #cc0000; font-weight: bold; text-align: center; padding: 20px;">❌ Microphone permission needed for accessibility<br><br>Click red status indicator above to grant permission</div>`;
                                 }
                                 updateStatus('❌ Microphone permission needed for accessibility');
                                 updateVoiceCommandStatus('permission-needed');
-                                
-                                // Keep trying for accessibility
-                                setTimeout(async () => {
-                                    if (appState.speechPageActive && !permissionState.granted) {
-                                        console.log('🎤 Retrying permission request for accessibility');
-                                        await checkAndRequestMicrophonePermission();
-                                    }
-                                }, 3000);
                             }
-                        }, 200); // Very quick start for accessibility
+                        }, 500); // Start after short delay
                     }
                     
                     if (pageId === 'phone') {
@@ -2219,9 +2080,17 @@
 
         function toggleListening() {
             try {
+                console.log('🎤 Toggle listening clicked - current state:', {
+                    speechRecognitionActive: appState.speechRecognitionActive,
+                    continuousRecording: appState.continuousRecording,
+                    speechPageActive: appState.speechPageActive
+                });
+                
                 if (appState.speechRecognitionActive || appState.continuousRecording) {
+                    console.log('🛑 Stopping speech recognition');
                     stopSpeechRecognition();
                 } else {
+                    console.log('🚀 Starting speech recognition for accessibility');
                     appState.userStoppedManually = false;
                     startSpeechRecognition();
                     resetSpeechPageTimeout();
@@ -2259,12 +2128,10 @@
                 const button = document.getElementById('listenButton');
                 if (button) {
                     if (appState.speechRecognitionActive || appState.continuousRecording) {
-                        button.textContent = 'LISTENING - ACCESSIBILITY MODE';
-                        button.className = 'control-btn btn-listen';
-                        button.style.backgroundColor = '#28a745'; // Green for active
+                        button.textContent = 'STOP LISTENING';
+                        button.className = 'control-btn btn-stop';
                     } else {
-                        const modeLabel = settings.recognitionMode === 'pro' ? 'PRO' : 'FREE';
-                        button.textContent = `START ${modeLabel} MODE`;
+                        button.textContent = 'START TALKING';
                         button.className = 'control-btn btn-listen';
                     }
                 }
@@ -2283,10 +2150,11 @@
                         statusEl.textContent = '🔊 Speaking phrase - Ready for next after speech';
                     } else if (appState.speechRecognitionActive || appState.continuousRecording) {
                         const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                        statusEl.textContent = `🎤 ${modeLabel}: CONTINUOUS for accessibility - Speak anytime!`;
+                        statusEl.textContent = `🎤 ${modeLabel}: LISTENING CONTINUOUSLY - Speak anytime!`;
+                    } else if (permissionState.denied) {
+                        statusEl.textContent = '🔴 Microphone permission needed - click red status indicator above';
                     } else {
-                        const modeLabel = settings.recognitionMode === 'pro' ? 'PRO MODE' : 'FREE MODE';
-                        statusEl.textContent = `🎤 ${modeLabel} ready for accessibility - Starting...`;
+                        statusEl.textContent = '🎤 Click "START TALKING" button below to begin listening';
                     }
                 }
             } catch (error) {
@@ -2343,7 +2211,7 @@
                         break;
                     case 'permission-needed':
                         statusEl.classList.add('permission-needed');
-                        statusEl.textContent = '🔴 Allow Microphone for Accessibility';
+                        statusEl.textContent = '🔴 Click to Allow Microphone';
                         statusEl.style.display = 'block';
                         statusEl.onclick = requestPermission;
                         break;
@@ -2361,26 +2229,26 @@
 
         function showPermissionError() {
             updateVoiceCommandStatus('permission-needed');
-            updateStatus('🔴 Microphone access needed for accessibility');
+            updateStatus('🔴 Microphone permission needed');
             
             const statusEl = document.getElementById('statusText');
             if (statusEl && appState.speechPageActive) {
                 statusEl.innerHTML = `<div style="color: #cc0000; text-align: center; font-weight: bold;">
-                    🎤 MICROPHONE ACCESS NEEDED FOR ACCESSIBILITY<br><br>
-                    The app will automatically request permission<br>
-                    Please ALLOW when prompted for accessibility features
+                    🎤 MICROPHONE ACCESS NEEDED<br><br>
+                    Click the "START" button below to grant permission<br>
+                    Then allow microphone access when prompted
                 </div>`;
             }
         }
 
         async function requestPermission() {
-            console.log('🎤 User clicked to grant microphone permission for accessibility');
+            console.log('🎤 User requested microphone permission for accessibility');
             
             try {
-                const hasPermission = await checkAndRequestMicrophonePermission();
+                const hasPermission = await checkMicrophonePermission();
                 
                 if (hasPermission) {
-                    console.log('✅ Permission granted - starting all accessibility features');
+                    console.log('✅ Permission granted - starting accessibility features');
                     appState.userStoppedManually = false;
                     
                     // ACCESSIBILITY: Start voice commands immediately
