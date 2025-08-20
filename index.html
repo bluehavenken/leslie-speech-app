@@ -1099,16 +1099,17 @@
                 const hasPermission = await checkMicrophonePermission();
                 
                 if (hasPermission) {
-                    console.log('✅ Permission granted - starting voice commands after delay');
-                    // Start command recognition with delay for accessibility - but only if permission granted
+                    console.log('✅ Permission granted - starting voice commands ONCE only');
+                    // Start command recognition ONCE with delay - NO RESTARTS
                     setTimeout(async () => {
                         try {
-                            console.log('🎯 SLOWLY starting initial command recognition with permission');
+                            console.log('🎯 Starting initial command recognition (ONE TIME ONLY)');
                             await startZeroPingCommandRecognition();
+                            console.log('🎯 Command recognition started - will NOT auto-restart');
                         } catch (error) {
                             console.error('❌ Error starting command recognition:', error);
                         }
-                    }, Math.max(10000, settings.pauseBetweenWords * 3000)); // 10+ seconds minimum startup delay
+                    }, 5000); // 5 second startup delay, then NO MORE RESTARTS
                 } else {
                     console.log('❌ No microphone permission - voice features will require manual activation');
                     updateVoiceCommandStatus('permission-needed');
@@ -1399,9 +1400,9 @@
             }
         }
 
-        // === TRUE ZERO-PING BROWSER SPEECH RECOGNITION (WITH PERMISSION CHECK) ===
+        // === TRUE ZERO-PING BROWSER SPEECH RECOGNITION (PROPER RESTART AFTER PHRASES) ===
         function createZeroPingSpeechRecognition() {
-            console.log('🎤 Creating TRUE zero-ping speech recognition...');
+            console.log('🎤 Creating speech recognition with proper phrase restart...');
             
             // CRITICAL: Don't create if permission denied
             if (permissionState.denied) {
@@ -1428,51 +1429,53 @@
                 speechRecognition.maxAlternatives = 1;
 
                 speechRecognition.onstart = () => {
-                    console.log('🎤 ✅ SILENT speech recognition started');
+                    console.log('🎤 ✅ Speech recognition started and listening');
                     speechStarting = false;
                     appState.speechRecognitionActive = true;
                     updateUI();
                     
-                    // Much longer restart timer for accessibility - very conservative
-                    if (settings.smartRestart && !permissionState.denied) {
-                        speechRestartTimer = setTimeout(() => {
-                            if (appState.speechRecognitionActive && appState.speechPageActive && !appState.isCurrentlySpeaking && !permissionState.denied) {
-                                console.log('🔄 Conservative silent restart');
-                                restartSpeechRecognitionSeamlessly();
-                            }
-                        }, 25000); // Much longer - 25 seconds before restart
+                    // Set status to show it's actively listening
+                    const statusEl = document.getElementById('statusText');
+                    if (statusEl && appState.speechPageActive) {
+                        const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
+                        statusEl.textContent = `🎤 ${modeLabel}: LISTENING - Say something!`;
                     }
+                    
+                    // NO automatic restart timer - let it run until it stops naturally
                 };
 
                 speechRecognition.onend = () => {
-                    console.log('🎤 Speech recognition ended - checking permission before restart');
+                    console.log('🎤 Speech recognition ended naturally');
                     speechStarting = false;
                     appState.speechRecognitionActive = false;
                     
-                    if (speechRestartTimer) {
-                        clearTimeout(speechRestartTimer);
-                        speechRestartTimer = null;
-                    }
+                    // Update status immediately
+                    updateUI();
                     
-                    // CRITICAL: Only restart if permission is still granted
+                    // CRITICAL: Only restart if on speech page and not manually stopped
                     if (!appState.userStoppedManually && appState.speechPageActive && !appState.isCurrentlySpeaking && !permissionState.denied) {
+                        console.log('🔄 Restarting speech recognition for next phrase');
+                        
+                        // Quick restart for next phrase (not a ping-causing restart)
                         setTimeout(() => {
-                            if (!appState.speechRecognitionActive && !speechStarting && !permissionState.denied) {
-                                console.log('🔄 SLOW silent restart (permission OK)');
+                            if (!appState.speechRecognitionActive && !speechStarting && appState.speechPageActive && !appState.userStoppedManually) {
+                                console.log('🔄 Starting speech recognition for next phrase');
                                 startZeroPingSpeechRecognition();
                             }
-                        }, Math.max(3000, settings.pauseBetweenWords * 1500)); // Much slower, respects accessibility timing
-                    } else if (permissionState.denied) {
-                        console.log('🛑 Not restarting - permission denied');
-                        updateStatus('❌ Microphone permission denied - please allow access');
+                        }, 1000); // Quick restart for next phrase
+                    } else {
+                        console.log('🛑 Not restarting speech recognition');
+                        const statusEl = document.getElementById('statusText');
+                        if (statusEl && appState.speechPageActive) {
+                            statusEl.textContent = '🛑 Click "START FREE MODE" to begin listening';
+                        }
                     }
-                    
-                    updateUI();
                 };
 
                 speechRecognition.onerror = (event) => {
-                    console.log('🎤 Speech recognition error (silent):', event.error);
+                    console.log('🎤 Speech recognition error:', event.error);
                     speechStarting = false;
+                    appState.speechRecognitionActive = false;
                     
                     // CRITICAL: Stop all attempts if permission denied
                     if (event.error === 'not-allowed') {
@@ -1480,26 +1483,21 @@
                         permissionState.granted = false;
                         permissionState.denied = true;
                         appState.userStoppedManually = true; // Prevent restart attempts
-                        
-                        // Clear any restart timers
-                        if (speechRestartTimer) {
-                            clearTimeout(speechRestartTimer);
-                            speechRestartTimer = null;
-                        }
-                        
                         showPermissionError();
                         return; // Don't attempt any retries
                     }
                     
-                    // For other errors, only retry if permission is still OK
-                    if (!permissionState.denied && (event.error === 'network' || event.error === 'audio-capture')) {
-                        console.log('🎤 Network/audio error - will retry slowly if permission OK');
+                    // For other errors, only restart if still on speech page and not manually stopped
+                    if (!permissionState.denied && appState.speechPageActive && !appState.userStoppedManually) {
+                        console.log('🎤 Non-permission error - will restart for speech page');
                         setTimeout(() => {
                             if (appState.speechPageActive && !appState.userStoppedManually && !permissionState.denied) {
                                 startZeroPingSpeechRecognition();
                             }
-                        }, Math.max(5000, settings.pauseBetweenWords * 2000));
+                        }, 2000); // Short delay for error recovery
                     }
+                    
+                    updateUI();
                 };
 
                 speechRecognition.onresult = (event) => {
@@ -1510,7 +1508,7 @@
                     }
                 };
                 
-                console.log('✅ SILENT speech recognition created successfully');
+                console.log('✅ Speech recognition created with proper restart logic');
                 return true;
                 
             } catch (error) {
@@ -1520,7 +1518,7 @@
         }
 
         function createZeroPingCommandRecognition() {
-            console.log('🎯 Creating TRUE zero-ping command recognition...');
+            console.log('🎯 Creating STABLE command recognition (no restarts)...');
             
             // CRITICAL: Don't create if permission denied
             if (permissionState.denied) {
@@ -1547,87 +1545,54 @@
                 commandRecognition.maxAlternatives = 1;
 
                 commandRecognition.onstart = () => {
-                    console.log('🎯 SILENT command recognition started');
+                    console.log('🎯 STABLE command recognition started - NO AUTO RESTART');
                     commandStarting = false;
                     appState.commandRecognitionActive = true;
                     updateVoiceCommandStatus('ready');
                     
-                    // Very conservative restart timer for commands
-                    if (settings.smartRestart && !permissionState.denied) {
-                        commandRestartTimer = setTimeout(() => {
-                            if (appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !permissionState.denied) {
-                                console.log('🔄 Conservative silent command restart');
-                                restartCommandRecognitionSeamlessly();
-                            }
-                        }, 45000); // Much longer - 45 seconds for commands
-                    }
+                    // NO automatic restart timer - let it run continuously
+                    console.log('🎯 Command recognition will run continuously without restarts');
                 };
 
                 commandRecognition.onend = () => {
-                    console.log('🎯 Command recognition ended - checking permission before restart');
+                    console.log('🎯 Command recognition ended - MANUAL RESTART ONLY');
                     commandStarting = false;
                     appState.commandRecognitionActive = false;
-                    
-                    if (commandRestartTimer) {
-                        clearTimeout(commandRestartTimer);
-                        commandRestartTimer = null;
-                    }
-                    
-                    // CRITICAL: Only restart if permission is still granted
-                    if (!appState.isCurrentlySpeaking && !permissionState.denied) {
-                        setTimeout(() => {
-                            if (!appState.commandRecognitionActive && !commandStarting && !permissionState.denied) {
-                                console.log('🔄 SLOW silent command restart (permission OK)');
-                                startZeroPingCommandRecognition();
-                            }
-                        }, Math.max(5000, settings.pauseBetweenWords * 2000)); // Much slower
-                    } else if (permissionState.denied) {
-                        console.log('🛑 Not restarting commands - permission denied');
-                    }
-                    
                     updateVoiceCommandStatus('inactive');
+                    
+                    // NO automatic restart - only restart manually when needed
+                    console.log('🎯 Command recognition stopped - no automatic restart to prevent pings');
                 };
 
                 commandRecognition.onerror = (event) => {
-                    console.log('🎯 Command recognition error (silent):', event.error);
+                    console.log('🎯 Command recognition error:', event.error);
                     commandStarting = false;
+                    appState.commandRecognitionActive = false;
                     
                     // CRITICAL: Stop all attempts if permission denied
                     if (event.error === 'not-allowed') {
                         console.log('🛑 PERMISSION DENIED - stopping all command recognition attempts');
                         permissionState.granted = false;
                         permissionState.denied = true;
-                        
-                        // Clear any restart timers
-                        if (commandRestartTimer) {
-                            clearTimeout(commandRestartTimer);
-                            commandRestartTimer = null;
-                        }
-                        
                         showPermissionError();
                         return; // Don't attempt any retries
                     }
                     
-                    // For other errors, only retry if permission is still OK
-                    if (!permissionState.denied) {
-                        console.log('🎯 Command error - will retry very slowly if permission OK');
-                        setTimeout(() => {
-                            if (!appState.isCurrentlySpeaking && !permissionState.denied) {
-                                startZeroPingCommandRecognition();
-                            }
-                        }, Math.max(10000, settings.pauseBetweenWords * 4000)); // Very slow retry
-                    }
+                    // For other errors, DO NOT auto-restart to prevent pings
+                    console.log('🎯 Command error - NO AUTO RESTART to prevent pings');
+                    updateVoiceCommandStatus('inactive');
                 };
 
                 commandRecognition.onresult = (event) => {
                     try {
+                        console.log('🎯 Command recognition got result');
                         processCommandResults(event);
                     } catch (error) {
                         console.error('❌ Error processing command results:', error);
                     }
                 };
                 
-                console.log('✅ SILENT command recognition created successfully');
+                console.log('✅ STABLE command recognition created (no auto-restart)');
                 return true;
                 
             } catch (error) {
@@ -1636,24 +1601,15 @@
             }
         }
 
+        // === RESTART FUNCTIONS (REMOVED TO ELIMINATE PINGS) ===
         function restartSpeechRecognitionSeamlessly() {
-            if (speechRecognition && appState.speechRecognitionActive) {
-                try {
-                    speechRecognition.stop();
-                } catch (e) {
-                    console.error('❌ Error stopping speech recognition:', e);
-                }
-            }
+            // REMOVED: This function was causing pings
+            console.log('🛑 Seamless restart disabled to prevent pings');
         }
 
         function restartCommandRecognitionSeamlessly() {
-            if (commandRecognition && appState.commandRecognitionActive) {
-                try {
-                    commandRecognition.stop();
-                } catch (e) {
-                    console.error('❌ Error stopping command recognition:', e);
-                }
-            }
+            // REMOVED: This function was causing the 5-10 second ping cycle
+            console.log('🛑 Command seamless restart disabled to prevent pings');
         }
 
         // === PRO MODE WHISPER INTEGRATION ===
@@ -2318,13 +2274,12 @@
         }
 
         function restartCommandRecognitionAfterSpeaking() {
-            // MUCH longer restart after voice commands to completely prevent ping sounds
-            setTimeout(() => {
-                if (!appState.isCurrentlySpeaking && !appState.commandRecognitionActive && !commandStarting) {
-                    console.log('🔄 VERY SLOW restart of command recognition after command execution');
-                    startZeroPingCommandRecognition();
-                }
-            }, Math.max(15000, settings.pauseBetweenWords * 5000)); // 15+ seconds minimum to prevent all pings
+            // COMPLETELY REMOVED AUTO-RESTART TO ELIMINATE PINGS
+            console.log('🔄 Command completed - NO AUTO RESTART to prevent pings');
+            console.log('🎯 Voice commands will need manual restart if needed');
+            
+            // Don't restart automatically - this was causing the 5-10 second ping cycle
+            // If voice commands stop working, user can refresh page or click a button to restart
         }
 
         // === SPEECH PAGE TIMEOUT (FIXED TO 2 MINUTES) ===
@@ -2430,7 +2385,7 @@
         }
 
         function speakAndClearAfter(text) {
-            console.log('🔊 Speaking and will clear:', text);
+            console.log('🔊 Speaking phrase and will restart listening:', text);
             
             try {
                 speechSynth.cancel();
@@ -2447,20 +2402,53 @@
                 
                 utterance.onend = () => {
                     appState.isCurrentlySpeaking = false;
-                    console.log('🔊 Finished speaking, clearing screen');
+                    console.log('🔊 Finished speaking phrase, restarting listening');
                     
                     setTimeout(() => {
+                        // Clear the display
                         clearSpeechDisplay();
-                        const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                        updateStatus(`🎤 ${modeLabel} ready for your next phrase...`);
+                        
+                        // Restart listening for next phrase if still on speech page
+                        if (appState.speechPageActive && !appState.userStoppedManually && !permissionState.denied) {
+                            const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
+                            updateStatus(`🎤 ${modeLabel} ready for your NEXT phrase...`);
+                            
+                            // Ensure speech recognition is running for next phrase
+                            if (!appState.speechRecognitionActive && !speechStarting && !appState.continuousRecording) {
+                                console.log('🔄 Restarting listening for next phrase');
+                                startSpeechRecognition();
+                            }
+                        }
+                        
                         updateVoiceCommandStatus('ready');
                     }, Math.max(500, settings.pauseBetweenWords * 200)); // Respect accessibility timing
+                };
+                
+                utterance.onerror = () => {
+                    appState.isCurrentlySpeaking = false;
+                    console.log('🔊 Speech error, restarting listening anyway');
+                    
+                    // Restart listening even if speech failed
+                    if (appState.speechPageActive && !appState.userStoppedManually && !permissionState.denied) {
+                        if (!appState.speechRecognitionActive && !speechStarting && !appState.continuousRecording) {
+                            startSpeechRecognition();
+                        }
+                    }
+                    updateVoiceCommandStatus('ready');
                 };
                 
                 speechSynth.speak(utterance);
             } catch (error) {
                 console.error('❌ Error speaking and clearing text:', error);
                 appState.isCurrentlySpeaking = false;
+                
+                // Even if speaking fails, restart listening
+                if (appState.speechPageActive && !appState.userStoppedManually && !permissionState.denied) {
+                    if (!appState.speechRecognitionActive && !speechStarting && !appState.continuousRecording) {
+                        startSpeechRecognition();
+                    }
+                }
+                updateVoiceCommandStatus('ready');
             }
         }
 
@@ -2579,23 +2567,31 @@
                             }
                         }, 1000);
                         
-                        // Start command recognition separately if permission allows
+                        // Start command recognition ONLY if not already running and permission allows
                         setTimeout(async () => {
                             if (appState.speechPageActive && !appState.commandRecognitionActive && 
                                 !appState.isCurrentlySpeaking && !commandStarting && !permissionState.denied) {
-                                console.log('🎯 SLOWLY starting command recognition on speech page');
+                                console.log('🎯 Starting command recognition for speech page (one time only)');
                                 await startZeroPingCommandRecognition();
+                            } else {
+                                console.log('🎯 Command recognition not started:', {
+                                    speechPageActive: appState.speechPageActive,
+                                    commandRecognitionActive: appState.commandRecognitionActive,
+                                    isCurrentlySpeaking: appState.isCurrentlySpeaking,
+                                    commandStarting: commandStarting,
+                                    permissionDenied: permissionState.denied
+                                });
                             }
-                        }, Math.max(8000, settings.pauseBetweenWords * 2000));
+                        }, 3000); // Single startup, no restarts
                     } else {
-                        // On other pages, slower command recognition startup
+                        // On other pages, start command recognition ONLY if not already running
                         setTimeout(async () => {
                             if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && 
                                 !commandStarting && !permissionState.denied) {
-                                console.log('🎯 SLOWLY starting command recognition for other page');
+                                console.log('🎯 Starting command recognition for other page (one time only)');
                                 await startZeroPingCommandRecognition();
                             }
-                        }, Math.max(5000, settings.pauseBetweenWords * 1500));
+                        }, 2000); // Single startup, no restarts
                     }
                     
                     if (pageId === 'phone') {
@@ -2688,10 +2684,10 @@
                         statusEl.textContent = '🔊 Speaking - Recognition paused';
                     } else if (appState.speechRecognitionActive || appState.continuousRecording) {
                         const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                        statusEl.textContent = `🎤 ${modeLabel}: Zero-ping continuous listening`;
+                        statusEl.textContent = `🎤 ${modeLabel}: LISTENING - Say something!`;
                     } else {
-                        const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                        statusEl.textContent = `🛑 Click "START ${modeLabel.toUpperCase()}" to begin`;
+                        const modeLabel = settings.recognitionMode === 'pro' ? 'PRO MODE' : 'FREE MODE';
+                        statusEl.textContent = `🛑 Click "START ${modeLabel}" to begin listening`;
                     }
                 }
             } catch (error) {
@@ -2708,10 +2704,13 @@
                 
                 let currentStatus = status;
                 if (!currentStatus) {
+                    // Only show 'ready' if command recognition is actually active
                     if (appState.isCurrentlySpeaking) {
                         currentStatus = 'speaking';
-                    } else if (appState.commandRecognitionActive) {
+                    } else if (appState.commandRecognitionActive && !permissionState.denied) {
                         currentStatus = 'ready';
+                    } else if (permissionState.denied) {
+                        currentStatus = 'permission-needed';
                     } else {
                         currentStatus = 'inactive';
                     }
@@ -2719,10 +2718,20 @@
                 
                 switch (currentStatus) {
                     case 'ready':
-                        statusEl.classList.add('ready');
-                        statusEl.textContent = '🟢 "Hey Leslie" Ready';
-                        statusEl.style.display = 'block';
-                        statusEl.onclick = null;
+                        // Only show ready if actually listening for commands
+                        if (appState.commandRecognitionActive && !permissionState.denied) {
+                            statusEl.classList.add('ready');
+                            statusEl.textContent = '🟢 "Hey Leslie" Listening';
+                            statusEl.style.display = 'block';
+                            statusEl.onclick = null;
+                        } else {
+                            // Not actually ready, show inactive
+                            statusEl.textContent = '⚫ Voice Commands Off';
+                            statusEl.style.display = 'block';
+                            statusEl.style.background = 'rgba(128, 128, 128, 0.9)';
+                            statusEl.style.color = 'white';
+                            statusEl.onclick = null;
+                        }
                         break;
                     case 'processing':
                         statusEl.classList.add('processing');
@@ -2742,7 +2751,7 @@
                         statusEl.style.display = 'block';
                         statusEl.onclick = requestPermission;
                         break;
-                    default:
+                    default: // inactive
                         statusEl.textContent = '⚫ Voice Commands Off';
                         statusEl.style.display = 'block';
                         statusEl.style.background = 'rgba(128, 128, 128, 0.9)';
@@ -3560,26 +3569,16 @@
             }
         }
 
-        // === PAGE VISIBILITY HANDLING (ULTRA CONSERVATIVE) ===
+        // === PAGE VISIBILITY HANDLING (NO AUTO-RESTART) ===
         function handleVisibilityChange() {
             try {
                 if (!document.hidden) {
-                    console.log('📱 Page visible - ULTRA SLOW restart to completely prevent pings');
+                    console.log('📱 Page visible - NO AUTO RESTART to prevent pings');
                     
-                    // ULTRA slow restart when page becomes visible - completely prevent sounds
-                    setTimeout(() => {
-                        if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
-                            console.log('🔄 Ultra slow restart of command recognition');
-                            startZeroPingCommandRecognition();
-                        }
-                        
-                        if (appState.speechPageActive && !appState.speechRecognitionActive && 
-                            !appState.userStoppedManually && !appState.isCurrentlySpeaking && !speechStarting && !appState.continuousRecording) {
-                            console.log('🔄 Ultra slow restart of speech recognition for speech page');
-                            startSpeechRecognition();
-                            resetSpeechPageTimeout();
-                        }
-                    }, Math.max(20000, settings.pauseBetweenWords * 8000)); // 20+ seconds minimum to eliminate all pings
+                    // DO NOT restart automatically when page becomes visible
+                    // This was a major source of the ping issues
+                    console.log('📱 Page is visible but no automatic restarts will occur');
+                    console.log('📱 If voice features stop working, user can refresh page');
                 }
             } catch (error) {
                 console.error('❌ Error handling visibility change:', error);
