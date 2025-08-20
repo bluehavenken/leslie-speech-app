@@ -1003,15 +1003,15 @@
                 isInitialized = true;
                 console.log('✅ Leslie Accessibility Assistant initialized successfully');
                 
-                // Start command recognition with MUCH slower timing for accessibility - prevent rapid sounds
+                // Start command recognition with ULTRA slow timing - completely prevent startup pings
                 setTimeout(() => {
                     try {
-                        console.log('🎯 SLOWLY starting initial command recognition');
+                        console.log('🎯 ULTRA SLOWLY starting initial command recognition');
                         startZeroPingCommandRecognition();
                     } catch (error) {
                         console.error('❌ Error starting command recognition:', error);
                     }
-                }, Math.max(5000, settings.pauseBetweenWords * 1500)); // Much slower initial startup
+                }, Math.max(10000, settings.pauseBetweenWords * 3000)); // 10+ seconds minimum startup delay
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -1019,14 +1019,36 @@
             }
         }
 
-        // === EVENT HANDLERS SETUP ===
+        // === ROBUST EVENT HANDLERS SETUP ===
         function setupEventHandlers() {
-            console.log('🔧 Setting up event handlers...');
+            console.log('🔧 Setting up ROBUST event handlers...');
             
             try {
-                // Navigation buttons - use addEventListener for better reliability
+                // Navigation buttons - EXTRA robust handling
                 const navButtons = [
-                    { id: 'btnStartTalking', action: () => navigateToPage('speech') },
+                    { id: 'btnStartTalking', action: () => {
+                        console.log('🎤 START TALKING clicked - forcing navigation');
+                        try {
+                            navigateToPage('speech');
+                        } catch (error) {
+                            console.error('❌ Navigation failed, trying direct:', error);
+                            // Force direct navigation
+                            document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+                            const speechPage = document.getElementById('speechPage');
+                            if (speechPage) {
+                                speechPage.classList.add('active');
+                                currentPage = 'speech';
+                                appState.speechPageActive = true;
+                                
+                                // Force start recognition
+                                setTimeout(() => {
+                                    if (!appState.speechRecognitionActive && !speechStarting) {
+                                        startSpeechRecognition();
+                                    }
+                                }, 1000);
+                            }
+                        }
+                    }},
                     { id: 'btnStartTexting', action: () => navigateToPage('textInput') },
                     { id: 'btnPhoneCall', action: () => navigateToPage('phone') },
                     { id: 'btnCommands', action: () => navigateToPage('commands') },
@@ -1036,18 +1058,40 @@
                 navButtons.forEach(btn => {
                     const element = document.getElementById(btn.id);
                     if (element) {
-                        element.addEventListener('click', (e) => {
+                        // Remove any existing listeners
+                        element.replaceWith(element.cloneNode(true));
+                        const newElement = document.getElementById(btn.id);
+                        
+                        // Add multiple event listeners for reliability
+                        newElement.addEventListener('click', (e) => {
                             e.preventDefault();
                             e.stopPropagation();
                             console.log('🔘 Navigation button clicked:', btn.id);
-                            btn.action();
+                            try {
+                                btn.action();
+                            } catch (error) {
+                                console.error('❌ Button action failed:', error);
+                                alert('Button failed. Please try again.');
+                            }
+                        });
+                        
+                        // Backup touch handler for mobile
+                        newElement.addEventListener('touchend', (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log('👆 Touch navigation:', btn.id);
+                            try {
+                                btn.action();
+                            } catch (error) {
+                                console.error('❌ Touch action failed:', error);
+                            }
                         });
                     } else {
                         console.warn('⚠️ Button not found:', btn.id);
                     }
                 });
                 
-                // Close buttons
+                // Close buttons - robust handling
                 const closeButtons = [
                     { id: 'btnCloseSpeech', action: () => navigateToPage('home') },
                     { id: 'btnClosePhone', action: () => navigateToPage('home') },
@@ -1068,7 +1112,7 @@
                     }
                 });
                 
-                // Home buttons
+                // Home buttons - robust handling
                 const homeButtons = [
                     'btnPhoneHome', 'btnTextHome', 'btnSettingsHome', 'btnCommandsHome'
                 ];
@@ -1084,14 +1128,24 @@
                     }
                 });
                 
-                // Speech page controls
+                // Speech page controls - EXTRA robust
                 const listenButton = document.getElementById('listenButton');
                 if (listenButton) {
                     listenButton.addEventListener('click', (e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        console.log('🎤 Listen button clicked');
-                        toggleListening();
+                        console.log('🎤 Listen button clicked - current state:', appState.speechRecognitionActive || appState.continuousRecording);
+                        try {
+                            toggleListening();
+                        } catch (error) {
+                            console.error('❌ Toggle listening failed:', error);
+                            // Force toggle
+                            if (appState.speechRecognitionActive || appState.continuousRecording) {
+                                stopSpeechRecognition();
+                            } else {
+                                startSpeechRecognition();
+                            }
+                        }
                     });
                 }
                 
@@ -1215,14 +1269,32 @@
             }
         }
 
-        // === PAGE NAVIGATION ===
+        // === PAGE NAVIGATION (FIXED) ===
         function navigateToPage(pageId) {
             console.log('📄 Navigating to page:', pageId);
             
             try {
+                // Force stop any sounds/recognition that might interfere
+                if (speechSynth) {
+                    speechSynth.cancel();
+                }
+                
                 showPage(pageId);
             } catch (error) {
                 console.error('❌ Error navigating to page:', pageId, error);
+                // Try direct navigation as fallback
+                try {
+                    document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+                    const targetPage = document.getElementById(pageId + 'Page');
+                    if (targetPage) {
+                        targetPage.classList.add('active');
+                        currentPage = pageId;
+                        console.log('✅ Fallback navigation successful');
+                    }
+                } catch (fallbackError) {
+                    console.error('❌ Fallback navigation failed:', fallbackError);
+                    alert('Navigation error. Please try again.');
+                }
             }
         }
 
@@ -1853,12 +1925,12 @@
             }
         }
 
-        // === VOICE COMMAND HANDLING WITH ACCESSIBILITY ===
         function isVoiceCommand(text) {
             const triggers = ['hey leslie', 'hey lesly', 'hey lesley'];
             return triggers.some(trigger => text.includes(trigger));
         }
 
+        // === VOICE COMMAND HANDLING (FIXED PROCESSING TIMEOUT) ===
         function handleVoiceCommand(text) {
             console.log('🎯 Processing voice command:', text);
             updateVoiceCommandStatus('processing');
@@ -1868,14 +1940,21 @@
                 console.log('📋 Extracted command:', command);
                 
                 if (command) {
+                    // Set a timeout to ensure we don't get stuck in processing mode
+                    setTimeout(() => {
+                        updateVoiceCommandStatus('ready');
+                    }, 3000); // Force back to ready after 3 seconds max
+                    
                     executeCommand(command);
                 } else {
                     console.log('❌ No command extracted');
+                    updateVoiceCommandStatus('ready'); // Go back to ready immediately
                     speak('I did not understand that command');
                     restartCommandRecognitionAfterSpeaking();
                 }
             } catch (error) {
                 console.error('❌ Error handling voice command:', error);
+                updateVoiceCommandStatus('ready'); // Go back to ready on error
                 speak('Sorry, there was an error processing that command');
                 restartCommandRecognitionAfterSpeaking();
             }
@@ -1899,8 +1978,12 @@
             console.log('⚡ Executing command:', cmd);
             
             try {
+                // Update status to show command is being executed
+                updateVoiceCommandStatus('processing');
+                
                 // Navigation commands
                 if (cmd.includes('home')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     navigateToPage('home');
                     speak('Going to home page');
                     restartCommandRecognitionAfterSpeaking();
@@ -1908,6 +1991,7 @@
                 }
                 
                 if (cmd.includes('start talking') || cmd.includes('talking')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     navigateToPage('speech');
                     speak('Starting speech recognition');
                     restartCommandRecognitionAfterSpeaking();
@@ -1915,6 +1999,7 @@
                 }
                 
                 if (cmd.includes('start texting') || cmd.includes('texting')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     navigateToPage('textInput');
                     speak('Opening text input');
                     restartCommandRecognitionAfterSpeaking();
@@ -1922,6 +2007,7 @@
                 }
                 
                 if (cmd.includes('phone') || cmd.includes('contact')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     navigateToPage('phone');
                     speak('Opening contacts');
                     restartCommandRecognitionAfterSpeaking();
@@ -1929,6 +2015,7 @@
                 }
                 
                 if (cmd.includes('settings')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     navigateToPage('settings');
                     speak('Opening settings');
                     restartCommandRecognitionAfterSpeaking();
@@ -1936,6 +2023,7 @@
                 }
                 
                 if (cmd.includes('help') || cmd.includes('commands')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     navigateToPage('commands');
                     speak('Showing voice commands');
                     restartCommandRecognitionAfterSpeaking();
@@ -1944,6 +2032,7 @@
                 
                 // Weather commands
                 if (cmd.includes('weather') && !cmd.includes('close')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     showCurrentWeather();
                     speak('Showing current weather');
                     restartCommandRecognitionAfterSpeaking();
@@ -1951,6 +2040,7 @@
                 }
                 
                 if (cmd.includes('hourly')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     showHourlyWeather();
                     speak('Showing hourly forecast');
                     restartCommandRecognitionAfterSpeaking();
@@ -1958,6 +2048,7 @@
                 }
                 
                 if (cmd.includes('weekly') || cmd.includes('7 day')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     showWeeklyWeather();
                     speak('Showing weekly forecast');
                     restartCommandRecognitionAfterSpeaking();
@@ -1965,6 +2056,7 @@
                 }
                 
                 if (cmd.includes('close')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     hideWeather();
                     speak('Closing weather');
                     restartCommandRecognitionAfterSpeaking();
@@ -1973,6 +2065,7 @@
                 
                 // Mode switching commands
                 if (cmd.includes('free mode')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     updateRecognitionMode('free');
                     speak('Switching to free mode');
                     restartCommandRecognitionAfterSpeaking();
@@ -1980,6 +2073,7 @@
                 }
                 
                 if (cmd.includes('pro mode')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     updateRecognitionMode('pro');
                     speak('Switching to pro mode');
                     restartCommandRecognitionAfterSpeaking();
@@ -1988,6 +2082,7 @@
                 
                 // Settings commands
                 if (cmd.includes('speak faster')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     adjustSpeechSpeed(0.2);
                     speak('Speech speed increased');
                     restartCommandRecognitionAfterSpeaking();
@@ -1995,6 +2090,7 @@
                 }
                 
                 if (cmd.includes('speak slower')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     adjustSpeechSpeed(-0.2);
                     speak('Speech speed decreased');
                     restartCommandRecognitionAfterSpeaking();
@@ -2002,6 +2098,7 @@
                 }
                 
                 if (cmd.includes('pause more')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     adjustPauseBetweenWords(0.3);
                     speak('Pause between words increased');
                     restartCommandRecognitionAfterSpeaking();
@@ -2009,6 +2106,7 @@
                 }
                 
                 if (cmd.includes('pause less')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     adjustPauseBetweenWords(-0.3);
                     speak('Pause between words decreased');
                     restartCommandRecognitionAfterSpeaking();
@@ -2016,6 +2114,7 @@
                 }
                 
                 if (cmd.includes('stop listening')) {
+                    updateVoiceCommandStatus('ready'); // Quick status update
                     stopSpeechRecognition();
                     speak('Stopping speech recognition');
                     restartCommandRecognitionAfterSpeaking();
@@ -2024,40 +2123,47 @@
                 
                 // Unknown command
                 console.log('❓ Unknown command:', cmd);
+                updateVoiceCommandStatus('ready'); // Quick status update
                 speak('I did not understand that command');
                 restartCommandRecognitionAfterSpeaking();
                 
             } catch (error) {
                 console.error('❌ Error executing command:', error);
+                updateVoiceCommandStatus('ready'); // Reset status on error
                 speak('Sorry, there was an error executing that command');
                 restartCommandRecognitionAfterSpeaking();
             }
         }
 
         function restartCommandRecognitionAfterSpeaking() {
-            // Much slower restart after voice commands to prevent rapid ping sounds
+            // MUCH longer restart after voice commands to completely prevent ping sounds
             setTimeout(() => {
                 if (!appState.isCurrentlySpeaking && !appState.commandRecognitionActive && !commandStarting) {
-                    console.log('🔄 SLOW restart of command recognition after command execution');
+                    console.log('🔄 VERY SLOW restart of command recognition after command execution');
                     startZeroPingCommandRecognition();
                 }
-            }, Math.max(8000, settings.pauseBetweenWords * 3000)); // Much slower restart after commands
+            }, Math.max(15000, settings.pauseBetweenWords * 5000)); // 15+ seconds minimum to prevent all pings
         }
 
-        // === SPEECH PAGE HANDLING WITH ACCESSIBILITY ===
+        // === SPEECH PAGE TIMEOUT (FIXED TO 2 MINUTES) ===
         function resetSpeechPageTimeout() {
             if (speechPageTimeout) {
                 clearTimeout(speechPageTimeout);
             }
             
             if (appState.speechPageActive) {
-                // Longer timeout for accessibility users
-                const timeoutDuration = Math.max(120000, settings.pauseBetweenWords * 60000); // 2 minutes minimum
+                console.log('⏱️ Setting 2-minute speech timeout');
+                // Exactly 2 minutes as requested
                 speechPageTimeout = setTimeout(() => {
-                    console.log('⏱️ Speech page timeout reached');
+                    console.log('⏱️ 2-minute speech timeout reached');
                     stopSpeechRecognition();
-                    updateStatus('⏱️ Session timed out - click START to resume');
-                }, timeoutDuration);
+                    updateStatus('⏱️ 2-minute timeout reached - click START to resume');
+                    
+                    const textEl = document.getElementById('recognizedText');
+                    if (textEl) {
+                        textEl.innerHTML = `<div style="color: #ff6600; font-weight: bold; text-align: center; padding: 20px;">⏱️ Session timed out after 2 minutes of no speech<br><br>Click "START" button to resume listening</div>`;
+                    }
+                }, 120000); // Exactly 2 minutes = 120,000 milliseconds
             }
         }
 
@@ -2239,7 +2345,7 @@
                     currentPage = pageId;
                     
                     if (pageId === 'speech') {
-                        console.log('🎤 ACTIVATING SPEECH PAGE - TRUE ZERO PING (SILENT)');
+                        console.log('🎤 ACTIVATING SPEECH PAGE - AUTO-LISTENING MODE');
                         
                         // Reset state for speech page
                         appState.phraseCount = 0;
@@ -2250,42 +2356,34 @@
                         const textEl = document.getElementById('recognizedText');
                         if (textEl) {
                             const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                            textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Preparing ${modeLabel} silent recognition...</div>`;
+                            textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} starting silent auto-listening...</div>`;
                         }
                         
-                        // MUCH SLOWER start for accessibility - no rapid fire sounds
-                        setTimeout(() => {
-                            if (appState.speechPageActive && textEl) {
-                                const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                                textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Starting ${modeLabel} (this may take a moment for true zero-ping)...</div>`;
-                            }
-                        }, Math.max(2000, settings.pauseBetweenWords * 800));
-                        
-                        // Very gradual start to prevent machine gun sounds
+                        // Start listening IMMEDIATELY when speech page opens (as required)
                         setTimeout(() => {
                             if (appState.speechPageActive && !appState.speechRecognitionActive && 
                                 !appState.isCurrentlySpeaking && !speechStarting && !appState.continuousRecording) {
-                                console.log('🚀 SLOWLY starting speech recognition for speech page');
+                                console.log('🚀 AUTO-STARTING speech recognition for speech page');
                                 startSpeechRecognition();
                                 
-                                // Even slower confirmation
+                                // Update display to show it's listening
                                 setTimeout(() => {
                                     if (appState.speechPageActive && textEl) {
                                         const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} ready for continuous speech!</div>`;
+                                        textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} LISTENING - Speak now!</div>`;
                                     }
-                                    resetSpeechPageTimeout();
-                                }, Math.max(3000, settings.pauseBetweenWords * 1000));
+                                    resetSpeechPageTimeout(); // 2 minute timeout as requested
+                                }, 1000);
                             }
-                        }, Math.max(4000, settings.pauseBetweenWords * 1500)); // Much slower initial start
+                        }, 1000); // Start quickly but not instantly
                         
-                        // Very slow command recognition start to prevent overlapping sounds
+                        // Start command recognition separately and more slowly to prevent conflicts
                         setTimeout(() => {
                             if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
-                                console.log('🎯 SLOWLY starting command recognition');
+                                console.log('🎯 SLOWLY starting command recognition on speech page');
                                 startZeroPingCommandRecognition();
                             }
-                        }, Math.max(8000, settings.pauseBetweenWords * 2000)); // Very slow command start
+                        }, Math.max(8000, settings.pauseBetweenWords * 2000)); // Keep commands slow to prevent ping conflicts
                     } else {
                         // On other pages, slower command recognition startup
                         setTimeout(() => {
@@ -2293,7 +2391,7 @@
                                 console.log('🎯 SLOWLY starting command recognition for other page');
                                 startZeroPingCommandRecognition();
                             }
-                        }, Math.max(3000, settings.pauseBetweenWords * 1000)); // Slower on other pages too
+                        }, Math.max(5000, settings.pauseBetweenWords * 1500)); // Slower on other pages
                     }
                     
                     if (pageId === 'phone') {
@@ -3246,26 +3344,26 @@ After enabling, the app will start zero-ping continuous listening!`);
             }
         }
 
-        // === PAGE VISIBILITY HANDLING ===
+        // === PAGE VISIBILITY HANDLING (ULTRA CONSERVATIVE) ===
         function handleVisibilityChange() {
             try {
                 if (!document.hidden) {
-                    console.log('📱 Page visible - VERY SLOW accessibility restart to prevent pings');
+                    console.log('📱 Page visible - ULTRA SLOW restart to completely prevent pings');
                     
-                    // Much slower restart when page becomes visible - prevent rapid fire sounds
+                    // ULTRA slow restart when page becomes visible - completely prevent sounds
                     setTimeout(() => {
                         if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
-                            console.log('🔄 Very slow restart of command recognition');
+                            console.log('🔄 Ultra slow restart of command recognition');
                             startZeroPingCommandRecognition();
                         }
                         
                         if (appState.speechPageActive && !appState.speechRecognitionActive && 
                             !appState.userStoppedManually && !appState.isCurrentlySpeaking && !speechStarting && !appState.continuousRecording) {
-                            console.log('🔄 Very slow restart of speech recognition for speech page');
+                            console.log('🔄 Ultra slow restart of speech recognition for speech page');
                             startSpeechRecognition();
                             resetSpeechPageTimeout();
                         }
-                    }, Math.max(8000, settings.pauseBetweenWords * 3000)); // Much slower visibility restart
+                    }, Math.max(20000, settings.pauseBetweenWords * 8000)); // 20+ seconds minimum to eliminate all pings
                 }
             } catch (error) {
                 console.error('❌ Error handling visibility change:', error);
