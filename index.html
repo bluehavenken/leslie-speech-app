@@ -604,7 +604,7 @@
                 <div class="welcome-text">
                     👋 Welcome to Leslie!<br><br>
                     Designed for accessibility and speech assistance:<br>
-                    <strong>🔇 TRUE Zero Pinging • ♿ Accessibility Focused</strong>
+                    <strong>♿ Accessibility Focused Speech Assistant</strong>
                 </div>
                 <button class="main-button btn-talking" id="btnStartTalking">
                     🎤 START TALKING
@@ -1088,19 +1088,9 @@
                 isInitialized = true;
                 console.log('✅ Leslie Accessibility Assistant initialized successfully');
                 
-                // FIXED: Start voice commands ONCE only, no auto-restart
-                setTimeout(async () => {
-                    console.log('🎤 Checking microphone permission before starting...');
-                    const hasPermission = await checkMicrophonePermission();
-                    
-                    if (hasPermission) {
-                        console.log('✅ Permission granted - starting voice commands (ONE TIME ONLY)');
-                        await startVoiceCommands();
-                    } else {
-                        console.log('❌ No microphone permission - voice features will require manual activation');
-                        updateVoiceCommandStatus('permission-needed');
-                    }
-                }, 2000); // Single start with delay, no restarts
+                // FIXED: NO AUTO-START of voice commands to prevent pings
+                console.log('🎯 Voice commands will start only when user grants permission');
+                updateVoiceCommandStatus('inactive');
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -1415,36 +1405,6 @@
         }
 
         // === FIXED RESULT PROCESSING ===
-        function processSpeechResults(event) {
-            if (appState.processingResults) return;
-            
-            try {
-                let interimText = '';
-                let finalText = '';
-                
-                for (let i = 0; i < event.results.length; i++) {
-                    const result = event.results[i];
-                    if (result.isFinal) {
-                        finalText += result[0].transcript;
-                    } else {
-                        interimText += result[0].transcript;
-                    }
-                }
-                
-                if (interimText.trim() && appState.speechPageActive) {
-                    showInterim(interimText.trim());
-                }
-                
-                if (finalText.trim()) {
-                    setTimeout(() => {
-                        handleSpeechPageResult(finalText.trim());
-                    }, settings.pauseBetweenWords * 500);
-                }
-            } catch (error) {
-                console.error('❌ Error processing speech results:', error);
-            }
-        }
-
         function processCommandResults(event) {
             try {
                 let finalText = '';
@@ -1464,35 +1424,6 @@
             } catch (error) {
                 console.error('❌ Error processing command results:', error);
             }
-        }
-
-        function handleSpeechPageResult(text) {
-            const now = Date.now();
-            
-            // Duplicate prevention
-            const duplicateThreshold = Math.max(2000, settings.pauseBetweenWords * 1000);
-            if (text === appState.lastResult && (now - appState.lastResultTime) < duplicateThreshold) {
-                console.log('🚫 Duplicate speech result ignored:', text);
-                return;
-            }
-            
-            appState.processingResults = true;
-            appState.lastResult = text;
-            appState.lastResultTime = now;
-            
-            console.log('📝 Speech page result:', text);
-            
-            appState.phraseCount++;
-            
-            // FIXED: Replace previous result instead of cascading
-            displaySpeechResult(text);
-            speakAndClearAfter(text);
-            
-            resetSpeechPageTimeout();
-            
-            setTimeout(() => {
-                appState.processingResults = false;
-            }, 1000);
         }
 
         function handleCommandResult(text) {
@@ -1781,81 +1712,11 @@
         }
 
         function speakAndClearAfter(text) {
-            console.log('🔊 Speaking phrase and will restart listening:', text);
-            
-            try {
-                speechSynth.cancel();
-                
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = settings.speechSpeed || 1.0;
-                utterance.lang = 'en-US';
-                
-                utterance.onstart = () => {
-                    appState.isCurrentlySpeaking = true;
-                    updateVoiceCommandStatus('speaking');
-                    updateStatus('🔊 Speaking: "' + text + '"');
-                };
-                
-                utterance.onend = () => {
-                    appState.isCurrentlySpeaking = false;
-                    console.log('🔊 Finished speaking phrase, ready for next');
-                    
-                    setTimeout(() => {
-                        // Clear the display and prepare for next phrase
-                        clearSpeechDisplay();
-                        
-                        // Restart listening for next phrase if still on speech page
-                        if (appState.speechPageActive && !appState.userStoppedManually && !permissionState.denied) {
-                            const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                            updateStatus(`🎤 ${modeLabel} ready for your NEXT phrase...`);
-                            
-                            // Start next phrase recognition
-                            if (!appState.speechRecognitionActive && !appState.continuousRecording) {
-                                console.log('🔄 Starting next phrase recognition');
-                                startSpeechRecognition();
-                            }
-                        }
-                        
-                        updateVoiceCommandStatus('ready');
-                    }, Math.max(500, settings.pauseBetweenWords * 200));
-                };
-                
-                utterance.onerror = () => {
-                    appState.isCurrentlySpeaking = false;
-                    console.log('🔊 Speech error, restarting listening anyway');
-                    
-                    if (appState.speechPageActive && !appState.userStoppedManually && !permissionState.denied) {
-                        if (!appState.speechRecognitionActive && !appState.continuousRecording) {
-                            startSpeechRecognition();
-                        }
-                    }
-                    updateVoiceCommandStatus('ready');
-                };
-                
-                speechSynth.speak(utterance);
-            } catch (error) {
-                console.error('❌ Error speaking and clearing text:', error);
-                appState.isCurrentlySpeaking = false;
-                
-                if (appState.speechPageActive && !appState.userStoppedManually && !permissionState.denied) {
-                    if (!appState.speechRecognitionActive && !appState.continuousRecording) {
-                        startSpeechRecognition();
-                    }
-                }
-                updateVoiceCommandStatus('ready');
-            }
+            // Removed - replaced by speakSinglePhrase
         }
 
         function clearSpeechDisplay() {
-            try {
-                const textEl = document.getElementById('recognizedText');
-                if (textEl && appState.speechPageActive) {
-                    const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                    textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 ${modeLabel} ready for your next phrase...</div>`;
-                }
-            } catch (error) {
-                console.error('❌ Error clearing speech display:', error);
-            }
+            // Removed - replaced by prepareFornextPhrase
         }
 
         // === ROBUST EVENT HANDLERS SETUP ===
@@ -2149,52 +2010,22 @@
                     currentPage = pageId;
                     
                     if (pageId === 'speech') {
-                        console.log('🎤 ACTIVATING SPEECH PAGE - AUTO-LISTENING MODE');
+                        console.log('🎤 SPEECH PAGE ACTIVATED - Manual Start Only');
                         
                         // Reset state for speech page
                         appState.phraseCount = 0;
                         appState.userStoppedManually = false;
                         
-                        // Set initial display
+                        // Set initial display - NO AUTO-START
                         const textEl = document.getElementById('recognizedText');
                         if (textEl) {
                             const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                            textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} checking permissions...</div>`;
+                            textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} ready - Click "START" button to begin</div>`;
                         }
                         
-                        // Start speech recognition automatically
-                        setTimeout(async () => {
-                            if (!appState.speechPageActive) return;
-                            
-                            console.log('🎤 Auto-starting speech recognition');
-                            const hasPermission = await checkMicrophonePermission();
-                            
-                            if (hasPermission && appState.speechPageActive) {
-                                if (textEl) {
-                                    const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                                    textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} starting auto-listening...</div>`;
-                                }
-                                
-                                if (!appState.speechRecognitionActive && !appState.isCurrentlySpeaking && !appState.continuousRecording) {
-                                    console.log('🚀 AUTO-STARTING speech recognition');
-                                    await startSpeechRecognition();
-                                    
-                                    setTimeout(() => {
-                                        if (appState.speechPageActive && textEl) {
-                                            const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                                            textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} LISTENING - Speak now!</div>`;
-                                        }
-                                        resetSpeechPageTimeout();
-                                    }, 1000);
-                                }
-                            } else {
-                                if (textEl) {
-                                    textEl.innerHTML = `<div style="color: #cc0000; font-weight: bold; text-align: center; padding: 20px;">❌ Microphone permission needed<br><br>Click "START" to grant permission</div>`;
-                                }
-                                updateStatus('❌ Microphone permission needed - click START button');
-                                updateVoiceCommandStatus('permission-needed');
-                            }
-                        }, 1000);
+                        // FIXED: NO AUTO-START - user must click button
+                        updateStatus('🔄 Click "START" button to begin listening');
+                        console.log('🎤 Speech page ready - NO AUTO-START to prevent pings');
                     }
                     
                     if (pageId === 'phone') {
@@ -2238,11 +2069,7 @@
                 const textEl = document.getElementById('recognizedText');
                 if (textEl) {
                     const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                    if (appState.speechRecognitionActive || appState.continuousRecording) {
-                        textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 ${modeLabel} ready for your next phrase...</div>`;
-                    } else {
-                        textEl.innerHTML = `<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for ${modeLabel} recognition...</div>`;
-                    }
+                    textEl.innerHTML = `<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">🔄 ${modeLabel} ready - Click "START" for next phrase</div>`;
                 }
             } catch (error) {
                 console.error('❌ Error clearing speech text:', error);
@@ -2387,13 +2214,17 @@
                     console.log('✅ Permission granted - starting speech systems');
                     appState.userStoppedManually = false;
                     
-                    // Start voice commands
+                    // Start voice commands ONLY after user grants permission
                     await startVoiceCommands();
                     
-                    // If on speech page, start speech recognition too
+                    // If on speech page, allow speech recognition
                     if (appState.speechPageActive) {
-                        await startSpeechRecognition();
-                        resetSpeechPageTimeout();
+                        updateStatus('🔄 Permission granted - Click "START" to begin listening');
+                        const textEl = document.getElementById('recognizedText');
+                        if (textEl) {
+                            const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
+                            textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">✅ Permission granted - Click "START" to begin ${modeLabel}</div>`;
+                        }
                     }
                 } else {
                     console.log('❌ Permission still denied');
