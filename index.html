@@ -935,6 +935,14 @@
         let isInitialized = false;
         let speechPageTimeout = null;
         
+        // PERMISSION STATE MANAGEMENT - CRITICAL FOR PREVENTING PINGS
+        let permissionState = {
+            granted: false,
+            denied: false,
+            requesting: false,
+            hasBeenRequested: false
+        };
+        
         // ZERO-PING STATE MANAGEMENT
         let appState = {
             speechRecognitionActive: false,
@@ -960,6 +968,89 @@
             voiceActivity: true
         };
 
+        // === PERMISSION MANAGEMENT - STOPS ALL PINGING ===
+        async function checkMicrophonePermission() {
+            console.log('🎤 Checking microphone permission...');
+            
+            try {
+                if (permissionState.requesting) {
+                    console.log('🎤 Permission request already in progress');
+                    return false;
+                }
+                
+                // Check if permission API is available
+                if ('permissions' in navigator) {
+                    const permission = await navigator.permissions.query({ name: 'microphone' });
+                    console.log('🎤 Permission state:', permission.state);
+                    
+                    if (permission.state === 'granted') {
+                        permissionState.granted = true;
+                        permissionState.denied = false;
+                        return true;
+                    } else if (permission.state === 'denied') {
+                        permissionState.granted = false;
+                        permissionState.denied = true;
+                        return false;
+                    }
+                }
+                
+                // Fallback: try to get media stream to test permission
+                permissionState.requesting = true;
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false 
+                    } 
+                });
+                
+                // Permission granted
+                stream.getTracks().forEach(track => track.stop()); // Clean up
+                permissionState.granted = true;
+                permissionState.denied = false;
+                permissionState.requesting = false;
+                permissionState.hasBeenRequested = true;
+                
+                console.log('✅ Microphone permission granted');
+                return true;
+                
+            } catch (error) {
+                permissionState.requesting = false;
+                permissionState.hasBeenRequested = true;
+                
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    console.log('❌ Microphone permission denied');
+                    permissionState.granted = false;
+                    permissionState.denied = true;
+                    return false;
+                } else {
+                    console.log('❌ Permission check failed:', error.name);
+                    return false;
+                }
+            }
+        }
+
+        async function requestMicrophonePermission() {
+            console.log('🎤 Requesting microphone permission...');
+            
+            if (permissionState.requesting) {
+                console.log('🎤 Permission request already in progress');
+                return false;
+            }
+            
+            updateVoiceCommandStatus('permission-needed');
+            
+            const hasPermission = await checkMicrophonePermission();
+            
+            if (hasPermission) {
+                updateVoiceCommandStatus('ready');
+                return true;
+            } else {
+                showPermissionError();
+                return false;
+            }
+        }
+
         // Zero-ping management
         let speechRestartTimer = null;
         let commandRestartTimer = null;
@@ -973,7 +1064,7 @@
         let chunkTimer = null;
 
         // === INITIALIZATION ===
-        function initApp() {
+        async function initApp() {
             console.log('🚀 Initializing Leslie Accessibility Speech Assistant...');
             
             if (isInitialized) {
@@ -1003,15 +1094,25 @@
                 isInitialized = true;
                 console.log('✅ Leslie Accessibility Assistant initialized successfully');
                 
-                // Start command recognition with ULTRA slow timing - completely prevent startup pings
-                setTimeout(() => {
-                    try {
-                        console.log('🎯 ULTRA SLOWLY starting initial command recognition');
-                        startZeroPingCommandRecognition();
-                    } catch (error) {
-                        console.error('❌ Error starting command recognition:', error);
-                    }
-                }, Math.max(10000, settings.pauseBetweenWords * 3000)); // 10+ seconds minimum startup delay
+                // CRITICAL: Check permission before starting any speech recognition
+                console.log('🎤 Checking microphone permission before starting...');
+                const hasPermission = await checkMicrophonePermission();
+                
+                if (hasPermission) {
+                    console.log('✅ Permission granted - starting voice commands after delay');
+                    // Start command recognition with delay for accessibility - but only if permission granted
+                    setTimeout(async () => {
+                        try {
+                            console.log('🎯 SLOWLY starting initial command recognition with permission');
+                            await startZeroPingCommandRecognition();
+                        } catch (error) {
+                            console.error('❌ Error starting command recognition:', error);
+                        }
+                    }, Math.max(10000, settings.pauseBetweenWords * 3000)); // 10+ seconds minimum startup delay
+                } else {
+                    console.log('❌ No microphone permission - voice features will require manual activation');
+                    updateVoiceCommandStatus('permission-needed');
+                }
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -1298,9 +1399,15 @@
             }
         }
 
-        // === TRUE ZERO-PING BROWSER SPEECH RECOGNITION (SILENT) ===
+        // === TRUE ZERO-PING BROWSER SPEECH RECOGNITION (WITH PERMISSION CHECK) ===
         function createZeroPingSpeechRecognition() {
             console.log('🎤 Creating TRUE zero-ping speech recognition...');
+            
+            // CRITICAL: Don't create if permission denied
+            if (permissionState.denied) {
+                console.log('❌ Cannot create speech recognition - permission denied');
+                return false;
+            }
             
             if (speechRecognition) {
                 console.log('✅ Speech recognition already exists');
@@ -1327,9 +1434,9 @@
                     updateUI();
                     
                     // Much longer restart timer for accessibility - very conservative
-                    if (settings.smartRestart) {
+                    if (settings.smartRestart && !permissionState.denied) {
                         speechRestartTimer = setTimeout(() => {
-                            if (appState.speechRecognitionActive && appState.speechPageActive && !appState.isCurrentlySpeaking) {
+                            if (appState.speechRecognitionActive && appState.speechPageActive && !appState.isCurrentlySpeaking && !permissionState.denied) {
                                 console.log('🔄 Conservative silent restart');
                                 restartSpeechRecognitionSeamlessly();
                             }
@@ -1338,7 +1445,7 @@
                 };
 
                 speechRecognition.onend = () => {
-                    console.log('🎤 Speech recognition ended - SLOW silent restart');
+                    console.log('🎤 Speech recognition ended - checking permission before restart');
                     speechStarting = false;
                     appState.speechRecognitionActive = false;
                     
@@ -1347,14 +1454,17 @@
                         speechRestartTimer = null;
                     }
                     
-                    // MUCH SLOWER restart for accessibility - no rapid fire restarts
-                    if (!appState.userStoppedManually && appState.speechPageActive && !appState.isCurrentlySpeaking) {
+                    // CRITICAL: Only restart if permission is still granted
+                    if (!appState.userStoppedManually && appState.speechPageActive && !appState.isCurrentlySpeaking && !permissionState.denied) {
                         setTimeout(() => {
-                            if (!appState.speechRecognitionActive && !speechStarting) {
-                                console.log('🔄 SLOW silent restart');
+                            if (!appState.speechRecognitionActive && !speechStarting && !permissionState.denied) {
+                                console.log('🔄 SLOW silent restart (permission OK)');
                                 startZeroPingSpeechRecognition();
                             }
                         }, Math.max(3000, settings.pauseBetweenWords * 1500)); // Much slower, respects accessibility timing
+                    } else if (permissionState.denied) {
+                        console.log('🛑 Not restarting - permission denied');
+                        updateStatus('❌ Microphone permission denied - please allow access');
                     }
                     
                     updateUI();
@@ -1364,25 +1474,31 @@
                     console.log('🎤 Speech recognition error (silent):', event.error);
                     speechStarting = false;
                     
-                    // Suppress error pings by being more patient
+                    // CRITICAL: Stop all attempts if permission denied
                     if (event.error === 'not-allowed') {
-                        appState.userStoppedManually = true;
+                        console.log('🛑 PERMISSION DENIED - stopping all speech recognition attempts');
+                        permissionState.granted = false;
+                        permissionState.denied = true;
+                        appState.userStoppedManually = true; // Prevent restart attempts
+                        
+                        // Clear any restart timers
+                        if (speechRestartTimer) {
+                            clearTimeout(speechRestartTimer);
+                            speechRestartTimer = null;
+                        }
+                        
                         showPermissionError();
-                    } else if (event.error === 'network' || event.error === 'audio-capture') {
-                        console.log('🎤 Network/audio error - will retry slowly');
-                        // Wait much longer before retry to avoid ping spam
+                        return; // Don't attempt any retries
+                    }
+                    
+                    // For other errors, only retry if permission is still OK
+                    if (!permissionState.denied && (event.error === 'network' || event.error === 'audio-capture')) {
+                        console.log('🎤 Network/audio error - will retry slowly if permission OK');
                         setTimeout(() => {
-                            if (appState.speechPageActive && !appState.userStoppedManually) {
+                            if (appState.speechPageActive && !appState.userStoppedManually && !permissionState.denied) {
                                 startZeroPingSpeechRecognition();
                             }
                         }, Math.max(5000, settings.pauseBetweenWords * 2000));
-                    } else {
-                        // For other errors, be very patient
-                        setTimeout(() => {
-                            if (appState.speechPageActive && !appState.userStoppedManually) {
-                                startZeroPingSpeechRecognition();
-                            }
-                        }, Math.max(8000, settings.pauseBetweenWords * 3000));
                     }
                 };
 
@@ -1405,6 +1521,12 @@
 
         function createZeroPingCommandRecognition() {
             console.log('🎯 Creating TRUE zero-ping command recognition...');
+            
+            // CRITICAL: Don't create if permission denied
+            if (permissionState.denied) {
+                console.log('❌ Cannot create command recognition - permission denied');
+                return false;
+            }
             
             if (commandRecognition) {
                 console.log('✅ Command recognition already exists');
@@ -1431,9 +1553,9 @@
                     updateVoiceCommandStatus('ready');
                     
                     // Very conservative restart timer for commands
-                    if (settings.smartRestart) {
+                    if (settings.smartRestart && !permissionState.denied) {
                         commandRestartTimer = setTimeout(() => {
-                            if (appState.commandRecognitionActive && !appState.isCurrentlySpeaking) {
+                            if (appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !permissionState.denied) {
                                 console.log('🔄 Conservative silent command restart');
                                 restartCommandRecognitionSeamlessly();
                             }
@@ -1442,7 +1564,7 @@
                 };
 
                 commandRecognition.onend = () => {
-                    console.log('🎯 Command recognition ended - SLOW silent restart');
+                    console.log('🎯 Command recognition ended - checking permission before restart');
                     commandStarting = false;
                     appState.commandRecognitionActive = false;
                     
@@ -1451,14 +1573,16 @@
                         commandRestartTimer = null;
                     }
                     
-                    // Very slow restart for commands - no rapid fire
-                    if (!appState.isCurrentlySpeaking) {
+                    // CRITICAL: Only restart if permission is still granted
+                    if (!appState.isCurrentlySpeaking && !permissionState.denied) {
                         setTimeout(() => {
-                            if (!appState.commandRecognitionActive && !commandStarting) {
-                                console.log('🔄 SLOW silent command restart');
+                            if (!appState.commandRecognitionActive && !commandStarting && !permissionState.denied) {
+                                console.log('🔄 SLOW silent command restart (permission OK)');
                                 startZeroPingCommandRecognition();
                             }
                         }, Math.max(5000, settings.pauseBetweenWords * 2000)); // Much slower
+                    } else if (permissionState.denied) {
+                        console.log('🛑 Not restarting commands - permission denied');
                     }
                     
                     updateVoiceCommandStatus('inactive');
@@ -1468,14 +1592,27 @@
                     console.log('🎯 Command recognition error (silent):', event.error);
                     commandStarting = false;
                     
-                    // Suppress error pings by being very patient
+                    // CRITICAL: Stop all attempts if permission denied
                     if (event.error === 'not-allowed') {
+                        console.log('🛑 PERMISSION DENIED - stopping all command recognition attempts');
+                        permissionState.granted = false;
+                        permissionState.denied = true;
+                        
+                        // Clear any restart timers
+                        if (commandRestartTimer) {
+                            clearTimeout(commandRestartTimer);
+                            commandRestartTimer = null;
+                        }
+                        
                         showPermissionError();
-                    } else {
-                        // For any other error, wait much longer before retry
-                        console.log('🎯 Command error - will retry very slowly');
+                        return; // Don't attempt any retries
+                    }
+                    
+                    // For other errors, only retry if permission is still OK
+                    if (!permissionState.denied) {
+                        console.log('🎯 Command error - will retry very slowly if permission OK');
                         setTimeout(() => {
-                            if (!appState.isCurrentlySpeaking) {
+                            if (!appState.isCurrentlySpeaking && !permissionState.denied) {
                                 startZeroPingCommandRecognition();
                             }
                         }, Math.max(10000, settings.pauseBetweenWords * 4000)); // Very slow retry
@@ -1712,9 +1849,16 @@
             return undefined;
         }
 
-        // === UNIFIED SPEECH RECOGNITION STARTER ===
-        function startSpeechRecognition() {
+        // === UNIFIED SPEECH RECOGNITION STARTER (WITH PERMISSION CHECK) ===
+        async function startSpeechRecognition() {
             console.log('🎤 Starting speech recognition in', settings.recognitionMode, 'mode...');
+            
+            // CRITICAL: Check permission first
+            if (permissionState.denied || (!permissionState.granted && !await checkMicrophonePermission())) {
+                console.log('❌ Cannot start speech recognition - no permission');
+                showPermissionError();
+                return;
+            }
             
             try {
                 if (settings.recognitionMode === 'pro') {
@@ -1727,11 +1871,24 @@
             }
         }
 
-        function startZeroPingSpeechRecognition() {
+        async function startZeroPingSpeechRecognition() {
             console.log('🆓 Starting Free Mode zero-ping recognition...');
             
             if (appState.speechRecognitionActive || appState.isCurrentlySpeaking || speechStarting) {
                 console.log('🎤 Speech recognition already active');
+                return;
+            }
+            
+            // CRITICAL: Check permission before attempting to start
+            if (permissionState.denied) {
+                console.log('❌ Cannot start - permission denied');
+                showPermissionError();
+                return;
+            }
+            
+            if (!permissionState.granted && !await checkMicrophonePermission()) {
+                console.log('❌ Cannot start - permission check failed');
+                showPermissionError();
                 return;
             }
             
@@ -1749,14 +1906,33 @@
             } catch (error) {
                 console.error('❌ Speech recognition start failed:', error);
                 speechStarting = false;
+                
+                if (error.name === 'NotAllowedError') {
+                    permissionState.denied = true;
+                    permissionState.granted = false;
+                    showPermissionError();
+                }
             }
         }
 
-        function startZeroPingCommandRecognition() {
+        async function startZeroPingCommandRecognition() {
             console.log('🎯 Starting zero-ping command recognition...');
             
             if (appState.commandRecognitionActive || appState.isCurrentlySpeaking || commandStarting) {
                 console.log('🎯 Command recognition already active');
+                return;
+            }
+            
+            // CRITICAL: Check permission before attempting to start
+            if (permissionState.denied) {
+                console.log('❌ Cannot start commands - permission denied');
+                updateVoiceCommandStatus('permission-needed');
+                return;
+            }
+            
+            if (!permissionState.granted && !await checkMicrophonePermission()) {
+                console.log('❌ Cannot start commands - permission check failed');
+                updateVoiceCommandStatus('permission-needed');
                 return;
             }
             
@@ -1773,6 +1949,12 @@
             } catch (error) {
                 console.error('❌ Command recognition start failed:', error);
                 commandStarting = false;
+                
+                if (error.name === 'NotAllowedError') {
+                    permissionState.denied = true;
+                    permissionState.granted = false;
+                    showPermissionError();
+                }
             }
         }
 
@@ -2356,42 +2538,64 @@
                         const textEl = document.getElementById('recognizedText');
                         if (textEl) {
                             const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                            textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} starting silent auto-listening...</div>`;
+                            textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} checking permissions...</div>`;
                         }
                         
-                        // Start listening IMMEDIATELY when speech page opens (as required)
-                        setTimeout(() => {
-                            if (appState.speechPageActive && !appState.speechRecognitionActive && 
-                                !appState.isCurrentlySpeaking && !speechStarting && !appState.continuousRecording) {
-                                console.log('🚀 AUTO-STARTING speech recognition for speech page');
-                                startSpeechRecognition();
+                        // Check permission before starting
+                        setTimeout(async () => {
+                            if (!appState.speechPageActive) return; // User might have navigated away
+                            
+                            console.log('🎤 Checking permission for speech page');
+                            const hasPermission = await checkMicrophonePermission();
+                            
+                            if (hasPermission && appState.speechPageActive) {
+                                if (textEl) {
+                                    const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
+                                    textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} starting auto-listening...</div>`;
+                                }
                                 
-                                // Update display to show it's listening
-                                setTimeout(() => {
-                                    if (appState.speechPageActive && textEl) {
-                                        const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
-                                        textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} LISTENING - Speak now!</div>`;
-                                    }
-                                    resetSpeechPageTimeout(); // 2 minute timeout as requested
-                                }, 1000);
+                                // Start listening with permission confirmed
+                                if (!appState.speechRecognitionActive && !appState.isCurrentlySpeaking && 
+                                    !speechStarting && !appState.continuousRecording) {
+                                    console.log('🚀 AUTO-STARTING speech recognition (permission confirmed)');
+                                    await startSpeechRecognition();
+                                    
+                                    // Update display to show it's listening
+                                    setTimeout(() => {
+                                        if (appState.speechPageActive && textEl) {
+                                            const modeLabel = settings.recognitionMode === 'pro' ? 'Pro Mode' : 'Free Mode';
+                                            textEl.innerHTML = `<div style="color: #28a745; font-weight: bold; text-align: center; padding: 20px;">🎤 ${modeLabel} LISTENING - Speak now!</div>`;
+                                        }
+                                        resetSpeechPageTimeout(); // 2 minute timeout as requested
+                                    }, 1000);
+                                }
+                            } else {
+                                // No permission
+                                if (textEl) {
+                                    textEl.innerHTML = `<div style="color: #cc0000; font-weight: bold; text-align: center; padding: 20px;">❌ Microphone permission needed<br><br>Click "START" to grant permission</div>`;
+                                }
+                                updateStatus('❌ Microphone permission needed - click START button');
+                                updateVoiceCommandStatus('permission-needed');
                             }
-                        }, 1000); // Start quickly but not instantly
+                        }, 1000);
                         
-                        // Start command recognition separately and more slowly to prevent conflicts
-                        setTimeout(() => {
-                            if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
+                        // Start command recognition separately if permission allows
+                        setTimeout(async () => {
+                            if (appState.speechPageActive && !appState.commandRecognitionActive && 
+                                !appState.isCurrentlySpeaking && !commandStarting && !permissionState.denied) {
                                 console.log('🎯 SLOWLY starting command recognition on speech page');
-                                startZeroPingCommandRecognition();
+                                await startZeroPingCommandRecognition();
                             }
-                        }, Math.max(8000, settings.pauseBetweenWords * 2000)); // Keep commands slow to prevent ping conflicts
+                        }, Math.max(8000, settings.pauseBetweenWords * 2000));
                     } else {
                         // On other pages, slower command recognition startup
-                        setTimeout(() => {
-                            if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && !commandStarting) {
+                        setTimeout(async () => {
+                            if (!appState.commandRecognitionActive && !appState.isCurrentlySpeaking && 
+                                !commandStarting && !permissionState.denied) {
                                 console.log('🎯 SLOWLY starting command recognition for other page');
-                                startZeroPingCommandRecognition();
+                                await startZeroPingCommandRecognition();
                             }
-                        }, Math.max(5000, settings.pauseBetweenWords * 1500)); // Slower on other pages
+                        }, Math.max(5000, settings.pauseBetweenWords * 1500));
                     }
                     
                     if (pageId === 'phone') {
@@ -2554,27 +2758,38 @@
             updateVoiceCommandStatus('permission-needed');
             updateStatus('🔴 Microphone permission needed');
             
-            alert(`🎤 MICROPHONE ACCESS NEEDED
-
-Leslie needs microphone access for accessibility features. Please:
-
-1. Look for the microphone icon in your browser's address bar
-2. Click it and select "Always allow" 
-3. Refresh the page
-
-After enabling, the app will start zero-ping continuous listening!`);
+            // Show permission instructions
+            const statusEl = document.getElementById('statusText');
+            if (statusEl && appState.speechPageActive) {
+                statusEl.innerHTML = `<div style="color: #cc0000; text-align: center; font-weight: bold;">
+                    🎤 MICROPHONE ACCESS NEEDED<br><br>
+                    Click the "START" button below to grant permission<br>
+                    Then allow microphone access when prompted
+                </div>`;
+            }
         }
 
         async function requestPermission() {
+            console.log('🎤 User requested microphone permission');
+            
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                stream.getTracks().forEach(track => track.stop());
+                const hasPermission = await checkMicrophonePermission();
                 
-                appState.userStoppedManually = false;
-                startZeroPingCommandRecognition();
-                if (appState.speechPageActive) {
-                    startSpeechRecognition();
-                    resetSpeechPageTimeout();
+                if (hasPermission) {
+                    console.log('✅ Permission granted - starting speech systems');
+                    appState.userStoppedManually = false;
+                    
+                    // Start command recognition first
+                    await startZeroPingCommandRecognition();
+                    
+                    // If on speech page, start speech recognition too
+                    if (appState.speechPageActive) {
+                        await startSpeechRecognition();
+                        resetSpeechPageTimeout();
+                    }
+                } else {
+                    console.log('❌ Permission still denied');
+                    showPermissionError();
                 }
             } catch (error) {
                 console.error('❌ Error requesting permission:', error);
@@ -3198,8 +3413,9 @@ After enabling, the app will start zero-ping continuous listening!`);
                 const label = document.getElementById('pauseBetweenWordsValue');
                 const slider = document.getElementById('pauseBetweenWordsSlider');
                 
+                const formattedValue = Math.round(parseFloat(value) * 10) / 10; // Fix: define formattedValue
+                
                 if (label) {
-                    const formattedValue = Math.round(parseFloat(value) * 10) / 10;
                     label.textContent = formattedValue + ' seconds';
                 }
                 if (slider) {
