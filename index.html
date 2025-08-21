@@ -746,7 +746,7 @@
                 <div style="font-size: 16px; line-height: 1.6; color: #333;">
                     <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #0099cc;">
                         <strong>🎤 Available Voice Commands</strong><br>
-                        <span style="font-size: 14px; color: #666;">Commands run with pauses between sessions to prevent notification sounds</span>
+                        <span style="font-size: 14px; color: #666;">Commands run with ultra-long pauses to prevent notification sounds</span>
                     </div>
                     
                     <div style="margin-bottom: 25px;">
@@ -802,8 +802,8 @@
                     <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107;">
                         <strong style="color: #856404;">♿ Accessibility Features</strong><br>
                         <div style="margin-top: 8px; font-size: 14px; color: #856404;">
-                            • <strong>Silent Operation:</strong> Long pauses between sessions prevent notification sounds<br>
-                            • <strong>Persistent Listening:</strong> Voice commands and speech recognition stay active<br>
+                            • <strong>Silent Operation:</strong> Ultra-long pauses between sessions prevent notification sounds<br>
+                            • <strong>Persistent Listening:</strong> Voice commands stay active between ultra-long intervals<br>
                             • <strong>Consistent Timing:</strong> "Pause Between Words" setting applies everywhere<br>
                             • <strong>Visual Feedback:</strong> Clear status indicators<br>
                             • <strong>Large Touch Targets:</strong> Easy button activation<br>
@@ -900,7 +900,7 @@
     <script>
         // === CORE VARIABLES ===
         let speechRecognition = null; // For speech page only
-        let commandRecognition = null; // For voice commands only - VERY LONG intervals
+        let commandRecognition = null; // For voice commands only - ULTRA LONG intervals
         let speechSynth = window.speechSynthesis;
         let currentPage = 'home';
         let contacts = [];
@@ -908,18 +908,20 @@
         let userLocation = null;
         let isInitialized = false;
         let commandRestartTimer = null;
+        let lastCommandProcessedTime = 0;
         
         // SIMPLE PERMISSION STATE
         let permissionGranted = false;
         
-        // SIMPLIFIED APP STATE
+        // SIMPLIFIED APP STATE WITH ANTI-CASCADING
         let appState = {
             speechListening: false,
             commandListening: false,
             speechPageActive: false,
             isCurrentlySpeaking: false,
-            speechProcessingResult: false, // Prevent cascading results
-            lastSpeechTime: 0
+            speechProcessingResult: false,
+            lastSpeechTime: 0,
+            speechResultCount: 0 // NEW: Track number of results to prevent cascading
         };
         
         // Settings
@@ -952,7 +954,7 @@
             }
         }
 
-        // === SPEECH PAGE RECOGNITION - MANUAL CONTROL, PROPER RESULT HANDLING ===
+        // === SPEECH PAGE RECOGNITION - MANUAL CONTROL, NO CASCADING ===
         async function startSpeechRecognition() {
             console.log('🎤 Starting manual speech recognition...');
             
@@ -966,7 +968,10 @@
                 return;
             }
             
-            appState.speechProcessingResult = false; // Reset processing flag
+            // RESET ALL CASCADING PREVENTION FLAGS
+            appState.speechProcessingResult = false;
+            appState.speechResultCount = 0;
+            appState.lastSpeechTime = Date.now();
             
             if (settings.recognitionMode === 'pro') {
                 await startProModeRecording();
@@ -983,10 +988,11 @@
                 if (speechRecognition) {
                     speechRecognition.stop();
                     speechRecognition = null;
+                    await new Promise(resolve => setTimeout(resolve, 100));
                 }
                 
                 speechRecognition = new SpeechRecognition();
-                speechRecognition.continuous = false; // Single phrase mode to prevent cascading
+                speechRecognition.continuous = false; // SINGLE PHRASE ONLY
                 speechRecognition.interimResults = true;
                 speechRecognition.lang = 'en-US';
                 speechRecognition.maxAlternatives = 1;
@@ -995,6 +1001,7 @@
                     console.log('🎤 Speech recognition started');
                     appState.speechListening = true;
                     appState.speechProcessingResult = false;
+                    appState.speechResultCount = 0; // RESET COUNTER
                     updateUI();
                     updateStatus('🎤 Listening - say your phrase...');
                 };
@@ -1014,6 +1021,7 @@
                     console.log('🎤 Speech error:', event.error);
                     appState.speechListening = false;
                     appState.speechProcessingResult = false;
+                    appState.speechResultCount = 0; // RESET ON ERROR
                     
                     if (event.error === 'not-allowed') {
                         showPermissionError();
@@ -1039,7 +1047,9 @@
         function stopSpeechRecognition() {
             console.log('🛑 Stopping speech recognition...');
             
+            // RESET ALL PROCESSING FLAGS
             appState.speechProcessingResult = false;
+            appState.speechResultCount = 0;
             
             // Stop Pro Mode
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -1056,9 +1066,9 @@
             updateStatus('🛑 Stopped - Click START TALKING to resume');
         }
 
-        // === VOICE COMMANDS - 5 MINUTE INTERVALS TO ELIMINATE PINGS ===
+        // === VOICE COMMANDS - ULTRA-LONG INTERVALS (15+ MINUTES) ===
         async function startVoiceCommands() {
-            console.log('🎯 Starting voice commands with 5-MINUTE intervals...');
+            console.log('🎯 Starting voice commands with ULTRA-LONG intervals (15+ minutes)...');
             
             if (appState.commandListening) {
                 console.log('Command recognition already active');
@@ -1077,6 +1087,7 @@
                 if (commandRecognition) {
                     commandRecognition.stop();
                     commandRecognition = null;
+                    await new Promise(resolve => setTimeout(resolve, 200));
                 }
                 
                 // Clear any existing restart timer
@@ -1086,30 +1097,30 @@
                 }
                 
                 commandRecognition = new SpeechRecognition();
-                commandRecognition.continuous = true;
-                commandRecognition.interimResults = false;
+                commandRecognition.continuous = true; // Keep listening for commands
+                commandRecognition.interimResults = false; // Only final results for commands
                 commandRecognition.lang = 'en-US';
 
                 commandRecognition.onstart = () => {
-                    console.log('🎯 Voice commands started');
+                    console.log('🎯 Voice commands started - ULTRA LONG intervals');
                     appState.commandListening = true;
                     updateVoiceCommandStatus('ready');
                 };
 
                 commandRecognition.onend = () => {
-                    console.log('🎯 Voice commands ended - 5 MINUTE restart delay');
+                    console.log('🎯 Voice commands ended - 15 MINUTE restart delay');
                     appState.commandListening = false;
                     
-                    // VERY LONG delay to eliminate pings - 5 minutes
+                    // ULTRA LONG delay to completely eliminate pings - 15 minutes
                     updateVoiceCommandStatus('ready');
-                    console.log('🔄 Next voice command restart in 5 minutes...');
+                    console.log('🔄 Next voice command restart in 15 minutes...');
                     
                     commandRestartTimer = setTimeout(() => {
                         if (!appState.isCurrentlySpeaking && commandRestartTimer) {
-                            console.log('🔄 Restarting voice commands after 5-minute delay');
+                            console.log('🔄 Restarting voice commands after 15-minute delay');
                             startVoiceCommands();
                         }
-                    }, 300000); // 5 minutes = 300,000ms
+                    }, 900000); // 15 minutes = 900,000ms
                 };
 
                 commandRecognition.onerror = (event) => {
@@ -1121,15 +1132,15 @@
                         return;
                     }
                     
-                    // Even longer delay after errors - 10 minutes
+                    // Even longer delay after errors - 30 minutes
                     updateVoiceCommandStatus('ready');
-                    console.log('🔄 Next voice command restart in 10 minutes after error...');
+                    console.log('🔄 Next voice command restart in 30 minutes after error...');
                     
                     commandRestartTimer = setTimeout(() => {
                         if (!appState.isCurrentlySpeaking && commandRestartTimer) {
                             startVoiceCommands();
                         }
-                    }, 600000); // 10 minutes = 600,000ms
+                    }, 1800000); // 30 minutes = 1,800,000ms
                 };
 
                 commandRecognition.onresult = (event) => {
@@ -1143,7 +1154,7 @@
             }
         }
 
-        // === RESULT PROCESSING - PREVENT CASCADING ===
+        // === RESULT PROCESSING - COMPLETE REPLACEMENT, NO CASCADING ===
         function processSpeechResults(event) {
             if (!appState.speechPageActive || appState.speechProcessingResult) return;
             
@@ -1160,49 +1171,61 @@
                     }
                 }
                 
-                // Show interim
+                // Show interim results (temporary, no cascading)
                 if (interimText.trim() && !appState.speechProcessingResult) {
                     showSpeechResult(interimText, true);
                 }
                 
-                // Process final result - PREVENT CASCADING
+                // Process final result with STRICT ANTI-CASCADING
                 if (finalText.trim() && !appState.speechProcessingResult) {
                     const text = finalText.trim();
                     const currentTime = Date.now();
                     
-                    // Prevent duplicate processing within 2 seconds
-                    if (currentTime - appState.lastSpeechTime < 2000) {
-                        console.log('🔄 Ignoring duplicate result');
+                    // Prevent rapid successive results (4 second minimum gap)
+                    if (currentTime - appState.lastSpeechTime < 4000) {
+                        console.log('🔄 Ignoring rapid successive result');
+                        return;
+                    }
+                    
+                    // INCREMENT RESULT COUNT AND BLOCK FURTHER PROCESSING
+                    appState.speechResultCount++;
+                    if (appState.speechResultCount > 1) {
+                        console.log('🔄 Ignoring cascaded result');
                         return;
                     }
                     
                     appState.lastSpeechTime = currentTime;
-                    appState.speechProcessingResult = true; // Block further processing
+                    appState.speechProcessingResult = true; // BLOCK ALL FURTHER PROCESSING
                     
                     console.log('🎤 Final speech result:', text);
                     
                     // Check if it's a voice command
                     if (isVoiceCommand(text.toLowerCase())) {
                         handleVoiceCommand(text.toLowerCase());
-                        appState.speechProcessingResult = false; // Reset for next
+                        resetSpeechProcessing();
                         return;
                     }
                     
-                    // Show final result and speak it
+                    // Show final result (COMPLETE REPLACEMENT) and speak it
                     showSpeechResult(text, false);
                     speakText(text);
                     
-                    // Reset processing flag after a delay
+                    // Reset processing after a longer delay
                     setTimeout(() => {
-                        appState.speechProcessingResult = false;
+                        resetSpeechProcessing();
                         updateStatus('✅ Ready for next phrase - Click START TALKING');
                         updateUI();
-                    }, 500);
+                    }, 1000);
                 }
             } catch (error) {
                 console.error('❌ Error processing speech results:', error);
-                appState.speechProcessingResult = false;
+                resetSpeechProcessing();
             }
+        }
+
+        function resetSpeechProcessing() {
+            appState.speechProcessingResult = false;
+            appState.speechResultCount = 0;
         }
 
         function processCommandResults(event) {
@@ -1218,6 +1241,15 @@
                 
                 if (finalText.trim()) {
                     const text = finalText.trim();
+                    const currentTime = Date.now();
+                    
+                    // Prevent rapid successive command processing (5 second minimum)
+                    if (currentTime - lastCommandProcessedTime < 5000) {
+                        console.log('🔄 Ignoring rapid successive command');
+                        return;
+                    }
+                    
+                    lastCommandProcessedTime = currentTime;
                     console.log('🎯 Command result:', text);
                     handleCommandResult(text);
                 }
@@ -1396,12 +1428,13 @@
         }
 
         function finishCommand() {
-            // Quick reset for next command
+            // Longer reset for next command to prevent rapid triggers
             setTimeout(() => {
                 updateVoiceCommandStatus('ready');
-            }, 1000);
+            }, 2000);
         }
 
+        // Show speech results with COMPLETE REPLACEMENT (no cascading)
         function showSpeechResult(text, isInterim) {
             if (!appState.speechPageActive) return;
             
@@ -1409,11 +1442,11 @@
             if (!textEl) return;
             
             if (isInterim) {
-                // Show interim (temporary)
+                // Show interim (temporary) - COMPLETE REPLACEMENT
                 textEl.innerHTML = `<div style="background: #fff8e1; padding: 8px; border-radius: 4px; color: #666; font-style: italic;">🎤 Speaking: "${text}"</div>`;
             } else {
-                // Show final result (replaces everything - NO ACCUMULATION)
-                textEl.innerHTML = `<div style="background: #e8f5e8; padding: 12px; border-radius: 6px; border-left: 4px solid #28a745;">${text}</div>`;
+                // Show final result - COMPLETE REPLACEMENT (not accumulation)
+                textEl.innerHTML = `<div style="background: #e8f5e8; padding: 12px; border-radius: 6px; border-left: 4px solid #28a745; margin-bottom: 8px; font-size: 16px; line-height: 1.4;">${text}</div>`;
             }
             
             textEl.scrollTop = textEl.scrollHeight;
@@ -1429,7 +1462,7 @@
             if (!settings.speakVoiceCommands) return;
             
             try {
-                speechSynth.cancel();
+                speechSynth.cancel(); // Cancel any existing speech
                 
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.rate = settings.speechSpeed || 1.0;
@@ -1476,7 +1509,7 @@
             appState.speechPageActive = (pageId === 'speech');
             
             // Reset speech processing state when changing pages
-            appState.speechProcessingResult = false;
+            resetSpeechProcessing();
             
             // Show the page
             document.querySelectorAll('.page').forEach(page => {
@@ -1527,7 +1560,7 @@
             if (textEl) {
                 textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">Click START TALKING to begin speaking...</div>`;
             }
-            appState.speechProcessingResult = false; // Reset processing state
+            resetSpeechProcessing(); // RESET ALL PROCESSING STATE
         }
 
         // === UI UPDATES ===
@@ -1798,7 +1831,7 @@
 
         // === INITIALIZATION ===
         async function initApp() {
-            console.log('🚀 Initializing Leslie with 5-MINUTE voice command intervals...');
+            console.log('🚀 Initializing Leslie with ULTRA-LONG voice command intervals...');
             
             if (isInitialized) return;
             
@@ -1818,11 +1851,11 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized');
                 
-                // Start voice commands with VERY long intervals
+                // Start voice commands with ULTRA long intervals after significant delay
                 setTimeout(async () => {
-                    console.log('🎤 Starting voice commands with 5-minute intervals...');
+                    console.log('🎤 Starting voice commands with 15-minute intervals...');
                     await startVoiceCommands();
-                }, 5000); // 5 second initial delay
+                }, 10000); // 10 second initial delay
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
