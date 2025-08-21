@@ -1,4 +1,4 @@
-..<!DOCTYPE html>
+.<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -899,30 +899,25 @@
     </div>
 
     <script>
-        // === CORE VARIABLES ===
-        let speechRecognition = null; // For speech page only
-        let commandRecognition = null; // For voice commands only - ULTRA LONG intervals
+        // === CORE VARIABLES - NO BACKGROUND RECOGNITION ===
+        let speechRecognition = null; // ONLY for manual speech page use
         let speechSynth = window.speechSynthesis;
         let currentPage = 'home';
         let contacts = [];
         let filteredContacts = [];
         let userLocation = null;
         let isInitialized = false;
-        let commandRestartTimer = null;
-        let lastCommandProcessedTime = 0;
         
         // SIMPLE PERMISSION STATE
         let permissionGranted = false;
         
-        // SIMPLIFIED APP STATE WITH ANTI-CASCADING
+        // SIMPLIFIED APP STATE - NO COMMAND LISTENING
         let appState = {
             speechListening: false,
-            commandListening: false,
             speechPageActive: false,
             isCurrentlySpeaking: false,
             speechProcessingResult: false,
-            lastSpeechTime: 0,
-            speechResultCount: 0 // NEW: Track number of results to prevent cascading
+            speechResultCount: 0
         };
         
         // Settings
@@ -1144,27 +1139,27 @@
             updateStatus('🛑 Stopped - Click START TALKING to resume');
         }
 
-        // === VOICE COMMANDS - COMPLETELY DISABLED FOR NOW ===
+        // === SINGLE RESULT DISPLAY - NO CASCADING POSSIBLE ===
+        function showSingleResult(text) {
+            if (!appState.speechPageActive) return;
+            
+            const textEl = document.getElementById('recognizedText');
+            if (!textEl) return;
+            
+            // COMPLETE REPLACEMENT - SINGLE RESULT ONLY
+            textEl.innerHTML = `<div style="background: #e8f5e8; padding: 16px; border-radius: 8px; border-left: 5px solid #28a745; font-size: 18px; line-height: 1.6; text-align: center;">${text}</div>`;
+            textEl.scrollTop = textEl.scrollHeight;
+        }
+
+        // === VOICE COMMANDS - COMPLETELY DISABLED ===
         async function startVoiceCommands() {
             console.log('🚫 Voice commands DISABLED to prevent pinging');
-            updateVoiceCommandStatus('inactive');
             return; // COMPLETELY DISABLED
         }
 
         async function stopVoiceCommands() {
             console.log('🚫 Voice commands already disabled');
-            if (commandRestartTimer) {
-                clearTimeout(commandRestartTimer);
-                commandRestartTimer = null;
-            }
-            if (commandRecognition) {
-                try {
-                    commandRecognition.abort();
-                } catch (e) {}
-                commandRecognition = null;
-            }
-            appState.commandListening = false;
-            updateVoiceCommandStatus('inactive');
+            return; // COMPLETELY DISABLED
         }
 
         // === VOICE COMMAND PROCESSING - DISABLED ===
@@ -1254,26 +1249,11 @@
         function showPage(pageId) {
             console.log('📄 Showing page:', pageId);
             
+            // ALWAYS stop ALL recognition when changing pages
+            stopAllRecognition();
+            
             // Handle speech page state change
             appState.speechPageActive = (pageId === 'speech');
-            
-            // ALWAYS stop any existing recognition when changing pages
-            if (speechRecognition) {
-                try {
-                    speechRecognition.abort();
-                    speechRecognition.onend = null;
-                    speechRecognition.onerror = null;
-                    speechRecognition.onresult = null;
-                } catch (e) {}
-                speechRecognition = null;
-            }
-            
-            // ALWAYS stop voice commands (they're disabled anyway)
-            stopVoiceCommands();
-            
-            // Reset ALL speech processing state
-            resetSpeechProcessing();
-            appState.speechListening = false;
             
             // Show the page
             document.querySelectorAll('.page').forEach(page => {
@@ -1286,7 +1266,7 @@
                 currentPage = pageId;
                 
                 if (pageId === 'speech') {
-                    console.log('🎤 SPEECH PAGE ACTIVATED - ALL OTHER RECOGNITION DISABLED');
+                    console.log('🎤 SPEECH PAGE ACTIVATED - ALL RECOGNITION STOPPED');
                     
                     const textEl = document.getElementById('recognizedText');
                     if (textEl) {
@@ -1308,7 +1288,7 @@
                 }
             }
             
-            // ALWAYS show voice commands as inactive
+            // ALWAYS show voice commands as disabled
             updateVoiceCommandStatus('inactive');
             updateUI();
         }
@@ -1561,9 +1541,9 @@
             return undefined;
         }
 
-        // === INITIALIZATION - NO VOICE COMMANDS ===
+        // === INITIALIZATION - COMPLETELY CLEAN, NO BACKGROUND PROCESSES ===
         async function initApp() {
-            console.log('🚀 Initializing Leslie with NO VOICE COMMANDS (to prevent pinging)...');
+            console.log('🚀 Initializing Leslie with ZERO background processes...');
             
             if (isInitialized) return;
             
@@ -1581,14 +1561,52 @@
                 updateTextSpeakButton();
                 
                 isInitialized = true;
-                console.log('✅ Leslie initialized - Voice commands DISABLED to prevent pinging');
+                console.log('✅ Leslie initialized - NO background processes started');
                 
-                // NO VOICE COMMANDS STARTED - completely disabled
+                // NO VOICE COMMANDS, NO TIMERS, NO INTERVALS, NO BACKGROUND PROCESSES
                 updateVoiceCommandStatus('inactive');
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
             }
+        }
+
+        // === CLEAN SHUTDOWN - STOP EVERYTHING ===
+        function stopAllRecognition() {
+            console.log('🛑 Stopping ALL recognition processes...');
+            
+            // Stop speech recognition
+            if (speechRecognition) {
+                try {
+                    speechRecognition.abort();
+                    speechRecognition.onend = null;
+                    speechRecognition.onerror = null;
+                    speechRecognition.onresult = null;
+                    speechRecognition.onstart = null;
+                } catch (e) {
+                    console.error('Error stopping speech recognition:', e);
+                }
+                speechRecognition = null;
+            }
+            
+            // Stop pro mode
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                stopProModeRecording();
+            }
+            
+            // Clear any timers
+            if (chunkTimer) {
+                clearTimeout(chunkTimer);
+                chunkTimer = null;
+            }
+            
+            // Reset all state
+            appState.speechListening = false;
+            appState.speechProcessingResult = false;
+            appState.speechResultCount = 0;
+            appState.isCurrentlySpeaking = false;
+            
+            console.log('✅ All recognition stopped');
         }
 
         // === EVENT HANDLERS ===
@@ -1721,11 +1739,12 @@
                     });
                 });
                 
-                // Voice command status - DISABLED
+                // Voice command status - COMPLETELY DISABLED, NO CLICK HANDLER
                 const statusEl = document.getElementById('voiceCommandStatus');
                 if (statusEl) {
-                    // Remove click handler since voice commands are disabled
+                    // NO click handler - voice commands completely disabled
                     statusEl.style.cursor = 'default';
+                    statusEl.title = 'Voice commands are disabled to prevent notification pinging';
                 }
                 
                 console.log('✅ Event handlers setup complete');
@@ -2378,7 +2397,7 @@
             updatePauseBetweenWords(newPause);
         }
 
-        // === INITIALIZATION ===
+        // === INITIALIZATION - NO BACKGROUND PROCESSES ===
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initApp);
         } else {
@@ -2388,6 +2407,20 @@
         window.addEventListener('load', () => { 
             if (!isInitialized) {
                 initApp(); 
+            }
+        });
+
+        // === CLEANUP ON PAGE UNLOAD ===
+        window.addEventListener('beforeunload', () => {
+            console.log('🧹 Cleaning up on page unload...');
+            stopAllRecognition();
+        });
+
+        // === VISIBILITY CHANGE - STOP EVERYTHING WHEN PAGE HIDDEN ===
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                console.log('🧹 Page hidden - stopping all recognition...');
+                stopAllRecognition();
             }
         });
     </script>
