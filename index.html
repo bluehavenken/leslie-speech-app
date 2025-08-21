@@ -1,4 +1,4 @@
-..<!DOCTYPE html>
+.<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -901,7 +901,7 @@
     </div>
 
     <script>
-        // === CORE VARIABLES - NO BACKGROUND RECOGNITION ===
+        // === CORE VARIABLES - WITH TIMEOUT SUPPORT ===
         let speechRecognition = null; // ONLY for manual speech page use
         let speechSynth = window.speechSynthesis;
         let currentPage = 'home';
@@ -909,17 +909,20 @@
         let filteredContacts = [];
         let userLocation = null;
         let isInitialized = false;
+        let speechTimeoutTimer = null; // For 2-minute timeout
+        let lastSpeechActivity = 0;
         
         // SIMPLE PERMISSION STATE
         let permissionGranted = false;
         
-        // SIMPLIFIED APP STATE - NO COMMAND LISTENING
+        // SIMPLIFIED APP STATE - CONTINUOUS LISTENING SUPPORT
         let appState = {
             speechListening: false,
             speechPageActive: false,
             isCurrentlySpeaking: false,
             speechProcessingResult: false,
-            speechResultCount: 0
+            speechResultCount: 0,
+            continuousMode: false // New: tracks if we're in continuous listening
         };
         
         // Settings
@@ -1268,14 +1271,21 @@
                 currentPage = pageId;
                 
                 if (pageId === 'speech') {
-                    console.log('🎤 SPEECH PAGE ACTIVATED - ALL RECOGNITION STOPPED');
+                    console.log('🎤 SPEECH PAGE ACTIVATED - AUTO-STARTING CONTINUOUS LISTENING');
                     
                     const textEl = document.getElementById('recognizedText');
                     if (textEl) {
-                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">Click START TALKING to begin speaking...</div>`;
+                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Starting continuous listening...</div>`;
                     }
                     
-                    updateStatus('Ready - Click START TALKING to begin');
+                    updateStatus('🎤 Starting continuous listening...');
+                    
+                    // Auto-start continuous listening after a short delay
+                    setTimeout(() => {
+                        if (appState.speechPageActive) { // Double-check we're still on speech page
+                            startSpeechRecognition();
+                        }
+                    }, 1000); // 1 second delay to let page settle
                 }
                 
                 if (pageId === 'phone') {
@@ -1290,9 +1300,38 @@
                 }
             }
             
-            // ALWAYS show voice commands as disabled
-            updateVoiceCommandStatus('inactive');
+            // Update voice command status
+            updateVoiceCommandStatus();
             updateUI();
+        }
+
+        function toggleListening() {
+            if (appState.speechListening || appState.continuousMode) {
+                // Stop continuous listening
+                stopContinuousListening();
+                updateStatus('🛑 Stopped listening - Click START TALKING to resume');
+            } else {
+                // Start continuous listening
+                startSpeechRecognition();
+            }
+        }
+
+        function updateUI() {
+            updateListenButton();
+            updateStatus();
+        }
+
+        function updateListenButton() {
+            const button = document.getElementById('listenButton');
+            if (button) {
+                if (appState.speechListening || appState.continuousMode) {
+                    button.textContent = 'STOP LISTENING';
+                    button.className = 'control-btn btn-stop';
+                } else {
+                    button.textContent = 'START TALKING';
+                    button.className = 'control-btn btn-listen';
+                }
+            }
         }
 
         function toggleListening() {
