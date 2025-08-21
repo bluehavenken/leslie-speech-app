@@ -966,6 +966,13 @@
                 return;
             }
             
+            // Ensure we don't have multiple instances
+            if (commandRecognition) {
+                try {
+                    commandRecognition.stop();
+                } catch (e) {}
+            }
+            
             try {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 
@@ -990,7 +997,7 @@
                         commandRestartTimeout = null;
                     }
                     
-                    // Restart with delay to prevent pings
+                    // Restart with longer delay to prevent pings
                     commandRestartTimeout = setTimeout(() => {
                         if (!appState.commandRecognitionActive) {
                             console.log('🔄 Restarting voice commands after delay');
@@ -1000,7 +1007,7 @@
                                 console.error('❌ Error restarting voice commands:', error);
                             }
                         }
-                    }, 3000); // 3 second delay to prevent pings
+                    }, 10000); // Increased to 10 seconds to prevent pings
                 };
 
                 commandRecognition.onerror = (event) => {
@@ -1018,13 +1025,17 @@
                         commandRestartTimeout = null;
                     }
                     
-                    // Restart after longer delay for errors
+                    // Restart after much longer delay for errors
                     commandRestartTimeout = setTimeout(() => {
                         if (!appState.commandRecognitionActive) {
                             console.log('🔄 Restarting after error with long delay');
-                            commandRecognition.start();
+                            try {
+                                commandRecognition.start();
+                            } catch (error) {
+                                console.error('❌ Error restarting voice commands after error:', error);
+                            }
                         }
-                    }, 10000); // 10 second delay after errors
+                    }, 20000); // Increased to 20 seconds after errors
                 };
 
                 commandRecognition.onresult = (event) => {
@@ -1062,6 +1073,13 @@
         }
 
         function startFreeModeRecognition() {
+            // Ensure we don't have multiple instances
+            if (speechRecognition) {
+                try {
+                    speechRecognition.stop();
+                } catch (e) {}
+            }
+            
             try {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 
@@ -1084,15 +1102,20 @@
                     
                     // ONLY restart if still on speech page and not manually stopped
                     if (appState.speechPageActive && !appState.userStoppedManually) {
-                        console.log('🔄 Waiting 3 seconds to restart speech recognition (prevent pings)');
+                        console.log('🔄 Waiting 8 seconds to restart speech recognition (prevent pings)');
                         
-                        updateStatus('⏸️ Paused for 3 seconds to prevent notification sounds...');
+                        updateStatus('⏸️ Paused for 8 seconds to prevent notification sounds...');
                         
                         setTimeout(() => {
                             if (appState.speechPageActive && !appState.userStoppedManually && !appState.speechRecognitionActive) {
-                                speechRecognition.start();
+                                try {
+                                    speechRecognition.start();
+                                } catch (error) {
+                                    console.error('❌ Error restarting speech recognition:', error);
+                                    updateStatus('🛑 Error restarting - Click START TALKING to try again');
+                                }
                             }
-                        }, 3000); // Reduced to 3 seconds
+                        }, 8000); // Increased to 8 seconds to stop pinging
                     } else {
                         updateStatus('🛑 Stopped - Click START TALKING to resume');
                     }
@@ -1108,14 +1131,19 @@
                         return;
                     }
                     
-                    // Longer restart for other errors
+                    // Much longer restart for errors to prevent cascading
                     if (appState.speechPageActive && !appState.userStoppedManually) {
-                        updateStatus('⏸️ Error occurred - pausing 5 seconds to prevent notification sounds...');
+                        updateStatus('⏸️ Error occurred - pausing 15 seconds to prevent notification sounds...');
                         setTimeout(() => {
-                            if (appState.speechPageActive && !appState.userStoppedManually) {
-                                speechRecognition.start();
+                            if (appState.speechPageActive && !appState.userStoppedManually && !appState.speechRecognitionActive) {
+                                try {
+                                    speechRecognition.start();
+                                } catch (error) {
+                                    console.error('❌ Error restarting after error:', error);
+                                    updateStatus('🛑 Multiple errors - Click START TALKING to try again');
+                                }
                             }
-                        }, 5000); // Reduced to 5 seconds
+                        }, 15000); // Increased to 15 seconds
                     }
                     
                     updateUI();
@@ -1129,6 +1157,7 @@
                 
             } catch (error) {
                 console.error('❌ Error creating speech recognition:', error);
+                updateStatus('🛑 Failed to start - Click START TALKING to try again');
             }
         }
 
@@ -1423,6 +1452,13 @@
             const textEl = document.getElementById('recognizedText');
             if (!textEl) return;
             
+            // Prevent duplicate results
+            const lastResult = textEl.lastElementChild;
+            if (lastResult && lastResult.textContent === text) {
+                console.log('🔄 Ignoring duplicate result:', text);
+                return;
+            }
+            
             // Remove any interim elements
             const interims = textEl.querySelectorAll('.interim');
             interims.forEach(interim => interim.remove());
@@ -1444,6 +1480,12 @@
         function speak(text) {
             if (!settings.speakVoiceCommands) return;
             
+            // Prevent speaking the same text multiple times
+            if (appState.isCurrentlySpeaking) {
+                console.log('🔄 Already speaking, ignoring:', text);
+                return;
+            }
+            
             try {
                 speechSynth.cancel();
                 
@@ -1463,6 +1505,11 @@
                             updateVoiceCommandStatus('ready');
                         }
                     }, 500);
+                };
+                
+                utterance.onerror = () => {
+                    appState.isCurrentlySpeaking = false;
+                    updateVoiceCommandStatus('ready');
                 };
                 
                 speechSynth.speak(utterance);
@@ -1761,7 +1808,7 @@
             const button = document.getElementById('listenButton');
             if (button) {
                 if (appState.speechRecognitionActive || (mediaRecorder && mediaRecorder.state === 'recording')) {
-                    button.textContent = 'STOP TALKING';
+                    button.textContent = 'STOP LISTENING';
                     button.className = 'control-btn btn-stop';
                 } else {
                     button.textContent = 'START TALKING';
