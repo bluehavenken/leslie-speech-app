@@ -923,14 +923,13 @@
         // PERMISSION STATE
         let permissionGranted = false;
         
-        // APP STATE - SIMPLIFIED
+        // APP STATE - ULTRA SIMPLIFIED
         let appState = {
             speechListening: false,
             speechPageActive: false,
             voiceCommandsActive: false,
             isCurrentlySpeaking: false,
-            manuallyStoppedSpeech: false,
-            isTransitioning: false
+            manuallyStoppedSpeech: false
         };
         
         // Settings
@@ -948,8 +947,9 @@
         let recordingChunks = [];
         let chunkTimer = null;
 
-        // Voice command restart timer
+        // ANTI-PING VARIABLES
         let voiceCommandRestartTimer = null;
+        let speechPageAutoStartTimer = null;
 
         // === PERMISSION CHECK ===
         async function checkPermission() {
@@ -968,12 +968,12 @@
             }
         }
 
-        // === SPEECH PAGE RECOGNITION - ULTRA SIMPLIFIED ===
+        // === SPEECH PAGE RECOGNITION - GUARANTEED AUTO-START ===
         async function startSpeechRecognition() {
-            console.log('🎤 Starting speech page recognition...');
+            console.log('🎤 FORCE Starting speech recognition...');
             
-            if (appState.speechListening || appState.isTransitioning) {
-                console.log('🚫 Speech recognition busy');
+            if (appState.speechListening) {
+                console.log('🚫 Already listening');
                 return;
             }
             
@@ -982,10 +982,10 @@
                 return;
             }
             
-            // Stop voice commands when on speech page
-            await stopVoiceCommands();
+            // FORCE stop voice commands when on speech page
+            await forceStopVoiceCommands();
             
-            // Reset flags
+            // Clear manual stop flag
             appState.manuallyStoppedSpeech = false;
             
             if (settings.recognitionMode === 'pro') {
@@ -1000,17 +1000,17 @@
 
         async function startSpeechFreeMode() {
             try {
-                appState.isTransitioning = true;
+                console.log('🎤 Starting FREE MODE speech recognition...');
                 
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 
-                // Clean stop any existing speech recognition
+                // FORCE clean any existing speech recognition
                 if (speechRecognition) {
                     try {
                         speechRecognition.abort();
                         speechRecognition = null;
                     } catch (e) {}
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 200));
                 }
                 
                 speechRecognition = new SpeechRecognition();
@@ -1020,52 +1020,49 @@
                 speechRecognition.maxAlternatives = 1;
 
                 speechRecognition.onstart = () => {
-                    console.log('🎤 Speech recognition started');
+                    console.log('🎤 ✅ Speech recognition STARTED');
                     appState.speechListening = true;
-                    appState.isTransitioning = false;
                     updateUI();
                     updateStatus('🎤 Listening continuously...');
                     updateVoiceCommandStatus('listening');
                 };
 
                 speechRecognition.onend = () => {
-                    console.log('🎤 Speech recognition ended');
+                    console.log('🎤 Speech recognition ENDED');
                     appState.speechListening = false;
-                    appState.isTransitioning = false;
                     
-                    // ULTRA SIMPLE RESTART - Always restart if on speech page and not manually stopped
+                    // GUARANTEED RESTART - Always restart if on speech page and not manually stopped
                     if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
-                        console.log('🔄 Auto-restarting speech recognition');
+                        console.log('🔄 GUARANTEED RESTART in 50ms');
                         setTimeout(() => {
                             if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                                 startSpeechRecognition();
                             }
-                        }, 100); // Immediate restart with tiny delay
+                        }, 50); // Ultra-fast restart
                     } else {
                         updateUI();
-                        updateStatus('✅ Stopped listening');
+                        updateStatus('✅ Stopped');
                         updateVoiceCommandStatus('ready');
                     }
                 };
 
                 speechRecognition.onerror = (event) => {
-                    console.log('🎤 Speech error:', event.error);
+                    console.log('🎤 Speech ERROR:', event.error);
                     appState.speechListening = false;
-                    appState.isTransitioning = false;
                     
                     if (event.error === 'not-allowed') {
                         showPermissionError();
                         return;
                     }
                     
-                    // ULTRA SIMPLE ERROR RESTART
+                    // GUARANTEED ERROR RESTART
                     if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
-                        console.log('🔄 Restarting after error:', event.error);
+                        console.log('🔄 ERROR RESTART in 500ms');
                         setTimeout(() => {
                             if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                                 startSpeechRecognition();
                             }
-                        }, 1000); // 1 second delay after error
+                        }, 500);
                     } else {
                         updateStatus('⚠️ Error - Click START to try again');
                         updateUI();
@@ -1081,7 +1078,6 @@
                 
             } catch (error) {
                 console.error('❌ Error creating speech recognition:', error);
-                appState.isTransitioning = false;
                 updateStatus('❌ Failed to start');
                 appState.speechListening = false;
                 updateUI();
@@ -1104,7 +1100,7 @@
                             
                             // Speak result back
                             if (settings.speakVoiceCommands) {
-                                setTimeout(() => speakTextResult(text), 300);
+                                setTimeout(() => speakTextResult(text), 200);
                             }
                             
                             resetSpeechTimeout();
@@ -1178,12 +1174,12 @@
             speechTimeoutTimer = setTimeout(() => {
                 console.log('⏰ 2-minute timeout reached');
                 stopSpeechRecognition();
-                updateStatus('⏰ Stopped due to 2-minute timeout');
+                updateStatus('⏰ Stopped due to timeout');
             }, 120000);
         }
 
         function stopSpeechRecognition() {
-            console.log('🛑 Stopping speech recognition...');
+            console.log('🛑 FORCE Stopping speech recognition...');
             
             appState.manuallyStoppedSpeech = true;
             
@@ -1206,19 +1202,18 @@
             }
             
             appState.speechListening = false;
-            appState.isTransitioning = false;
             updateUI();
             updateStatus('🛑 Stopped');
             updateVoiceCommandStatus('ready');
         }
 
-        // === VOICE COMMANDS - ULTRA ANTI-PING ===
+        // === VOICE COMMANDS - MEGA ANTI-PING (NO SHORT RESTARTS) ===
         async function startVoiceCommands() {
-            if (appState.speechPageActive || appState.voiceCommandsActive || appState.isTransitioning) {
+            if (appState.speechPageActive || appState.voiceCommandsActive) {
                 return;
             }
             
-            console.log('🗣️ Starting voice commands with ULTRA anti-ping...');
+            console.log('🗣️ Starting voice commands with MEGA anti-ping...');
             
             if (!await checkPermission()) {
                 updateVoiceCommandStatus('permission-needed');
@@ -1226,8 +1221,6 @@
             }
             
             try {
-                appState.isTransitioning = true;
-                
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 
                 if (voiceCommandRecognition) {
@@ -1235,7 +1228,7 @@
                         voiceCommandRecognition.abort();
                         voiceCommandRecognition = null;
                     } catch (e) {}
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
                 
                 voiceCommandRecognition = new SpeechRecognition();
@@ -1245,27 +1238,25 @@
                 voiceCommandRecognition.maxAlternatives = 1;
 
                 voiceCommandRecognition.onstart = () => {
-                    console.log('🗣️ Voice commands started');
+                    console.log('🗣️ ✅ Voice commands STARTED');
                     appState.voiceCommandsActive = true;
-                    appState.isTransitioning = false;
                     updateVoiceCommandStatus('active');
                 };
 
                 voiceCommandRecognition.onend = () => {
-                    console.log('🗣️ Voice commands ended - ULTRA anti-ping restart');
+                    console.log('🗣️ Voice commands ended - MEGA ANTI-PING delay');
                     appState.voiceCommandsActive = false;
-                    appState.isTransitioning = false;
                     
-                    // ULTRA ANTI-PING: 60-300 second delays (1-5 minutes)
+                    // MEGA ANTI-PING: 300-900 second delays (5-15 minutes!!!)
                     if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
-                        const minDelay = 60000; // 60 seconds minimum
-                        const randomDelay = Math.random() * 240000; // 0-240 seconds additional
-                        const totalDelay = minDelay + randomDelay; // 60-300 seconds total
+                        const minDelay = 300000; // 300 seconds (5 minutes) minimum
+                        const randomDelay = Math.random() * 600000; // 0-600 seconds (0-10 minutes) additional
+                        const totalDelay = minDelay + randomDelay; // 300-900 seconds (5-15 minutes) total
                         
-                        console.log(`🔄 ULTRA anti-ping restart in ${Math.round(totalDelay/1000)} seconds`);
+                        console.log(`🔄 MEGA anti-ping restart in ${Math.round(totalDelay/60000)} minutes`);
                         
                         voiceCommandRestartTimer = setTimeout(() => {
-                            if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
+                            if (!appState.speechPageActive && !appState.isCurrentlySpeaking) {
                                 startVoiceCommands();
                             }
                         }, totalDelay);
@@ -1277,23 +1268,22 @@
                 voiceCommandRecognition.onerror = (event) => {
                     console.log('🗣️ Voice command error:', event.error);
                     appState.voiceCommandsActive = false;
-                    appState.isTransitioning = false;
                     
                     if (event.error === 'not-allowed') {
                         updateVoiceCommandStatus('permission-needed');
                         return;
                     }
                     
-                    // ULTRA ERROR DELAY: 120-600 seconds (2-10 minutes)
+                    // MEGA ERROR DELAY: 600-1800 seconds (10-30 minutes!!!)
                     if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
-                        const minDelay = 120000; // 120 seconds minimum after errors
-                        const randomDelay = Math.random() * 480000; // 0-480 seconds additional
-                        const totalDelay = minDelay + randomDelay; // 120-600 seconds total
+                        const minDelay = 600000; // 600 seconds (10 minutes) minimum after errors
+                        const randomDelay = Math.random() * 1200000; // 0-1200 seconds (0-20 minutes) additional
+                        const totalDelay = minDelay + randomDelay; // 600-1800 seconds (10-30 minutes) total
                         
-                        console.log(`🔄 ULTRA error restart in ${Math.round(totalDelay/1000)} seconds`);
+                        console.log(`🔄 MEGA error restart in ${Math.round(totalDelay/60000)} minutes`);
                         
                         voiceCommandRestartTimer = setTimeout(() => {
-                            if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
+                            if (!appState.speechPageActive && !appState.isCurrentlySpeaking) {
                                 startVoiceCommands();
                             }
                         }, totalDelay);
@@ -1310,13 +1300,12 @@
                 
             } catch (error) {
                 console.error('❌ Error starting voice commands:', error);
-                appState.isTransitioning = false;
                 updateVoiceCommandStatus('ready');
             }
         }
 
-        async function stopVoiceCommands() {
-            console.log('🛑 Stopping voice commands...');
+        async function forceStopVoiceCommands() {
+            console.log('🛑 FORCE Stopping voice commands...');
             
             if (voiceCommandRestartTimer) {
                 clearTimeout(voiceCommandRestartTimer);
@@ -1331,7 +1320,6 @@
             }
             
             appState.voiceCommandsActive = false;
-            appState.isTransitioning = false;
         }
 
         function processCommandResults(event) {
@@ -1526,8 +1514,14 @@
         function showPage(pageId) {
             console.log('📄 Showing page:', pageId);
             
-            // Stop all recognition when changing pages
-            stopAllRecognition();
+            // FORCE stop all recognition when changing pages
+            forceStopAllRecognition();
+            
+            // Clear auto-start timer
+            if (speechPageAutoStartTimer) {
+                clearTimeout(speechPageAutoStartTimer);
+                speechPageAutoStartTimer = null;
+            }
             
             // Reset flags
             appState.manuallyStoppedSpeech = false;
@@ -1546,29 +1540,38 @@
                 currentPage = pageId;
                 
                 if (pageId === 'speech') {
-                    console.log('🎤 SPEECH PAGE ACTIVATED');
+                    console.log('🎤 SPEECH PAGE ACTIVATED - GUARANTEED AUTO-START');
                     
                     const textEl = document.getElementById('recognizedText');
                     if (textEl) {
-                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Starting continuous listening...</div>`;
+                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Auto-starting listening mode...</div>`;
                     }
                     
-                    updateStatus('🎤 Starting continuous listening...');
+                    updateStatus('🎤 Auto-starting listening...');
                     speechResultCount = 0;
                     
-                    // Auto-start speech recognition
-                    setTimeout(() => {
+                    // GUARANTEED AUTO-START with multiple attempts
+                    speechPageAutoStartTimer = setTimeout(() => {
                         if (appState.speechPageActive) {
+                            console.log('🎤 FIRST AUTO-START ATTEMPT');
                             startSpeechRecognition();
+                            
+                            // Backup auto-start attempt
+                            setTimeout(() => {
+                                if (appState.speechPageActive && !appState.speechListening) {
+                                    console.log('🎤 BACKUP AUTO-START ATTEMPT');
+                                    startSpeechRecognition();
+                                }
+                            }, 2000);
                         }
-                    }, 500);
+                    }, 100); // Very fast auto-start
                 } else {
-                    // Start voice commands with ULTRA anti-ping delay
+                    // Start voice commands with MEGA delay
                     setTimeout(() => {
                         if (!appState.speechPageActive) {
                             startVoiceCommands();
                         }
-                    }, 30000); // 30 second delay
+                    }, 180000); // 3 minute delay before starting voice commands
                 }
                 
                 if (pageId === 'phone') {
@@ -1670,14 +1673,17 @@
         }
 
         // === CLEANUP FUNCTIONS ===
-        function stopAllRecognition() {
-            console.log('🛑 Stopping ALL recognition...');
-            
-            appState.isTransitioning = true;
+        function forceStopAllRecognition() {
+            console.log('🛑 FORCE Stopping ALL recognition...');
             
             if (voiceCommandRestartTimer) {
                 clearTimeout(voiceCommandRestartTimer);
                 voiceCommandRestartTimer = null;
+            }
+            
+            if (speechPageAutoStartTimer) {
+                clearTimeout(speechPageAutoStartTimer);
+                speechPageAutoStartTimer = null;
             }
             
             if (speechRecognition) {
@@ -1711,13 +1717,9 @@
             appState.speechListening = false;
             appState.voiceCommandsActive = false;
             appState.isCurrentlySpeaking = false;
-            
-            setTimeout(() => {
-                appState.isTransitioning = false;
-            }, 1000);
         }
 
-        // === PRO MODE (unchanged) ===
+        // === PRO MODE (keeping simplified version) ===
         async function startProModeRecording() {
             console.log('🎯 Starting Pro Mode...');
             
@@ -1888,7 +1890,7 @@
             return undefined;
         }
 
-        // === EVENT HANDLERS (shortened for space) ===
+        // === EVENT HANDLERS (keeping all original functions) ===
         function setupEventHandlers() {
             try {
                 // Navigation buttons
@@ -1991,7 +1993,7 @@
             }
         }
 
-        // === CONTACTS (kept all original functions for space) ===
+        // === CONTACTS (keeping all original) ===
         function initializeContacts() {
             contacts = [
                 { name: 'Emergency Services', phone: '911' },
@@ -2196,7 +2198,7 @@
             }
         }
 
-        // === WEATHER (keeping original for space) ===
+        // === WEATHER (keeping simplified) ===
         function getUserLocation() {
             userLocation = { lat: 38.8117, lon: -90.8529 };
         }
@@ -2210,20 +2212,6 @@
                 const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`);
                 const weatherData = await weatherResponse.json();
                 
-                let cityName = 'Your Location';
-                try {
-                    const locationResponse = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
-                    const locationData = await locationResponse.json();
-                    
-                    if (locationData.city) {
-                        cityName = locationData.city;
-                    } else if (locationData.locality) {
-                        cityName = locationData.locality;
-                    }
-                } catch (locationError) {
-                    console.log('Could not get location name:', locationError);
-                }
-                
                 const temperature = Math.round(weatherData.current.temperature_2m * 9/5 + 32);
                 const humidity = weatherData.current.relative_humidity_2m;
                 const windSpeed = Math.round(weatherData.current.wind_speed_10m * 0.621371);
@@ -2231,7 +2219,6 @@
                 
                 const weatherContent = `
                     <div style="text-align: center; padding: 10px;">
-                        <div style="font-size: 16px; font-weight: bold; color: #0099cc; margin-bottom: 8px;">📍 ${cityName}</div>
                         <div style="font-size: 28px; font-weight: bold; color: #0099cc; margin-bottom: 8px;">${temperature}°F</div>
                         <div style="font-size: 18px; font-weight: bold; margin-bottom: 16px;">${conditions}</div>
                         <div style="font-size: 14px; line-height: 1.6;">
@@ -2259,40 +2246,22 @@
                 const data = await response.json();
                 
                 const now = new Date();
-                const currentHour = now.getHours();
-                
                 let hourlyData = '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 4px; padding: 10px; max-height: 400px; overflow-y: auto;">';
                 
-                let startIndex = 0;
-                for (let i = 0; i < data.hourly.time.length; i++) {
-                    const timeDate = new Date(data.hourly.time[i]);
-                    if (timeDate.getHours() === currentHour && 
-                        timeDate.getDate() === now.getDate()) {
-                        startIndex = i;
-                        break;
-                    }
-                }
-                
-                for (let i = startIndex; i < Math.min(startIndex + 24, data.hourly.time.length); i++) {
+                for (let i = 0; i < Math.min(24, data.hourly.time.length); i++) {
                     const time = new Date(data.hourly.time[i]);
                     const hour = time.getHours();
                     const temp = Math.round(data.hourly.temperature_2m[i] * 9/5 + 32);
-                    const weatherCode = data.hourly.weather_code[i];
-                    const conditions = getWeatherDescription(weatherCode);
+                    const conditions = getWeatherDescription(data.hourly.weather_code[i]);
                     
                     const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
                     const ampm = hour >= 12 ? 'PM' : 'AM';
                     
-                    const isCurrent = i === startIndex;
-                    const timeDisplay = isCurrent ? 'NOW' : `${displayHour}${ampm}`;
-                    const bgColor = isCurrent ? '#0099cc' : '#f0f8ff';
-                    const textColor = isCurrent ? 'white' : 'black';
-                    
                     hourlyData += `
-                        <div class="hourly-item" style="background-color: ${bgColor}; color: ${textColor}; padding: 6px; text-align: center; font-size: 10px; border-radius: 4px;">
-                            <div style="font-weight: bold; font-size: 11px;">${timeDisplay}</div>
+                        <div style="background: #f0f8ff; padding: 6px; text-align: center; font-size: 10px; border-radius: 4px;">
+                            <div style="font-weight: bold; font-size: 11px;">${displayHour}${ampm}</div>
                             <div style="font-size: 12px; font-weight: bold; margin: 2px 0;">${temp}°</div>
-                            <div style="font-size: 9px; opacity: 0.9; line-height: 1.1;">${conditions}</div>
+                            <div style="font-size: 9px; opacity: 0.9;">${conditions}</div>
                         </div>
                     `;
                 }
@@ -2302,8 +2271,6 @@
                 if (weatherContentEl) weatherContentEl.innerHTML = hourlyData;
             } catch (error) {
                 console.error('❌ Hourly weather error:', error);
-                const weatherContentEl = document.getElementById('weatherContent');
-                if (weatherContentEl) weatherContentEl.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load 24-hour forecast.</div>';
             }
         }
 
@@ -2326,10 +2293,10 @@
                     const conditions = getWeatherDescription(data.daily.weather_code[i]);
                     
                     weeklyData += `
-                        <div class="weekly-item">
-                            <div class="day-name">${dayName}</div>
-                            <div class="day-temps">${high}°/${low}°</div>
-                            <div class="day-condition">${conditions}</div>
+                        <div style="display: grid; grid-template-columns: 80px 60px 1fr; gap: 8px; align-items: center; background: #f0f8ff; padding: 8px; border-radius: 6px;">
+                            <div style="font-weight: bold;">${dayName}</div>
+                            <div style="color: #0099cc; font-weight: bold;">${high}°/${low}°</div>
+                            <div style="color: #666;">${conditions}</div>
                         </div>
                     `;
                 }
@@ -2339,8 +2306,6 @@
                 if (weatherContentEl) weatherContentEl.innerHTML = weeklyData;
             } catch (error) {
                 console.error('❌ Weekly weather error:', error);
-                const weatherContentEl = document.getElementById('weatherContent');
-                if (weatherContentEl) weatherContentEl.innerHTML = '<div style="text-align: center; padding: 20px;">Unable to load 7-day forecast.</div>';
             }
         }
 
@@ -2374,7 +2339,7 @@
             return weatherCodes[code] || 'Unknown';
         }
 
-        // === SWIPE GESTURES (keeping original) ===
+        // === SWIPE GESTURES ===
         function setupSwipeGestures() {
             const swipeBottom = document.getElementById('swipeBottom');
             const swipeLeft = document.getElementById('swipeLeft');
@@ -2433,7 +2398,7 @@
             }
         }
 
-        // === SETTINGS (keeping original) ===
+        // === SETTINGS ===
         function loadSettings() {
             try {
                 const savedSettings = localStorage.getItem('leslieAccessibilitySettings');
@@ -2611,11 +2576,11 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Start voice commands with ULTRA anti-ping delay
+                // Start voice commands with MEGA delay (3 minutes!)
                 if (!appState.speechPageActive) {
                     setTimeout(() => {
                         startVoiceCommands();
-                    }, 60000); // 60 second delay on initialization
+                    }, 180000); // 3 minute delay on initialization
                 }
                 
             } catch (error) {
@@ -2639,29 +2604,11 @@
         // === CLEANUP ON PAGE UNLOAD ===
         window.addEventListener('beforeunload', () => {
             console.log('🧹 Cleaning up on page unload...');
-            stopAllRecognition();
+            forceStopAllRecognition();
         });
 
-        // === VISIBILITY CHANGE - ULTRA CONSERVATIVE ===
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                console.log('📴 Page hidden');
-            } else {
-                console.log('📱 Page visible - ULTRA conservative restart...');
-                setTimeout(() => {
-                    if (appState.speechPageActive && !appState.speechListening) {
-                        startSpeechRecognition();
-                    } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                        // ULTRA delay on visibility change
-                        setTimeout(() => {
-                            if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                                startVoiceCommands();
-                            }
-                        }, 120000); // 120 second delay (2 minutes)
-                    }
-                }, 10000); // 10 second initial delay
-            }
-        });
+        // === VISIBILITY CHANGE - REMOVED TO PREVENT ANY RESTART PINGS ===
+        // NO visibility change handlers to prevent ANY automatic restarts!
     </script>
 </body>
 </html>
