@@ -812,7 +812,7 @@
                             • <strong>Auto-Start:</strong> Voice commands begin automatically for accessibility<br>
                             • <strong>Speech Page:</strong> Auto-starts listening when opened<br>
                             • <strong>Continuous Operation:</strong> Runs until Stop button or 2-minute timeout<br>
-                            • <strong>Smart Restart:</strong> Auto-restarts with anti-ping delays (15-25 seconds)<br>
+                            • <strong>Smart Restart:</strong> Auto-restarts immediately to maintain continuous operation<br>
                             • <strong>Physical Impairment Friendly:</strong> No clicking required for normal use<br>
                             • <strong>Context Aware:</strong> Speech page = all words, other pages = commands only<br>
                             • <strong>Pro Mode Available:</strong> OpenAI Whisper with API key<br>
@@ -941,11 +941,7 @@
         let lastProcessedText = '';
         let lastProcessedTime = 0;
 
-        // SMART RESTART TIMING TO PREVENT PINGING
-        let restartTimer = null;
-        let lastRestartTime = 0;
-        const MIN_RESTART_DELAY = 15000; // Minimum 15 seconds between restarts
-        const MAX_RESTART_DELAY = 25000; // Maximum 25 seconds between restarts
+        // IMMEDIATE RESTART (NO DELAYS)
 
         // === PERMISSION CHECK ===
         async function checkPermission() {
@@ -964,36 +960,17 @@
             }
         }
 
-        // === SMART RESTART TO PREVENT PINGING ===
-        function scheduleSmartRestart() {
-            if (restartTimer) {
-                clearTimeout(restartTimer);
-            }
-            
-            const currentTime = Date.now();
-            const timeSinceLastRestart = currentTime - lastRestartTime;
-            
-            // Calculate a random delay between MIN and MAX to prevent patterns
-            const randomDelay = MIN_RESTART_DELAY + Math.random() * (MAX_RESTART_DELAY - MIN_RESTART_DELAY);
-            
-            // If we restarted recently, wait even longer
-            let actualDelay = randomDelay;
-            if (timeSinceLastRestart < MIN_RESTART_DELAY) {
-                actualDelay = Math.max(randomDelay, MIN_RESTART_DELAY - timeSinceLastRestart + randomDelay);
-            }
-            
-            console.log(`🕐 Scheduling smart restart in ${Math.round(actualDelay/1000)} seconds to prevent pinging`);
-            
-            restartTimer = setTimeout(() => {
-                if (permissionGranted && !appState.manuallyStoppedSpeech) {
-                    console.log('🔄 Smart restart now (anti-ping delay completed)');
-                    lastRestartTime = Date.now();
+        // === IMMEDIATE RESTART (NO DELAYS) ===
+        function immediateRestart() {
+            if (permissionGranted && !appState.manuallyStoppedSpeech) {
+                console.log('🔄 Immediate restart (100ms delay to prevent errors)');
+                setTimeout(() => {
                     startContinuousRecognition();
-                }
-            }, actualDelay);
+                }, 100); // Just 100ms to prevent rapid-fire errors
+            }
         }
 
-        // === TRULY CONTINUOUS RECOGNITION (ANTI-PING!) ===
+        // === TRULY CONTINUOUS RECOGNITION (IMMEDIATE RESTART) ===
         async function startContinuousRecognition() {
             if (appState.isListening) {
                 console.log('🎤 Already listening');
@@ -1005,20 +982,14 @@
                 return;
             }
             
-            // Clear any pending restart
-            if (restartTimer) {
-                clearTimeout(restartTimer);
-                restartTimer = null;
-            }
-            
-            console.log('🎤 Starting recognition with ANTI-PING delays...');
+            console.log('🎤 Starting recognition with IMMEDIATE restart...');
             
             try {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 
                 speechRecognition = new SpeechRecognition();
                 speechRecognition.continuous = true;
-                speechRecognition.interimResults = false;
+                speechRecognition.interimResults = true; // TRUE to keep session alive!
                 speechRecognition.lang = 'en-US';
                 speechRecognition.maxAlternatives = 1;
 
@@ -1031,16 +1002,12 @@
                 };
 
                 speechRecognition.onend = () => {
-                    console.log('🎤 Recognition ended - scheduling SMART RESTART to prevent pinging');
+                    console.log('🎤 Recognition ended - IMMEDIATE restart');
                     appState.isListening = false;
                     
-                    // SMART RESTART with anti-ping delays
+                    // IMMEDIATE RESTART
                     if (permissionGranted && !appState.manuallyStoppedSpeech) {
-                        scheduleSmartRestart();
-                        updateVoiceCommandStatus('ready');
-                        if (appState.speechPageActive) {
-                            updateStatus('🕐 Restarting in 15-25 seconds (anti-ping delay)');
-                        }
+                        immediateRestart();
                     } else {
                         updateVoiceCommandStatus('ready');
                         updateStatus();
@@ -1057,14 +1024,10 @@
                         return;
                     }
                     
-                    // SMART restart even after errors (but with delay to prevent ping storms)
+                    // IMMEDIATE restart even after errors
                     if (permissionGranted && !appState.manuallyStoppedSpeech) {
-                        console.log('🔄 Scheduling smart restart after error (anti-ping delay)');
-                        scheduleSmartRestart();
-                        updateVoiceCommandStatus('ready');
-                        if (appState.speechPageActive) {
-                            updateStatus('🕐 Restarting after error (anti-ping delay)');
-                        }
+                        console.log('🔄 IMMEDIATE restart after error');
+                        immediateRestart();
                     } else {
                         updateVoiceCommandStatus('ready');
                         updateStatus('⚠️ Recognition stopped');
@@ -1109,12 +1072,6 @@
             
             appState.manuallyStoppedSpeech = true;
             
-            // Clear any pending restart
-            if (restartTimer) {
-                clearTimeout(restartTimer);
-                restartTimer = null;
-            }
-            
             if (speechTimeoutTimer) {
                 clearTimeout(speechTimeoutTimer);
                 speechTimeoutTimer = null;
@@ -1132,21 +1089,23 @@
             updateVoiceCommandStatus('ready');
         }
 
-        // === UNIFIED SPEECH PROCESSING (STRONG DUPLICATE PREVENTION) ===
+        // === UNIFIED SPEECH PROCESSING (INTERIM + FINAL RESULTS) ===
         function processAllSpeechResults(event) {
             try {
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const result = event.results[i];
+                    
+                    // Only process FINAL results for actual commands/speech
                     if (result.isFinal) {
                         const text = result[0].transcript.trim();
                         const currentTime = Date.now();
                         
-                        // VERY STRONG DUPLICATE PREVENTION
+                        // STRONG DUPLICATE PREVENTION
                         if (text && 
                             text.length > 1 &&
-                            (text !== lastProcessedText || currentTime - lastProcessedTime > 8000)) {
+                            (text !== lastProcessedText || currentTime - lastProcessedTime > 5000)) {
                             
-                            console.log('🎤 Processing speech:', text);
+                            console.log('🎤 Processing final speech:', text);
                             lastProcessedText = text;
                             lastProcessedTime = currentTime;
                             
@@ -1161,6 +1120,7 @@
                             console.log('🚫 Ignoring duplicate/recent text:', text);
                         }
                     }
+                    // Interim results are ignored but help keep the session alive
                 }
             } catch (error) {
                 console.error('❌ Error processing speech:', error);
@@ -2237,12 +2197,12 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // AUTO-START voice commands for hands-free accessibility with smart delays
+                // AUTO-START voice commands for hands-free accessibility
                 if (permissionGranted) {
-                    console.log('🎤 Auto-starting voice commands for accessibility (with anti-ping delay)');
+                    console.log('🎤 Auto-starting voice commands for accessibility');
                     setTimeout(() => {
                         startContinuousRecognition();
-                    }, 3000); // 3 second initial delay to let everything settle
+                    }, 1000); // Just 1 second to let everything settle
                 } else {
                     updateVoiceCommandStatus('permission-needed');
                     updateStatus();
@@ -2274,9 +2234,6 @@
                 try {
                     speechRecognition.abort();
                 } catch (e) {}
-            }
-            if (restartTimer) {
-                clearTimeout(restartTimer);
             }
         });
     </script>
