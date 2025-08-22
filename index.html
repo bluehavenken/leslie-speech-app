@@ -616,14 +616,14 @@
                 </button>
                 <div class="tips-box">
                     ♿ <strong>Hands-Free Accessibility Features:</strong><br>
-                    • <strong>Voice Commands:</strong> Click voice status to start - say "Hey Leslie" + command<br>
+                    • <strong>Voice Commands:</strong> Auto-start for accessibility - say "Hey Leslie" + command<br>
                     • <strong>Speech Page Auto-Start:</strong> Begins listening automatically when opened<br>
                     • <strong>Continuous Until Stopped:</strong> Runs until Stop button or 2-minute timeout<br>
-                    • <strong>Physical Impairment Friendly:</strong> Minimal clicking required<br>
+                    • <strong>Physical Impairment Friendly:</strong> Minimal clicking required for operation<br>
                     • <strong>Two Modes:</strong> Free (browser-based) or Pro (Whisper accuracy)<br>
                     • <strong>Mobile Ready:</strong> Works as PWA app from home screen<br>
                     • <strong>Weather & Contacts:</strong> Swipe gestures and real contact loading<br>
-                    • <strong>Manual Control:</strong> Voice commands start when you click the status indicator
+                    • <strong>Accessibility First:</strong> Designed for users with speech and physical impairments
                 </div>
             </div>
         </div>
@@ -753,7 +753,7 @@
                 <div style="font-size: 16px; line-height: 1.6; color: #333;">
                     <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #28a745;">
                         <strong>✅ Hands-Free Voice Commands</strong><br>
-                        <span style="font-size: 14px; color: #28a745;">Click voice status indicator to start - no auto-pinging</span><br>
+                        <span style="font-size: 14px; color: #28a745;">Auto-start for accessibility - no clicking required</span><br>
                         <span style="font-size: 12px; color: #666;">Say "Hey Leslie" followed by any command below</span>
                     </div>
                     
@@ -809,11 +809,11 @@
                     <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745;">
                         <strong style="color: #28a745;">✅ Hands-Free Accessibility Design</strong><br>
                         <div style="margin-top: 8px; font-size: 14px; color: #28a745;">
-                            • <strong>Manual Voice Commands:</strong> Click status indicator to start - no auto-pinging<br>
-                            • <strong>Speech Page:</strong> Auto-starts listening when opened<br>
+                            • <strong>Auto-Start Voice Commands:</strong> Automatically start for users with physical impairments<br>
+                            • <strong>Speech Page:</strong> Auto-starts listening when opened and stays active<br>
                             • <strong>Continuous Operation:</strong> Runs until Stop button or 2-minute timeout<br>
-                            • <strong>No Interference:</strong> No constant restarts that interrupt commands<br>
-                            • <strong>Physical Impairment Friendly:</strong> Minimal clicking required<br>
+                            • <strong>Reduced Pinging:</strong> Longer delays between restarts to prevent interference<br>
+                            • <strong>Physical Impairment Friendly:</strong> Minimal clicking required for operation<br>
                             • <strong>Context Aware:</strong> Speech page = all words, other pages = commands only<br>
                             • <strong>Pro Mode Available:</strong> OpenAI Whisper with API key<br>
                             • <strong>Contact Loading:</strong> Real contacts from your phone<br>
@@ -1001,16 +1001,26 @@
                     appState.isListening = false;
                     updateUI();
                     
-                    // Only restart if on speech page and not manually stopped
-                    if (appState.speechPageActive && !appState.manuallyStoppedSpeech && !appState.isCurrentlySpeaking) {
-                        console.log('🔄 Restarting speech page recognition');
-                        setTimeout(() => {
-                            if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
-                                startContinuousRecognition();
-                            }
-                        }, 1000);
+                    // ALWAYS restart unless manually stopped - this is required for accessibility
+                    if (!appState.manuallyStoppedSpeech && !appState.isCurrentlySpeaking) {
+                        if (appState.speechPageActive) {
+                            // Speech page: quick restart for continuous operation
+                            console.log('🔄 Restarting speech page (continuous mode)');
+                            setTimeout(() => {
+                                if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                                    startContinuousRecognition();
+                                }
+                            }, 500);
+                        } else {
+                            // Voice commands: longer delay to reduce pinging but still work for accessibility
+                            console.log('🔄 Restarting voice commands (accessibility)');
+                            setTimeout(() => {
+                                if (!appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                                    startContinuousRecognition();
+                                }
+                            }, 8000); // 8-second delay for voice commands
+                        }
                     }
-                    // Voice commands do NOT auto-restart to prevent pinging
                 };
 
                 speechRecognition.onerror = (event) => {
@@ -1123,21 +1133,21 @@
         }
 
         function handleSpeechPageResult(text) {
-            console.log('📝 Speech page result:', text);
+            console.log('📝 ✅ Speech page got result:', text);
             
             // Show the result immediately
             showFinalResult(text);
             
-            // Speak it back with short delay
+            // Speak it back with delay to prevent interference
             if (settings.speakVoiceCommands && text && text.trim().length > 0) {
                 setTimeout(() => {
                     if (appState.speechPageActive) {
                         speakTextResult(text.trim());
                     }
-                }, 500); // Shorter delay
+                }, 800); // Short delay to prevent interference
             }
             
-            updateStatus();
+            updateStatus('🎤 Continuous listening active - speak another phrase!');
         }
 
         function handleVoiceCommand(text) {
@@ -1183,29 +1193,31 @@
         function speakTextResult(text) {
             if (!settings.speakVoiceCommands || !text || text.trim().length === 0) return;
             
-            console.log('🔊 Speaking FULL phrase:', text);
+            const fullText = text.trim();
+            console.log('🔊 Speaking COMPLETE phrase:', fullText);
             
             try {
-                speechSynth.cancel(); // Cancel any existing speech first
+                speechSynth.cancel(); // Cancel any existing speech
                 
-                const utterance = new SpeechSynthesisUtterance(text.trim());
+                // Create utterance with full text
+                const utterance = new SpeechSynthesisUtterance(fullText);
                 utterance.rate = settings.speechSpeed || 1.0;
                 utterance.lang = 'en-US';
                 utterance.volume = 1.0;
                 utterance.pitch = 1.0;
                 
                 utterance.onstart = () => {
-                    console.log('🔊 Started speaking FULL phrase:', text);
+                    console.log('🔊 ✅ Started speaking COMPLETE phrase:', fullText);
                     appState.isCurrentlySpeaking = true;
                     updateVoiceCommandStatus('speaking');
                 };
                 
                 utterance.onend = () => {
-                    console.log('🔊 Finished speaking FULL phrase');
+                    console.log('🔊 ✅ Finished speaking COMPLETE phrase');
                     appState.isCurrentlySpeaking = false;
                     updateVoiceCommandStatus('active');
                     
-                    // Clear display after speaking
+                    // Clear display and prepare for next phrase
                     setTimeout(() => {
                         const textEl = document.getElementById('recognizedText');
                         if (textEl && appState.speechPageActive) {
@@ -1215,7 +1227,7 @@
                 };
                 
                 utterance.onerror = (error) => {
-                    console.error('🔊 Speech synthesis error:', error);
+                    console.error('🔊 ❌ Speech synthesis error:', error);
                     appState.isCurrentlySpeaking = false;
                     updateVoiceCommandStatus('active');
                 };
@@ -1223,7 +1235,7 @@
                 speechSynth.speak(utterance);
                 
             } catch (error) {
-                console.error('❌ Error speaking text:', error);
+                console.error('❌ Error in speakTextResult:', error);
                 appState.isCurrentlySpeaking = false;
             }
         }
@@ -1395,26 +1407,26 @@
                 utterance.volume = 1.0;
                 
                 utterance.onstart = () => {
-                    console.log('🔊 Started speaking command response:', text);
+                    console.log('🔊 ✅ Started speaking command response:', text);
                     appState.isCurrentlySpeaking = true;
                     updateVoiceCommandStatus('speaking');
                 };
                 
                 utterance.onend = () => {
-                    console.log('🔊 Finished speaking command response');
+                    console.log('🔊 ✅ Finished speaking command response');
                     appState.isCurrentlySpeaking = false;
-                    updateVoiceCommandStatus('ready');
+                    updateVoiceCommandStatus('active');
                 };
                 
-                utterance.onerror = () => {
-                    console.log('🔊 Command speech synthesis error');
+                utterance.onerror = (error) => {
+                    console.error('🔊 ❌ Command speech error:', error);
                     appState.isCurrentlySpeaking = false;
-                    updateVoiceCommandStatus('ready');
+                    updateVoiceCommandStatus('active');
                 };
                 
                 speechSynth.speak(utterance);
             } catch (error) {
-                console.error('❌ Error speaking:', error);
+                console.error('❌ Error in speak function:', error);
                 appState.isCurrentlySpeaking = false;
             }
         }
@@ -1453,21 +1465,28 @@
                 if (pageId === 'speech') {
                     const textEl = document.getElementById('recognizedText');
                     if (textEl) {
-                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Starting hands-free listening in 3 seconds...</div>`;
+                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Starting continuous listening in 2 seconds...</div>`;
                     }
-                    updateStatus('🎤 Starting hands-free continuous listening in 3 seconds...');
+                    updateStatus('🎤 Starting continuous listening for accessibility...');
                     
-                    // AUTO-START speech recognition on speech page for accessibility
+                    // AUTO-START speech recognition on speech page - REQUIRED for accessibility
                     setTimeout(() => {
                         if (appState.speechPageActive) {
-                            console.log('🎤 AUTO-STARTING continuous speech page for accessibility');
+                            console.log('🎤 ✅ AUTO-STARTING speech page for accessibility');
+                            appState.manuallyStoppedSpeech = false; // Ensure it can start
                             startContinuousRecognition();
                         }
-                    }, 3000);
+                    }, 2000);
                 } else {
-                    // For other pages, voice commands available but don't auto-start to prevent pinging
-                    console.log('🗣️ Voice commands available - click status or say "Hey Leslie" when ready');
-                    updateVoiceCommandStatus('ready');
+                    // For other pages, start voice commands for accessibility - REQUIRED for physical impairments
+                    console.log('🗣️ Starting voice commands for accessibility on page:', pageId);
+                    setTimeout(() => {
+                        if (!appState.speechPageActive && !appState.isListening) {
+                            console.log('🗣️ ✅ Starting voice commands for accessibility');
+                            appState.manuallyStoppedSpeech = false; // Ensure voice commands can start
+                            startContinuousRecognition();
+                        }
+                    }, 3000); // 3-second delay for voice commands
                 }
                 
                 if (pageId === 'phone') {
@@ -1553,7 +1572,7 @@
                 statusEl.textContent = '🔊 Speaking...';
                 statusEl.classList.add('speaking');
             } else {
-                statusEl.textContent = '🎤 Click to Start Voice Commands';
+                statusEl.textContent = '🎤 Voice Commands Auto-Starting...';
                 statusEl.classList.add('ready');
             }
         }
@@ -1631,7 +1650,7 @@
                     });
                 });
                 
-                // Voice command status click - manually start voice commands
+                // Voice command status click - for manual control if needed
                 document.getElementById('voiceCommandStatus')?.addEventListener('click', async () => {
                     if (!permissionGranted) {
                         if (await checkPermission()) {
@@ -1639,16 +1658,17 @@
                             appState.manuallyStoppedSpeech = false;
                             startContinuousRecognition();
                         }
-                    } else if (!appState.isListening) {
+                    } else if (!appState.isListening && !appState.speechPageActive) {
                         console.log('🎤 Manual start of voice commands via status click');
                         appState.manuallyStoppedSpeech = false;
                         startContinuousRecognition();
-                    } else {
+                    } else if (appState.isListening && !appState.speechPageActive) {
                         console.log('🛑 Stopping voice commands via status click');
                         appState.manuallyStoppedSpeech = true;
                         if (speechRecognition) {
                             speechRecognition.stop();
                         }
+                        updateVoiceCommandStatus('ready');
                     }
                 });
                 
@@ -2292,10 +2312,15 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Voice commands available but not auto-started to prevent pinging
+                // AUTO-START voice commands for accessibility - REQUIRED for physical impairments
                 if (permissionGranted) {
-                    console.log('✅ Voice commands ready - click status indicator to start');
-                    updateVoiceCommandStatus('ready');
+                    console.log('🎤 ✅ Auto-starting voice commands for accessibility');
+                    setTimeout(() => {
+                        if (!appState.speechPageActive && !appState.isListening) {
+                            appState.manuallyStoppedSpeech = false; // Ensure can start
+                            startContinuousRecognition();
+                        }
+                    }, 4000); // 4-second delay to prevent initial pinging
                 } else {
                     updateVoiceCommandStatus('permission-needed');
                     updateStatus();
