@@ -2557,6 +2557,59 @@ else {
                 } catch (e) {}
             }
         });
-    </script>
-</body>
-</html>
+    
+}
+</script>
+
+<script>
+// ===== Panic-proof bootstrap & error overlay =====
+(function(){
+  function showErrorOverlay(msg, src, line, col, err){
+    try {
+      const id = 'leslie-error-overlay';
+      let el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement('div');
+        el.id = id;
+        el.style.cssText = 'position:fixed;z-index:999999;left:0;right:0;bottom:0;background:#260000;color:#fff;padding:10px;font:12px/1.4 system-ui,Arial;border-top:2px solid #d00;max-height:40vh;overflow:auto;';
+        document.body.appendChild(el);
+      }
+      const pre = document.createElement('pre');
+      pre.textContent = (msg||'JS Error') + (src ? ('
+' + src + ':' + line + ':' + col) : '') + (err && err.stack ? ('
+'+err.stack) : '');
+      el.appendChild(pre);
+    } catch(e){}
+  }
+  window.onerror = function(msg, src, line, col, err){
+    showErrorOverlay(msg, src, line, col, err);
+  };
+  window.addEventListener('unhandledrejection', function(e){
+    showErrorOverlay('Unhandled promise rejection: ' + (e.reason && e.reason.message || e.reason), '', 0, 0, e.reason);
+  });
+
+  async function safeBootstrap(){
+    try {
+      if (typeof initApp === 'function') { 
+        await initApp(); 
+        return;
+      }
+      // If your code uses a different init, try common fallbacks:
+      if (typeof initializeApp === 'function') { await initializeApp(); return; }
+      if (typeof setupApp === 'function') { await setupApp(); return; }
+      // Otherwise, dispatch the DOM event many scripts listen for
+      document.dispatchEvent(new Event('DOMContentLoaded'));
+    } catch(e){
+      showErrorOverlay('safeBootstrap failed: ' + e.message);
+    }
+  }
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    safeBootstrap();
+  } else {
+    document.addEventListener('DOMContentLoaded', safeBootstrap);
+  }
+})();
+</script>
+
+</body></html>
