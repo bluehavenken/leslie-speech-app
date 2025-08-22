@@ -121,7 +121,6 @@
             flex-direction: column;
             height: calc(100vh - 100px);
             overflow-y: auto;
-            padding-bottom: 100px;
         }
         .status-text {
             text-align: center;
@@ -163,6 +162,22 @@
             line-height: 1.4;
             color: #000;
         }
+        .final-phrase {
+            background-color: #e3f2fd;
+            padding: 8px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            border-left: 4px solid #0099cc;
+        }
+        .interim-phrase {
+            background-color: #fff8e1;
+            padding: 8px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            border-left: 4px solid #ffa000;
+            color: #666;
+            font-style: italic;
+        }
         .enhanced-section {
             background-color: #f8f9fa;
             border: 2px solid #6f42c1;
@@ -192,15 +207,12 @@
             gap: 8px;
             align-items: center;
             margin: 16px 0;
-            padding: 16px;
-            position: fixed;
+            padding: 0 16px;
+            position: sticky;
             bottom: 0;
-            left: 0;
-            right: 0;
             background: white;
             border-top: 2px solid #0099cc;
-            z-index: 1000;
-            box-shadow: 0 -4px 8px rgba(0,0,0,0.1);
+            padding-top: 16px;
         }
         .control-btn {
             height: 70px;
@@ -227,6 +239,8 @@
         .btn-listen { background-color: #0099cc; }
         .btn-stop { background-color: #cc0000; }
         .btn-enhanced { background-color: #6f42c1; }
+        .btn-send { background-color: #669900; }
+        .btn-keyboard { background-color: #99cc00; }
         .btn-clear { background-color: #ffaa00; }
         .btn-home {
             background-color: #0099cc;
@@ -242,6 +256,7 @@
             margin: 0 auto;
             display: block;
         }
+        .btn-disabled { background-color: #ccc !important; cursor: not-allowed !important; }
         .text-input {
             width: 100%;
             padding: 16px;
@@ -560,10 +575,66 @@
                 font-size: 12px;
             }
         }
+        .keyboard-prompt {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(153, 51, 204, 0.95);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 25px;
+            font-weight: bold;
+            font-size: 14px;
+            z-index: 1001;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            animation: bounce 0.5s ease-in-out;
+        }
+        @keyframes bounce {
+            0% { transform: translateX(-50%) translateY(100px); opacity: 0; }
+            100% { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+        .force-keyboard-input {
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            z-index: 999 !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            width: 80% !important;
+            max-width: 400px !important;
+            height: 60px !important;
+            font-size: 18px !important;
+            background: white !important;
+            border: 3px solid #9933cc !important;
+            border-radius: 10px !important;
+            padding: 10px !important;
+            transform: translate(-50%, -50%) !important;
+        }
     </style>
 </head>
 <body>
     <div class="container">
+        <!-- Voice Command Status Indicator -->
+        <div class="voice-command-status" id="voiceCommandStatus">🎙️ Voice Commands Ready</div>
+
+        <!-- Swipe Edge Detection Areas -->
+        <div class="swipe-edge swipe-bottom" id="swipeBottom"></div>
+        <div class="swipe-edge swipe-left" id="swipeLeft"></div>
+        <div class="swipe-edge swipe-right" id="swipeRight"></div>
+
+        <!-- Weather Display -->
+        <div class="weather-display hidden" id="weatherDisplay">
+            <div class="weather-title" id="weatherTitle">Current Weather</div>
+            <div class="weather-content" id="weatherContent">Loading weather data...</div>
+            <div class="weather-controls">
+                <button class="weather-btn" onclick="showCurrentWeather()">Current</button>
+                <button class="weather-btn" onclick="showHourlyWeather()">24 Hours</button>
+                <button class="weather-btn" onclick="showWeeklyWeather()">7 Days</button>
+                <button class="weather-btn" onclick="hideWeather()">Close</button>
+            </div>
+        </div>
+
         <!-- Header -->
         <div class="header">
             <div style="width: 48px;"></div>
@@ -591,11 +662,12 @@
                 </button>
                 <div class="tips-box">
                     💡 Tips:<br>
-                    • Voice commands work anywhere - just say "Hey Leslie" + command<br>
+                    • Voice commands work automatically - just say "Hey Leslie" + command<br>
                     • Watch the green indicator (top-right) for voice command status<br>
-                    • START TALKING page has continuous speech recognition<br>
-                    • Use Enhanced Recognition for better accuracy<br>
-                    • Swipe gestures: bottom center (weather), left/right sides (forecasts)
+                    • Click START TALKING for continuous speech recognition<br>
+                    • Use Enhanced Recognition for better accuracy with unclear speech<br>
+                    • Small swipe areas: bottom center, left/right sides for weather<br>
+                    • Works best with clear speech or whispers
                 </div>
             </div>
         </div>
@@ -609,7 +681,7 @@
                 </div>
                 
                 <div class="status-text" id="statusText">
-                    Ready to listen - Starting automatically...
+                    Ready to listen - Click START TALKING to begin!
                 </div>
                 <div class="speech-display">
                     <div class="speech-header">
@@ -652,9 +724,10 @@
             </div>
             <div class="contact-search-section">
                 <div style="font-size: 14px; font-weight: bold; color: #669900; margin-bottom: 8px;">
-                    🔍 Search Your Contacts
+                    🔍 Search Your Contacts:
                 </div>
-                <input type="text" class="contact-search-input" id="contactSearchInput" placeholder="Type to search contacts...">
+                <input type="text" id="contactSearch" class="contact-search-input"
+                       placeholder="Type contact name or phone..." oninput="filterContacts(this.value)">
             </div>
             
             <div class="contact-loading-section" id="contactLoadingSection">
@@ -664,10 +737,10 @@
                     Choose how to load YOUR real contacts from your phone:
                 </p>
                 <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-                    <button id="loadAllContactsBtn" style="margin: 5px; padding: 16px 24px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                    <button onclick="loadAllContacts()" style="margin: 5px; padding: 16px 24px; background: #669900; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
                         📞 LOAD ALL CONTACTS
                     </button>
-                    <button id="loadSelectedContactsBtn" style="margin: 5px; padding: 16px 24px; background: #0099cc; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
+                    <button onclick="loadSelectedContacts()" style="margin: 5px; padding: 16px 24px; background: #0099cc; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">
                         📋 SELECT SPECIFIC CONTACTS
                     </button>
                 </div>
@@ -697,17 +770,13 @@
                     <button class="close-btn" id="btnCloseText">&times;</button>
                 </div>
                 <div class="text-input-content" style="margin-top: 10px;">
-                    <div style="font-size: 14px; font-weight: bold; color: #9933cc; margin-bottom: 8px;">
-                        Type your text and tap speak to have it read aloud:
-                    </div>
-                    <textarea class="text-input large-text-input" id="largeTextInputField" placeholder="Type what you want to say here..."></textarea>
-                    
-                    <div class="speak-text-container">
-                        <button class="speak-phrase-btn" id="speakTextBtn" disabled>
-                            🔊 SPEAK
+                    <div class="speak-text-container" style="margin-top: 60px;">
+                        <button class="speak-phrase-btn" id="speakTextBtn">
+                            🔊 SPEAK TEXT
                         </button>
+                        <textarea class="text-input large-text-input" id="largeTextInputField"
+                                  placeholder="Type your message here..." style="margin-top: 8px; padding-top: 50px;"></textarea>
                     </div>
-                    
                     <div style="padding: 16px; text-align: center; background-color: #f0f0f0; margin-top: 8px; position: fixed; bottom: 0; left: 0; right: 0; z-index: 999;">
                         <button class="btn-home" id="btnTextHome">🏠 HOME</button>
                     </div>
@@ -725,7 +794,7 @@
                 <div style="font-size: 16px; line-height: 1.6; color: #333;">
                     <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #0099cc;">
                         <strong>🎤 Available Voice Commands</strong><br>
-                        <span style="font-size: 14px; color: #666;">Voice commands work on all pages - watch for green indicator</span>
+                        <span style="font-size: 14px; color: #666;">Watch for the green indicator (top-right) showing voice commands are active</span>
                     </div>
                     
                     <div style="margin-bottom: 25px;">
@@ -751,7 +820,7 @@
                             • "Hey Leslie, <strong>hourly</strong>" - Shows 24-hour forecast<br>
                             • "Hey Leslie, <strong>weekly</strong>" - Shows 7-day forecast<br>
                             • "Hey Leslie, <strong>7 day</strong>" - Shows 7-day forecast<br>
-                            • "Hey Leslie, <strong>close weather</strong>" - Closes weather displays<br>
+                            • "Hey Leslie, <strong>close</strong>" - Closes weather displays<br>
                         </div>
                     </div>
                     
@@ -775,6 +844,8 @@
                             • "Hey Leslie, <strong>speak slower</strong>" - Decreases speech speed<br>
                             • "Hey Leslie, <strong>pause more</strong>" - Increases pause between words<br>
                             • "Hey Leslie, <strong>pause less</strong>" - Decreases pause between words<br>
+                            • "Hey Leslie, <strong>voice commands off</strong>" - Disables voice responses<br>
+                            • "Hey Leslie, <strong>voice commands on</strong>" - Enables voice responses<br>
                         </div>
                     </div>
                     
@@ -782,9 +853,9 @@
                         <strong style="color: #856404;">💡 Tips for Better Recognition</strong><br>
                         <div style="margin-top: 8px; font-size: 14px; color: #856404;">
                             • Speak clearly and at normal volume<br>
-                            • Watch for the green indicator (top-right) to confirm voice commands are active<br>
-                            • Voice commands work globally on all pages<br>
-                            • Speech page has separate continuous recognition for phrases<br>
+                            • Wait for the green indicator before speaking<br>
+                            • Voice commands work from any page except speech recognition<br>
+                            • Commands are processed quickly and continuously<br>
                         </div>
                     </div>
                 </div>
@@ -804,11 +875,12 @@
                 <div class="api-key-section">
                     <div class="settings-title">OpenAI API Key (for Enhanced Recognition)</div>
                     <div class="settings-description">
-                        Enter your OpenAI API key to enable enhanced speech recognition with better accuracy for unclear speech.
+                        Enter your OpenAI API key to enable Enhanced Recognition mode.
+                        Get yours at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>
                     </div>
-                    <input type="password" class="api-key-input" id="apiKeyInput" placeholder="Enter your OpenAI API key here...">
+                    <input type="password" class="api-key-input" id="apiKeyInput" placeholder="sk-...">
                     <div style="font-size: 12px; margin-top: 4px; color: #666;">
-                        This key stays on your device and is only used for speech recognition.
+                        Your API key is stored locally and never shared
                     </div>
                 </div>
                 <div class="settings-section">
@@ -827,9 +899,9 @@
                 </div>
                 <div class="settings-section">
                     <div class="settings-title">Pause Between Words</div>
-                    <div class="settings-description">How long to wait after you stop speaking before processing your complete phrase (higher = waits longer for you to finish)</div>
-                    <input type="range" class="slider" id="pauseBetweenWordsSlider" min="0.5" max="4" step="0.1" value="1.5">
-                    <div class="setting-value" id="pauseBetweenWordsValue">1.5 seconds</div>
+                    <div class="settings-description">How long to wait for you to continue speaking (helps with slower speech patterns)</div>
+                    <input type="range" class="slider" id="pauseBetweenWordsSlider" min="0.5" max="5" step="0.5" value="0.5">
+                    <div class="setting-value" id="pauseBetweenWordsValue">0.5 seconds</div>
                 </div>
                 <div class="settings-section">
                     <div class="settings-title">Enhanced Recognition Mode</div>
@@ -852,62 +924,44 @@
             </div>
             <button class="back-btn" id="btnSettingsHome">← Back</button>
         </div>
-
-        <!-- Weather Display -->
-        <div id="weatherDisplay" class="weather-display hidden">
-            <div class="weather-title" id="weatherTitle">Weather Information</div>
-            <div class="weather-content" id="weatherContent">Loading weather data...</div>
-            <div class="weather-controls">
-                <button class="weather-btn" onclick="showCurrentWeather()">Current</button>
-                <button class="weather-btn" onclick="showHourlyWeather()">24 Hours</button>
-                <button class="weather-btn" onclick="showWeeklyWeather()">7 Days</button>
-                <button class="weather-btn" onclick="hideWeather()">Close</button>
-            </div>
-        </div>
-
-        <!-- Swipe Gesture Areas -->
-        <div id="swipeBottom" class="swipe-edge swipe-bottom"></div>
-        <div id="swipeLeft" class="swipe-edge swipe-left"></div>
-        <div id="swipeRight" class="swipe-edge swipe-right"></div>
-
-        <!-- Voice Command Status Indicator -->
-        <div id="voiceCommandStatus" class="voice-command-status">🎤 Voice Commands Ready</div>
     </div>
 
     <script>
-        // === GLOBAL STATE MANAGEMENT - COMPLETELY FIXED ===
-        let speechRecognition = null; // For speech page continuous listening
-        let voiceCommandRecognition = null; // For global voice commands
-        let isMainListening = false; // Speech page listening
-        let isVoiceCommandListening = false; // Global voice command listening
+        // Global variables
+        let recognition = null;
+        let voiceCommandRecognition = null;
+        let isListening = false;
+        let isVoiceCommandListening = false;
         let speechSynth = window.speechSynthesis;
         let currentPage = 'home';
+        let pageHistory = ['home'];
         let contacts = [];
         let filteredContacts = [];
         let userLocation = null;
+        let phraseHistory = [];
+        let microphonePermissionGranted = false;
         let isInitialized = false;
         
-        // Voice command control
-        let lastVoiceCommand = '';
-        let lastVoiceCommandTime = 0;
+        // Voice command initialization tracking
+        let voiceCommandsInitialized = false;
         
-        // Speech page recognition control - COMPLETELY FIXED
-        let shouldKeepListening = false;
-        let userStoppedManually = false;
+        // Session timeout
         let sessionTimeoutId = null;
         let lastSpeechTime = null;
-        let restartTimer = null;
-        let isRestarting = false;
-        let voiceCommandRestartTimer = null;
-        let voiceCommandsDisabled = false; // NEW: Global disable flag
-        const SESSION_TIMEOUT = 2 * 60 * 1000;
-        const RESTART_DELAY = 2000;
+        const SESSION_TIMEOUT = 3 * 60 * 1000; // 3 minutes
         
-        // Speech processing control
-        let lastSpokenPhrase = '';
-        let lastSpokenTime = 0;
+        // Speech tracking
+        let lastProcessedPhrase = '';
+        let lastPhraseTime = 0;
+        let lastVoiceCommand = '';
+        let lastVoiceCommandTime = 0;
         let isSpeaking = false;
-        let currentSpeechUtterance = null;
+        
+        // Speech recognition state variables
+        let isProcessingCurrentPhrase = false;
+        let speechTimeout = null;
+        let completePhraseBuffer = '';
+        let lastResultLength = 0;
         
         // Settings
         let settings = {
@@ -915,890 +969,67 @@
             speakVoiceCommands: true,
             autoEnhanced: true,
             apiKey: '',
-            pauseBetweenWords: 1.5,
+            pauseBetweenWords: 0.5,
             enhancedMode: false
         };
 
-        // === SPEECH PAGE RECOGNITION - CAPTURE COMPLETE PHRASES ===
-        function createSpeechRecognition() {
-            console.log('🎤 Creating recognition for COMPLETE phrases...');
+        // === INITIALIZATION ===
+        function initApp() {
+            console.log('🚀 Initializing Leslie Speech Assistant...');
             
-            // Clean up existing recognition
-            if (speechRecognition) {
-                try {
-                    speechRecognition.abort();
-                    speechRecognition.onstart = null;
-                    speechRecognition.onend = null;
-                    speechRecognition.onerror = null;
-                    speechRecognition.onresult = null;
-                } catch (e) {}
-                speechRecognition = null;
-            }
-            
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            
-            if (!SpeechRecognition) {
-                console.error('❌ Speech Recognition not supported');
-                updateStatus('❌ Speech Recognition not supported');
-                return false;
-            }
-            
-            speechRecognition = new SpeechRecognition();
-            speechRecognition.continuous = false; // Single phrase mode for complete capture
-            speechRecognition.interimResults = true;
-            speechRecognition.lang = 'en-US';
-            speechRecognition.maxAlternatives = 1;
-
-            let completeTranscript = '';
-            let isProcessingResult = false;
-
-            speechRecognition.onstart = function() {
-                console.log('🎤 ✅ Recognition started for complete phrase');
-                isMainListening = true;
-                completeTranscript = '';
-                isProcessingResult = false;
-                updateListenButton();
-                updateStatus('🎤 Listening for complete phrase... Speak now!');
-                resetSessionTimeout();
-            };
-
-            speechRecognition.onend = function() {
-                console.log('🎤 Recognition ended');
-                isMainListening = false;
-                updateListenButton();
-                
-                // Process final result if we have one and haven't processed it yet
-                if (completeTranscript.trim() && !isProcessingResult) {
-                    console.log('📝 Processing complete phrase on end:', completeTranscript);
-                    isProcessingResult = true;
-                    processSpeechPhrase(completeTranscript.trim());
-                }
-                
-                // Auto-restart for continuous mode (with delay to prevent truncation)
-                if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !isSpeaking) {
-                    setTimeout(() => {
-                        if (shouldKeepListening && !userStoppedManually && currentPage === 'speech' && !isSpeaking) {
-                            try {
-                                console.log('🔄 Restarting for next complete phrase...');
-                                createSpeechRecognition();
-                                speechRecognition.start();
-                            } catch (e) {
-                                console.log('Restart failed:', e);
-                                shouldKeepListening = false;
-                                updateStatus('❌ Recognition failed - click START TALKING');
-                            }
-                        }
-                    }, 2000); // 2 second delay for complete phrase processing
-                } else {
-                    updateStatus('✅ Stopped listening');
-                    shouldKeepListening = false;
-                }
-            };
-
-            speechRecognition.onerror = function(event) {
-                console.error('🎤 Speech recognition error:', event.error);
-                isMainListening = false;
-                updateListenButton();
-                
-                if (event.error === 'not-allowed') {
-                    updateStatus('❌ Microphone access denied');
-                    shouldKeepListening = false;
-                    userStoppedManually = true;
-                } else if (event.error === 'no-speech') {
-                    updateStatus('🤫 No speech heard - trying again...');
-                } else {
-                    console.log('Recognition error - will attempt recovery');
-                    updateStatus('🎤 Error - trying again...');
-                }
-            };
-
-            speechRecognition.onresult = function(event) {
-                let interimTranscript = '';
-                let newFinalText = '';
-                
-                // Process ALL results to capture complete phrases
-                for (let i = 0; i < event.results.length; i++) {
-                    const result = event.results[i];
-                    const transcript = result[0].transcript;
-                    
-                    if (result.isFinal) {
-                        console.log('✅ FINAL result:', transcript);
-                        newFinalText += transcript;
-                        completeTranscript += transcript; // Build complete transcript
-                    } else {
-                        interimTranscript += transcript;
-                    }
-                }
-                
-                // Show interim results
-                if (interimTranscript.trim()) {
-                    displayInterimPhrase(interimTranscript.trim());
-                }
-                
-                // Process final text immediately when we get it
-                if (newFinalText.trim() && !isProcessingResult) {
-                    console.log('📝 Processing final text immediately:', newFinalText.trim());
-                    isProcessingResult = true;
-                    completeTranscript = newFinalText.trim(); // Use the final text
-                    processSpeechPhrase(completeTranscript);
-                }
-                
-                resetSessionTimeout();
-            };
-            
-            return true;
-        }
-
-        // === VOICE COMMANDS - IMMEDIATE START, FAST RESTART ===
-        function createVoiceCommandRecognition() {
-            console.log('🗣️ Creating IMMEDIATE voice commands...');
-            
-            if (voiceCommandRecognition) {
-                try {
-                    voiceCommandRecognition.abort();
-                    voiceCommandRecognition.onstart = null;
-                    voiceCommandRecognition.onend = null;
-                    voiceCommandRecognition.onerror = null;
-                    voiceCommandRecognition.onresult = null;
-                } catch (e) {}
-                voiceCommandRecognition = null;
-            }
-            
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            
-            if (!SpeechRecognition) {
-                console.error('❌ Voice commands not supported');
-                return false;
-            }
-            
-            voiceCommandRecognition = new SpeechRecognition();
-            voiceCommandRecognition.continuous = false; // Single-shot for fast restart
-            voiceCommandRecognition.interimResults = false;
-            voiceCommandRecognition.lang = 'en-US';
-            voiceCommandRecognition.maxAlternatives = 1;
-
-            voiceCommandRecognition.onstart = function() {
-                console.log('🗣️ ✅ Voice commands ACTIVE');
-                isVoiceCommandListening = true;
-                updateVoiceCommandStatus('active');
-            };
-
-            voiceCommandRecognition.onend = function() {
-                console.log('🗣️ Voice commands ended - FAST restart');
-                isVoiceCommandListening = false;
-                updateVoiceCommandStatus('inactive');
-                
-                // FAST restart for immediate availability
-                if (!voiceCommandsDisabled && 
-                    currentPage !== 'speech' && 
-                    !isMainListening && 
-                    !shouldKeepListening) {
-                    
-                    setTimeout(() => {
-                        if (!voiceCommandsDisabled && 
-                            currentPage !== 'speech' && 
-                            !isMainListening && 
-                            !shouldKeepListening) {
-                            try {
-                                console.log('🔄 FAST restarting voice commands...');
-                                voiceCommandRecognition.start();
-                            } catch (e) {
-                                console.log('Voice command restart failed:', e);
-                                // Retry once after short delay
-                                setTimeout(() => {
-                                    if (!voiceCommandsDisabled) {
-                                        try {
-                                            voiceCommandRecognition.start();
-                                        } catch (e2) {}
-                                    }
-                                }, 2000);
-                            }
-                        }
-                    }, 3000); // 3 second restart - much faster than 15 seconds
-                }
-            };
-
-            voiceCommandRecognition.onerror = function(event) {
-                console.error('🗣️ Voice command error:', event.error);
-                isVoiceCommandListening = false;
-                updateVoiceCommandStatus('inactive');
-                
-                if (event.error === 'not-allowed') {
-                    voiceCommandsDisabled = true;
-                    console.log('❌ Voice commands disabled - permission denied');
-                } else {
-                    // Quick retry on other errors
-                    setTimeout(() => {
-                        if (!voiceCommandsDisabled && currentPage !== 'speech') {
-                            try {
-                                voiceCommandRecognition.start();
-                            } catch (e) {}
-                        }
-                    }, 2000);
-                }
-            };
-
-            voiceCommandRecognition.onresult = function(event) {
-                const result = event.results[event.results.length - 1];
-                if (result.isFinal) {
-                    const transcript = result[0].transcript.trim();
-                    console.log('🗣️ Voice command heard:', transcript);
-                    
-                    if (isVoiceCommand(transcript)) {
-                        console.log('🎯 Executing voice command:', transcript);
-                        processVoiceCommand(transcript);
-                        
-                        // IMMEDIATE restart after command execution
-                        setTimeout(() => {
-                            if (!voiceCommandsDisabled && 
-                                currentPage !== 'speech' && 
-                                !isMainListening && 
-                                !shouldKeepListening) {
-                                try {
-                                    console.log('🔄 Immediate restart after command execution');
-                                    voiceCommandRecognition.start();
-                                } catch (e) {
-                                    console.log('Immediate restart failed:', e);
-                                }
-                            }
-                        }, 1000); // 1 second restart after command
-                    }
-                }
-            };
-            
-            return true;
-        }
-        
-        function stopVoiceCommands() {
-            console.log('🛑 Stopping voice commands...');
-            voiceCommandsDisabled = true;
-            
-            if (voiceCommandRestartTimer) {
-                clearTimeout(voiceCommandRestartTimer);
-                voiceCommandRestartTimer = null;
-            }
-            
-            if (voiceCommandRecognition) {
-                try {
-                    voiceCommandRecognition.abort();
-                } catch (e) {}
-            }
-            
-            isVoiceCommandListening = false;
-            updateVoiceCommandStatus('inactive');
-        }
-        
-        function startVoiceCommands() {
-            console.log('🔄 Starting voice commands IMMEDIATELY...');
-            voiceCommandsDisabled = false;
-            
-            if (currentPage === 'speech' || isMainListening || shouldKeepListening) {
-                console.log('🚫 Not starting voice commands - speech page active');
+            if (isInitialized) {
+                console.log('⚠️ App already initialized, skipping...');
                 return;
             }
             
-            // START IMMEDIATELY - no delays
-            const voiceCommandCreated = createVoiceCommandRecognition();
-            if (voiceCommandCreated) {
-                try {
-                    voiceCommandRecognition.start();
-                    console.log('✅ Voice commands started IMMEDIATELY');
-                } catch (error) {
-                    console.log('⚠️ Voice commands failed to start:', error.message);
-                    // Quick retry
-                    setTimeout(() => {
-                        if (!voiceCommandsDisabled && currentPage !== 'speech') {
-                            try {
-                                voiceCommandRecognition.start();
-                            } catch (e) {}
-                        }
-                    }, 1000);
+            try {
+                loadSettings();
+                setupEventHandlers();
+                
+                if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                    console.error('❌ Speech recognition not supported');
+                    updateStatus('❌ Speech recognition not supported in this browser');
+                    return;
                 }
-            }
-        }
-
-        // Display functions for speech page
-        function displayInterimPhrase(interimText) {
-            const recognizedTextEl = document.getElementById('recognizedText');
-            if (recognizedTextEl && interimText.trim()) {
-                recognizedTextEl.innerHTML = `
-                    <div style="background: #fff8e1; padding: 12px; border-radius: 4px; margin: 8px 0; border-left: 4px solid #ffa000; color: #666; font-style: italic;">
-                        🎤 Speaking: "${interimText}"
-                    </div>
-                `;
-                recognizedTextEl.scrollTop = recognizedTextEl.scrollHeight;
-            }
-        }
-
-        function processSpeechPhrase(phrase) {
-            console.log('✅ Processing speech phrase:', phrase);
-            displayFinalPhrase(phrase);
-            
-            if (!isSpeaking) {
+                
+                setupSpeechRecognition();
+                initializeContacts();
+                setupSwipeGestures();
+                getUserLocation();
+                updateEnhancedSectionVisibility();
+                updateTextSpeakButton();
+                clearTextInput();
+                
+                isInitialized = true;
+                
                 setTimeout(() => {
-                    speakCompletePhrase(phrase);
-                }, 300);
-            }
-        }
-
-        function displayFinalPhrase(phrase) {
-            const recognizedTextEl = document.getElementById('recognizedText');
-            if (recognizedTextEl) {
-                recognizedTextEl.innerHTML = `
-                    <div style="background: #e8f5e8; padding: 15px; border-radius: 6px; margin: 10px 0; border-left: 4px solid #28a745; font-weight: bold; font-size: 16px;">
-                        ✅ You said: "${phrase}"
-                    </div>
-                `;
-                recognizedTextEl.scrollTop = recognizedTextEl.scrollHeight;
-            }
-        }
-
-        // SPEECH SYNTHESIS - FIX FREEZING AFTER SPEECH
-        function speakCompletePhrase(phrase) {
-            console.log('🔊 Speaking COMPLETE phrase without freezing:', phrase);
-            
-            if (isSpeaking) {
-                console.log('🔊 Already speaking, skipping');
-                return;
-            }
-            
-            console.log('🔊 Starting speech for FULL phrase:', phrase);
-            isSpeaking = true;
-            lastSpokenPhrase = phrase;
-            lastSpokenTime = Date.now();
-            
-            updateStatus('🔊 Speaking: "' + phrase + '"');
-            
-            // Complete speech cleanup
-            try {
-                speechSynth.cancel();
-                if (currentSpeechUtterance) {
-                    currentSpeechUtterance = null;
-                }
-            } catch (e) {}
-            
-            try {
-                console.log('🔊 Creating utterance for COMPLETE text:', phrase);
-                const utterance = new SpeechSynthesisUtterance(phrase);
-                utterance.text = phrase;
-                utterance.lang = 'en-US';
-                utterance.rate = Math.max(0.5, Math.min(2.0, settings.speechSpeed || 1.0));
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
+                    if (isInitialized) {
+                        initializeVoiceCommandsWithPermissions();
+                    }
+                }, 2000);
                 
-                utterance.onstart = function() {
-                    console.log('🔊 ✅ Speech STARTED for complete phrase');
-                    updateStatus('🔊 Speaking: "' + phrase + '"');
-                };
-                
-                utterance.onend = function() {
-                    console.log('🔊 ✅ Speech COMPLETED - preparing for next phrase');
-                    isSpeaking = false;
-                    currentSpeechUtterance = null;
-                    updateStatus('🎤 Ready for next phrase...');
-                    
-                    // Clear display and prepare for next phrase
-                    setTimeout(() => {
-                        const recognizedTextEl = document.getElementById('recognizedText');
-                        if (recognizedTextEl && shouldKeepListening) {
-                            recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
-                        }
-                        
-                        // CRITICAL FIX: Don't restart recognition here - let the main onend handler do it
-                        console.log('🎤 Speech complete - waiting for recognition restart cycle');
-                        updateStatus('🎤 Listening for your next phrase...');
-                        
-                    }, 500);
-                };
-                
-                utterance.onerror = function(event) {
-                    console.error('🔊 Speech error:', event.error);
-                    isSpeaking = false;
-                    currentSpeechUtterance = null;
-                    updateStatus('❌ Speech error - continuing...');
-                };
-                
-                currentSpeechUtterance = utterance;
-                console.log('🔊 Starting speech synthesis...');
-                speechSynth.speak(utterance);
+                console.log('✅ Leslie Speech Assistant initialized successfully!');
                 
             } catch (error) {
-                console.error('🔊 Speech synthesis error:', error);
-                isSpeaking = false;
-                currentSpeechUtterance = null;
-                updateStatus('❌ Speech failed - continuing...');
+                console.error('❌ Error during initialization:', error);
+                updateStatus('❌ Initialization error - please refresh page');
             }
         }
 
-        // === VOICE COMMANDS ===
-        function isVoiceCommand(phrase) {
-            const normalizedPhrase = phrase.toLowerCase().trim();
-            return normalizedPhrase.includes('hey leslie') || normalizedPhrase.startsWith('leslie');
-        }
-
-        function processVoiceCommand(phrase) {
-            const normalizedPhrase = phrase.toLowerCase().trim();
-            console.log('🗣️ Processing voice command:', normalizedPhrase);
-            
-            if (normalizedPhrase === lastVoiceCommand && (Date.now() - lastVoiceCommandTime) < 3000) {
-                console.log('🚫 Duplicate voice command ignored');
-                return;
-            }
-            
-            lastVoiceCommand = normalizedPhrase;
-            lastVoiceCommandTime = Date.now();
-            
-            let command = '';
-            if (normalizedPhrase.includes('hey leslie')) {
-                command = normalizedPhrase.split('hey leslie')[1].trim();
-            } else if (normalizedPhrase.startsWith('leslie')) {
-                command = normalizedPhrase.substring(6).trim();
-            }
-            
-            executeVoiceCommand(command);
-        }
-
-        function executeVoiceCommand(cmd) {
-            console.log('🎯 Executing voice command:', cmd);
-            
-            // Navigation commands
-            if (cmd.includes('home')) {
-                showPage('home');
-                speakResponse('Going to home page');
-                return;
-            }
-            
-            if (cmd.includes('start talking') || cmd.includes('speech')) {
-                showPage('speech');
-                speakResponse('Starting speech recognition');
-                return;
-            }
-            
-            if (cmd.includes('start texting') || cmd.includes('text')) {
-                showPage('textInput');
-                speakResponse('Opening text input');
-                return;
-            }
-            
-            if (cmd.includes('phone') || cmd.includes('contact')) {
-                showPage('phone');
-                speakResponse('Opening contacts');
-                return;
-            }
-            
-            if (cmd.includes('settings')) {
-                showPage('settings');
-                speakResponse('Opening settings');
-                return;
-            }
-            
-            if (cmd.includes('help') || cmd.includes('commands')) {
-                showPage('commands');
-                speakResponse('Showing voice commands');
-                return;
-            }
-            
-            // Weather commands
-            if (cmd.includes('weather') && !cmd.includes('close')) {
-                showCurrentWeather();
-                speakResponse('Showing current weather');
-                return;
-            }
-            
-            if (cmd.includes('hourly')) {
-                showHourlyWeather();
-                speakResponse('Showing hourly forecast');
-                return;
-            }
-            
-            if (cmd.includes('weekly') || cmd.includes('7 day')) {
-                showWeeklyWeather();
-                speakResponse('Showing weekly forecast');
-                return;
-            }
-            
-            if (cmd.includes('close')) {
-                hideWeather();
-                speakResponse('Closing weather');
-                return;
-            }
-            
-            // Speech settings
-            if (cmd.includes('speak faster')) {
-                adjustSpeechSpeed(0.2);
-                speakResponse('Speech speed increased');
-                return;
-            }
-            
-            if (cmd.includes('speak slower')) {
-                adjustSpeechSpeed(-0.2);
-                speakResponse('Speech speed decreased');
-                return;
-            }
-            
-            if (cmd.includes('pause more')) {
-                adjustPauseBetweenWords(0.3);
-                speakResponse('Pause between words increased');
-                return;
-            }
-            
-            if (cmd.includes('pause less')) {
-                adjustPauseBetweenWords(-0.3);
-                speakResponse('Pause between words decreased');
-                return;
-            }
-            
-            // Recognition commands
-            if (cmd.includes('enhanced mode on')) {
-                updateEnhancedMode(true);
-                speakResponse('Enhanced mode enabled');
-                return;
-            }
-            
-            if (cmd.includes('enhanced mode off')) {
-                updateEnhancedMode(false);
-                speakResponse('Enhanced mode disabled');
-                return;
-            }
-            
-            if (cmd.includes('stop listening')) {
-                stopListening();
-                speakResponse('Stopping speech recognition');
-                return;
-            }
-            
-            console.log('❓ Unknown voice command:', cmd);
-            speakResponse('I did not understand that command');
-        }
-
-        function speakResponse(text) {
-            if (!settings.speakVoiceCommands) return;
-            
-            console.log('🔊 Speaking response:', text);
-            speechSynth.cancel();
-            
-            setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.rate = settings.speechSpeed || 1.0;
-                utterance.volume = 0.8;
-                speechSynth.speak(utterance);
-            }, 100);
-        }
-
-        function adjustSpeechSpeed(delta) {
-            const newSpeed = Math.max(0.5, Math.min(2.0, settings.speechSpeed + delta));
-            updateSpeechSpeed(newSpeed);
-        }
-
-        function adjustPauseBetweenWords(delta) {
-            const newPause = Math.max(0.5, Math.min(4.0, settings.pauseBetweenWords + delta));
-            updatePauseBetweenWords(newPause);
-        }
-
-        function updateVoiceCommandStatus(status) {
-            const statusEl = document.getElementById('voiceCommandStatus');
-            if (statusEl) {
-                statusEl.className = 'voice-command-status';
-                
-                if (status === 'active') {
-                    statusEl.classList.add('active');
-                    statusEl.textContent = '🎤 Voice Commands Active';
-                } else if (status === 'permission-needed') {
-                    statusEl.classList.add('permission-needed');
-                    statusEl.textContent = '🎤 Microphone Permission Needed';
-                } else {
-                    statusEl.style.display = 'none';
-                }
-            }
-        }
-
-        // Session timeout for speech page
-        function resetSessionTimeout() {
-            if (sessionTimeoutId) {
-                clearTimeout(sessionTimeoutId);
-                sessionTimeoutId = null;
-            }
-            
-            lastSpeechTime = Date.now();
-            
-            sessionTimeoutId = setTimeout(() => {
-                if (shouldKeepListening && currentPage === 'speech') {
-                    console.log('⏰ 2-minute session timeout reached');
-                    stopListening();
-                    updateStatus('⏰ Session timeout (2 minutes) - Click "START TALKING" to restart');
-                }
-                sessionTimeoutId = null;
-            }, SESSION_TIMEOUT);
-        }
-
-        function clearSessionTimeout() {
-            if (sessionTimeoutId) {
-                clearTimeout(sessionTimeoutId);
-                sessionTimeoutId = null;
-            }
-        }
-
-        // Speech page controls - FIXED
-        function toggleListening() {
-            if (isMainListening || shouldKeepListening) {
-                stopListening();
-            } else {
-                startListening();
-            }
-        }
-
-        function startListening() {
-            console.log('🎤 Starting speech page listening...');
-            
-            if (shouldKeepListening) {
-                console.log('⚠️ Already listening');
-                return;
-            }
-            
-            // FIXED: Clear any existing restart timers
-            if (restartTimer) {
-                clearTimeout(restartTimer);
-                restartTimer = null;
-            }
-            
-            shouldKeepListening = true;
-            userStoppedManually = false;
-            isRestarting = false; // Clear restart flag
-            isSpeaking = false;
-            
-            updateStatus('🎤 Preparing continuous recognition...');
-            
-            const recognitionCreated = createSpeechRecognition();
-            
-            if (!recognitionCreated) {
-                updateStatus('❌ Speech recognition not supported');
-                shouldKeepListening = false;
-                return;
-            }
-            
-            try {
-                updateStatus('🎤 Starting continuous listening...');
-                speechRecognition.start();
-            } catch (error) {
-                console.error('❌ Failed to start recognition:', error);
-                shouldKeepListening = false;
-                isMainListening = false;
-                isRestarting = false;
-                updateListenButton();
-                updateStatus('❌ Failed to start recognition');
-            }
-        }
-
-        function stopListening() {
-            console.log('🛑 Stopping speech page listening...');
-            
-            shouldKeepListening = false;
-            userStoppedManually = true;
-            isRestarting = false; // Clear restart flag
-            
-            // FIXED: Clear restart timer when manually stopping
-            if (restartTimer) {
-                clearTimeout(restartTimer);
-                restartTimer = null;
-            }
-            
-            clearSessionTimeout();
-            
-            speechSynth.cancel();
-            if (currentSpeechUtterance) {
-                currentSpeechUtterance = null;
-            }
-            isSpeaking = false;
-            
-            if (speechRecognition) {
-                try {
-                    speechRecognition.abort();
-                } catch (e) {
-                    console.log('Recognition already stopped');
-                }
-            }
-            
-            isMainListening = false;
-            updateListenButton();
-            updateStatus('🛑 Stopped - Click "START TALKING" to begin again');
-        }
-
-        // === UI FUNCTIONS - RESTORE VOICE COMMAND MANAGEMENT ===
-        function showPage(pageId) {
-            console.log('📄 Showing page:', pageId);
-            
-            try {
-                // Stop speech page activities when leaving
-                if (currentPage === 'speech' && pageId !== 'speech') {
-                    console.log('🧹 Leaving speech page - stopping all speech activities...');
-                    stopListening();
-                }
-                
-                // Manage voice commands properly
-                if (pageId === 'speech') {
-                    console.log('🛑 Entering speech page - stopping voice commands...');
-                    stopVoiceCommands();
-                } else if (currentPage === 'speech' && pageId !== 'speech') {
-                    console.log('🔄 Leaving speech page - re-enabling voice commands...');
-                    setTimeout(() => {
-                        startVoiceCommands();
-                    }, 2000);
-                }
-                
-                document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
-                
-                const targetPage = document.getElementById(pageId + 'Page');
-                if (targetPage) {
-                    targetPage.classList.add('active');
-                    currentPage = pageId;
-                    
-                    if (pageId === 'speech') {
-                        console.log('📄 Setting up speech page');
-                        
-                        const recognizedTextEl = document.getElementById('recognizedText');
-                        if (recognizedTextEl) {
-                            recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px; font-size: 18px;">🎤 Click START TALKING to begin continuous listening</div>';
-                        }
-                        
-                        updateStatus('🎤 Ready - Click START TALKING');
-                        updateListenButton();
-                    }
-                    
-                    if (pageId === 'phone') {
-                        console.log('📞 Setting up phone page');
-                        displayContactsOnPhonePage();
-                    }
-                    
-                    if (pageId === 'textInput') {
-                        const textField = document.getElementById('largeTextInputField');
-                        if (textField) {
-                            setTimeout(() => {
-                                textField.focus();
-                                if (/Mobi|Android/i.test(navigator.userAgent)) {
-                                    textField.click();
-                                }
-                            }, 300);
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error('❌ Error showing page:', error);
-            }
-        }
-
-        function updateListenButton() {
-            const listenButton = document.getElementById('listenButton');
-            if (listenButton) {
-                if (isMainListening || shouldKeepListening) {
-                    listenButton.textContent = 'STOP LISTENING';
-                    listenButton.className = 'control-btn btn-stop';
-                } else {
-                    listenButton.textContent = 'START TALKING';
-                    listenButton.className = 'control-btn btn-listen';
-                }
-            }
-        }
-
-        function updateStatus(message) {
-            const statusText = document.getElementById('statusText');
-            if (statusText) {
-                statusText.textContent = message;
-                console.log('📝 Status:', message);
-            }
-        }
-
-        function clearSpeechText() {
-            console.log('🗑️ Clearing speech display...');
-            
-            speechSynth.cancel();
-            isSpeaking = false;
-            
-            const recognizedTextEl = document.getElementById('recognizedText');
-            if (recognizedTextEl) {
-                recognizedTextEl.innerHTML = '';
-                if (shouldKeepListening) {
-                    recognizedTextEl.innerHTML = '<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for your next phrase...</div>';
-                } else {
-                    recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for speech recognition...</div>';
-                }
-            }
-        }
-
-        // === TEXT INPUT FUNCTIONS ===
-        function speakText(text) {
-            if (!text || text.trim() === '') {
-                console.log('🚫 No text to speak');
-                return;
-            }
-            speakCompletePhrase(text.trim());
-        }
-
-        function speakTextInput() {
-            const textField = document.getElementById('largeTextInputField');
-            if (textField && textField.value.trim()) {
-                speakText(textField.value.trim());
-            }
-        }
-
-        function updateTextSpeakButton() {
-            const speakBtn = document.getElementById('speakTextBtn');
-            const textField = document.getElementById('largeTextInputField');
-            
-            if (speakBtn && textField) {
-                if (textField.value.trim()) {
-                    speakBtn.disabled = false;
-                    speakBtn.style.opacity = '1';
-                } else {
-                    speakBtn.disabled = true;
-                    speakBtn.style.opacity = '0.5';
-                }
-            }
-        }
-
-        // === EVENT HANDLERS ===
         function setupEventHandlers() {
             try {
-                console.log('🔧 Setting up event handlers...');
-                
-                // Main navigation buttons
                 const btnStartTalking = document.getElementById('btnStartTalking');
                 const btnStartTexting = document.getElementById('btnStartTexting');
                 const btnPhoneCall = document.getElementById('btnPhoneCall');
                 const btnCommands = document.getElementById('btnCommands');
                 const btnSettings = document.getElementById('btnSettings');
                 
-                if (btnStartTalking) {
-                    btnStartTalking.addEventListener('click', function() {
-                        console.log('🎤 Start Talking clicked');
-                        showPage('speech');
-                    });
-                }
-                if (btnStartTexting) {
-                    btnStartTexting.addEventListener('click', function() {
-                        console.log('📝 Start Texting clicked');
-                        showPage('textInput');
-                    });
-                }
-                if (btnPhoneCall) {
-                    btnPhoneCall.addEventListener('click', function() {
-                        console.log('📞 Phone Call clicked');
-                        showPage('phone');
-                    });
-                }
-                if (btnCommands) {
-                    btnCommands.addEventListener('click', function() {
-                        console.log('🗣️ Commands clicked');
-                        showPage('commands');
-                    });
-                }
-                if (btnSettings) {
-                    btnSettings.addEventListener('click', function() {
-                        console.log('⚙️ Settings clicked');
-                        showPage('settings');
-                    });
-                }
+                if (btnStartTalking) btnStartTalking.addEventListener('click', startTalkingFromHome);
+                if (btnStartTexting) btnStartTexting.addEventListener('click', () => showPage('textInput'));
+                if (btnPhoneCall) btnPhoneCall.addEventListener('click', () => showPage('phone'));
+                if (btnCommands) btnCommands.addEventListener('click', () => showPage('commands'));
+                if (btnSettings) btnSettings.addEventListener('click', () => showPage('settings'));
                 
-                // Close buttons
                 const closeBtns = [
                     {id: 'btnCloseSpeech', action: () => showPage('home')},
                     {id: 'btnClosePhone', action: () => showPage('home')},
@@ -1812,7 +1043,6 @@
                     if (element) element.addEventListener('click', btn.action);
                 });
                 
-                // Speech page controls
                 const listenButton = document.getElementById('listenButton');
                 const clearButton = document.getElementById('clearButton');
                 const enhancedButton = document.getElementById('enhancedButton');
@@ -1821,7 +1051,6 @@
                 if (clearButton) clearButton.addEventListener('click', clearSpeechText);
                 if (enhancedButton) enhancedButton.addEventListener('click', startEnhancedRecognition);
                 
-                // Home buttons
                 const homeBtns = [
                     'btnPhoneHome', 'btnTextHome', 'btnSettingsHome', 'btnCommandsHome'
                 ];
@@ -1831,23 +1060,12 @@
                     if (element) element.addEventListener('click', () => showPage('home'));
                 });
                 
-                // Text input functionality
                 const speakTextBtn = document.getElementById('speakTextBtn');
                 const textInputField = document.getElementById('largeTextInputField');
                 
                 if (speakTextBtn) speakTextBtn.addEventListener('click', speakTextInput);
                 if (textInputField) textInputField.addEventListener('input', updateTextSpeakButton);
                 
-                // Contact functionality
-                const contactSearchInput = document.getElementById('contactSearchInput');
-                const loadAllBtn = document.getElementById('loadAllContactsBtn');
-                const loadSelectedBtn = document.getElementById('loadSelectedContactsBtn');
-                
-                if (contactSearchInput) contactSearchInput.addEventListener('input', (e) => filterContacts(e.target.value));
-                if (loadAllBtn) loadAllBtn.addEventListener('click', loadAllContacts);
-                if (loadSelectedBtn) loadSelectedBtn.addEventListener('click', loadSelectedContacts);
-                
-                // Settings
                 const settingsElements = [
                     {id: 'apiKeyInput', event: 'change', handler: (e) => saveApiKey(e.target.value)},
                     {id: 'speechSpeedSlider', event: 'input', handler: (e) => updateSpeechSpeed(e.target.value)},
@@ -1866,6 +1084,998 @@
                 
             } catch (error) {
                 console.error('❌ Error setting up event handlers:', error);
+            }
+        }
+
+        function setupSpeechRecognition() {
+            try {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                recognition = new SpeechRecognition();
+                recognition.continuous = true;
+                recognition.interimResults = true;
+                recognition.lang = 'en-US';
+                recognition.maxAlternatives = 1;
+
+                recognition.onstart = function() {
+                    console.log('🎤 *** RECOGNITION STARTED SUCCESSFULLY ***');
+                    isListening = true;
+                    updateListenButton();
+                    updateStatus(`🎤 Listening - Speak clearly now!`);
+                    resetSessionTimeout();
+                };
+
+                recognition.onend = function() {
+                    console.log('🎤 Recognition ended - attempting immediate restart for continuous mode');
+                    isListening = false;
+                    
+                    // Always restart immediately if we're in continuous listening mode
+                    const listenButton = document.getElementById('listenButton');
+                    if (currentPage === 'speech' && 
+                        listenButton && 
+                        listenButton.textContent === 'STOP LISTENING') {
+                        
+                        console.log('🔄 Immediately restarting recognition for continuous listening');
+                        
+                        // Start immediately - no delay
+                        try {
+                            recognition.start();
+                            isListening = true;
+                            console.log('✅ Recognition immediately restarted');
+                        } catch (e) {
+                            console.error('❌ Immediate restart failed, retrying:', e.message);
+                            // If immediate restart fails, try again after brief delay
+                            setTimeout(() => {
+                                if (currentPage === 'speech' && 
+                                    listenButton.textContent === 'STOP LISTENING' && 
+                                    !isListening) {
+                                    
+                                    try {
+                                        recognition.start();
+                                        isListening = true;
+                                        console.log('✅ Recognition restarted after retry');
+                                    } catch (e2) {
+                                        console.error('❌ Restart failed completely:', e2.message);
+                                        updateListenButton();
+                                        updateStatus('❌ Continuous listening failed - click "START TALKING" to restart');
+                                    }
+                                }
+                            }, 200);
+                        }
+                    } else {
+                        updateListenButton();
+                        updateStatus('✅ Stopped listening - Click "START TALKING" to restart');
+                    }
+                };
+
+                recognition.onerror = function(event) {
+                    console.error('🎤 Recognition error:', event.error);
+                    isListening = false;
+                    updateListenButton();
+                    
+                    if (event.error === 'not-allowed') {
+                        updateStatus('❌ Microphone permission denied');
+                        microphonePermissionGranted = false;
+                        return;
+                    }
+                    
+                    if (event.error === 'already-started') {
+                        console.log('⚠️ Recognition already started - clearing state');
+                        updateStatus('🔄 Recognition conflict resolved - ready to continue');
+                        return;
+                    }
+                    
+                    updateStatus('❌ Error: ' + event.error);
+                };
+
+                recognition.onresult = function(event) {
+                    lastSpeechTime = Date.now();
+                    resetSessionTimeout();
+                    
+                    // Skip if already processing a phrase
+                    if (isProcessingCurrentPhrase) {
+                        return;
+                    }
+                    
+                    // Get the most recent result
+                    let currentTranscript = '';
+                    let isFinal = false;
+                    
+                    // Just get the latest, most complete result
+                    if (event.results.length > 0) {
+                        const latestResult = event.results[event.results.length - 1];
+                        currentTranscript = latestResult[0].transcript.trim();
+                        isFinal = latestResult.isFinal;
+                    }
+                    
+                    // Show what we're hearing in real-time
+                    if (currentTranscript) {
+                        if (isFinal) {
+                            // Final result - start quick processing timer
+                            console.log('🎤 Final result received:', currentTranscript);
+                            updateStatus(`🎤 Heard: "${currentTranscript}" - Processing...`);
+                            
+                            // Clear any existing timeout
+                            if (speechTimeout) {
+                                clearTimeout(speechTimeout);
+                            }
+                            
+                            // Quick 1.5 second processing after final result
+                            speechTimeout = setTimeout(() => {
+                                if (currentTranscript && !isSpeaking && !isProcessingCurrentPhrase) {
+                                    isProcessingCurrentPhrase = true;
+                                    console.log('🎯 Processing phrase:', currentTranscript);
+                                    processCompletePhrase(currentTranscript);
+                                    
+                                    // Quick reset
+                                    setTimeout(() => {
+                                        isProcessingCurrentPhrase = false;
+                                        if (currentPage === 'speech' && isListening) {
+                                            updateStatus('🎤 Ready for next phrase!');
+                                        }
+                                    }, 1000);
+                                }
+                            }, 1500); // Just 1.5 seconds
+                            
+                        } else {
+                            // Interim result - show we're listening
+                            updateStatus(`🎤 Listening: "${currentTranscript}"...`);
+                        }
+                    }
+                };
+                
+                function processCompletePhrase(text) {
+                    if (!text || text.length <= 2 || isSpeaking) return;
+                    
+                    console.log('🎯 Processing complete phrase:', `"${text}"`);
+                    
+                    // Check for voice commands
+                    const lowerText = text.toLowerCase();
+                    const isLeslieCommand = lowerText.includes('hey leslie') || 
+                                          lowerText.includes('hey less') ||
+                                          lowerText.includes('hey lesley');
+                    
+                    if (isLeslieCommand) {
+                        console.log('🎯 Voice command detected:', text);
+                        updateStatus('🎤 Processing voice command...');
+                        processVoiceCommand(text);
+                        return;
+                    }
+                    
+                    // Check for duplicates - be more strict about duplicates
+                    const now = Date.now();
+                    const isDuplicate = text.toLowerCase() === lastProcessedPhrase.toLowerCase() && 
+                                       (now - lastPhraseTime) < 5000; // 5 second window
+                    
+                    if (!isDuplicate) {
+                        console.log('✅ Processing new complete phrase:', text);
+                        lastProcessedPhrase = text;
+                        lastPhraseTime = now;
+                        
+                        updateSpeechDisplay(text);
+                        updateStatus(`✅ Speaking: "${text}"`);
+                        
+                        // Speak the complete phrase back immediately
+                        speakText(text);
+                        
+                    } else {
+                        console.log('🚫 Ignoring duplicate phrase:', text);
+                        updateStatus('🎤 Ready for next phrase');
+                    }
+                }
+                
+                console.log('✅ Speech recognition set up successfully');
+                
+            } catch (error) {
+                console.error('❌ Error setting up speech recognition:', error);
+            }
+        }
+
+        // Simple, reliable speech function
+        function speakText(text) {
+            if (isSpeaking || !text || text.trim() === '') {
+                return;
+            }
+            
+            console.log('🔊 Speaking:', text);
+            isSpeaking = true;
+            
+            speechSynth.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = settings.speechSpeed || 1.0;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            utterance.lang = 'en-US';
+            
+            utterance.onend = function() {
+                console.log('✅ Speech finished');
+                isSpeaking = false;
+                if (currentPage === 'speech' && isListening) {
+                    updateStatus('🎤 Ready for next phrase!');
+                }
+            };
+            
+            utterance.onerror = function() {
+                isSpeaking = false;
+                if (currentPage === 'speech' && isListening) {
+                    updateStatus('🎤 Ready for next phrase!');
+                }
+            };
+            
+            speechSynth.speak(utterance);
+        }
+
+        // === VOICE COMMANDS ===
+        async function initializeVoiceCommandsWithPermissions() {
+            if (voiceCommandsInitialized) {
+                console.log('✅ Voice commands already initialized');
+                return;
+            }
+
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                console.log('❌ Speech recognition not supported');
+                updateVoiceCommandStatus('not-supported');
+                return;
+            }
+
+            try {
+                updateVoiceCommandStatus('requesting-permission');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                microphonePermissionGranted = true;
+                stream.getTracks().forEach(track => track.stop());
+                console.log('✅ Microphone permission granted');
+                
+                initializeVoiceCommands();
+                voiceCommandsInitialized = true;
+                
+            } catch (error) {
+                console.log('❌ Microphone permission denied:', error.message);
+                microphonePermissionGranted = false;
+                updateVoiceCommandStatus('permission-denied');
+            }
+        }
+
+        function initializeVoiceCommands() {
+            try {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                voiceCommandRecognition = new SpeechRecognition();
+                
+                voiceCommandRecognition.continuous = true;
+                voiceCommandRecognition.interimResults = false;
+                voiceCommandRecognition.lang = 'en-US';
+                voiceCommandRecognition.maxAlternatives = 1;
+                
+                voiceCommandRecognition.onstart = function() {
+                    isVoiceCommandListening = true;
+                    updateVoiceCommandStatus('active');
+                    console.log('✅ Voice commands started');
+                };
+                
+                voiceCommandRecognition.onresult = function(event) {
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        if (event.results[i].isFinal) {
+                            const transcript = event.results[i][0].transcript.trim();
+                            console.log(`🎙️ Voice command: "${transcript}"`);
+                            
+                            const lowerTranscript = transcript.toLowerCase();
+                            const leslieDetected = lowerTranscript.includes('leslie') || 
+                                                 lowerTranscript.includes('hey leslie') ||
+                                                 lowerTranscript.includes('lesley');
+                            
+                            if (leslieDetected) {
+                                console.log('🎯 Leslie command detected');
+                                processVoiceCommand(transcript);
+                            }
+                        }
+                    }
+                };
+                
+                voiceCommandRecognition.onend = function() {
+                    isVoiceCommandListening = false;
+                    updateVoiceCommandStatus('ready');
+                    console.log('🎙️ Voice command session ended');
+                    
+                    if (microphonePermissionGranted && isInitialized && !isListening) {
+                        setTimeout(() => {
+                            if (!isVoiceCommandListening && !isListening) {
+                                startVoiceCommands();
+                            }
+                        }, 300);
+                    }
+                };
+                
+                voiceCommandRecognition.onerror = function(event) {
+                    isVoiceCommandListening = false;
+                    console.log('🎙️ Voice command error:', event.error);
+                    
+                    if (event.error === 'not-allowed') {
+                        microphonePermissionGranted = false;
+                        updateVoiceCommandStatus('permission-denied');
+                        return;
+                    }
+                    
+                    updateVoiceCommandStatus('ready');
+                    
+                    if (microphonePermissionGranted && isInitialized && !isListening) {
+                        setTimeout(() => {
+                            if (!isVoiceCommandListening && !isListening) {
+                                startVoiceCommands();
+                            }
+                        }, 500);
+                    }
+                };
+                
+                if (!isListening) {
+                    startVoiceCommands();
+                }
+                console.log('✅ Voice commands initialized');
+                
+            } catch (error) {
+                console.error('❌ Error initializing voice commands:', error);
+            }
+        }
+
+        function startVoiceCommands() {
+            if (isListening || isVoiceCommandListening || !microphonePermissionGranted || !isInitialized) {
+                return;
+            }
+            
+            if (!voiceCommandRecognition) return;
+            
+            try {
+                console.log('🎙️ Starting voice commands...');
+                voiceCommandRecognition.start();
+            } catch (e) {
+                console.log('🎙️ Error starting voice commands:', e.message);
+                if (microphonePermissionGranted && isInitialized) {
+                    setTimeout(() => {
+                        startVoiceCommands();
+                    }, 800);
+                }
+            }
+        }
+
+        function stopVoiceCommands() {
+            if (voiceCommandRecognition && isVoiceCommandListening) {
+                try {
+                    voiceCommandRecognition.abort();
+                    console.log('🛑 Voice commands stopped');
+                } catch (e) {
+                    console.log('🎙️ Error stopping voice commands:', e);
+                }
+            }
+            
+            isVoiceCommandListening = false;
+            updateVoiceCommandStatus('ready');
+        }
+
+        function updateVoiceCommandStatus(status) {
+            const statusEl = document.getElementById('voiceCommandStatus');
+            if (!statusEl) return;
+            
+            statusEl.classList.remove('active', 'permission-needed');
+            
+            switch (status) {
+                case 'active':
+                    statusEl.classList.add('active');
+                    statusEl.textContent = '🎙️ Voice Commands Active';
+                    statusEl.style.display = 'block';
+                    break;
+                case 'ready':
+                    statusEl.textContent = '🎙️ Voice Commands Ready';
+                    statusEl.style.display = 'none';
+                    break;
+                case 'requesting-permission':
+                    statusEl.textContent = '🎙️ Voice Commands Ready';
+                    statusEl.style.display = 'none';
+                    break;
+                case 'permission-denied':
+                    if (!microphonePermissionGranted) {
+                        statusEl.classList.add('permission-needed');
+                        statusEl.textContent = '❌ Mic Permission Needed';
+                        statusEl.style.display = 'block';
+                    } else {
+                        statusEl.style.display = 'none';
+                    }
+                    break;
+                case 'not-supported':
+                    statusEl.classList.add('permission-needed');
+                    statusEl.textContent = '❌ Not Supported';
+                    statusEl.style.display = 'block';
+                    break;
+                default:
+                    statusEl.textContent = '🎙️ Voice Commands Ready';
+                    statusEl.style.display = 'none';
+            }
+        }
+
+        function processVoiceCommand(command) {
+            const cmd = command.toLowerCase().trim();
+            const now = Date.now();
+            
+            console.log('🎯 VOICE COMMAND RECEIVED:', cmd);
+            
+            if (cmd === lastVoiceCommand && (now - lastVoiceCommandTime) < 1000) {
+                console.log('🚫 Duplicate voice command ignored');
+                return;
+            }
+            
+            lastVoiceCommand = cmd;
+            lastVoiceCommandTime = now;
+            
+            executeVoiceCommand(cmd);
+        }
+
+        function executeVoiceCommand(cmd) {
+            console.log('⚡ Executing voice command:', cmd);
+            
+            const weatherDisplay = document.getElementById('weatherDisplay');
+            const isWeatherOpen = weatherDisplay && !weatherDisplay.classList.contains('hidden');
+            
+            let commandExecuted = false;
+            
+            // Navigation commands
+            if ((cmd.includes('home') && !cmd.includes('phone')) || cmd === 'hey leslie home' || cmd.includes('go home')) {
+                if (isWeatherOpen) hideWeather();
+                showPage('home');
+                speakResponse('Going home');
+                commandExecuted = true;
+            } else if (cmd.includes('start talking') || (cmd.includes('talking') && !cmd.includes('stop')) || cmd.includes('speech recognition')) {
+                if (isWeatherOpen) hideWeather();
+                startTalkingFromHome();
+                speakResponse('Starting speech recognition');
+                commandExecuted = true;
+            } else if (cmd.includes('start texting') || (cmd.includes('texting') && !cmd.includes('stop')) || cmd.includes('text input')) {
+                if (isWeatherOpen) hideWeather();
+                showPage('textInput');
+                speakResponse('Opening text input');
+                commandExecuted = true;
+            } else if (cmd.includes('phone') || cmd.includes('contacts') || cmd.includes('call')) {
+                if (isWeatherOpen) hideWeather();
+                showPage('phone');
+                speakResponse('Opening phone contacts');
+                commandExecuted = true;
+            } else if (cmd.includes('settings') || cmd.includes('setting')) {
+                if (isWeatherOpen) hideWeather();
+                showPage('settings');
+                speakResponse('Opening settings');
+                commandExecuted = true;
+            } else if (cmd.includes('help') || (cmd.includes('commands') && !cmd.includes('voice commands'))) {
+                if (isWeatherOpen) hideWeather();
+                showPage('commands');
+                speakResponse('Showing commands');
+                commandExecuted = true;
+            } else if (cmd.includes('close') || cmd.includes('hide')) {
+                if (isWeatherOpen) {
+                    hideWeather();
+                    speakResponse('Weather closed');
+                    commandExecuted = true;
+                } else if (currentPage !== 'home') {
+                    showPage('home');
+                    speakResponse('Going home');
+                    commandExecuted = true;
+                } else {
+                    speakResponse('Nothing to close');
+                    commandExecuted = true;
+                }
+            } else if (cmd.includes('stop listening') || cmd.includes('stop')) {
+                if (isListening) {
+                    toggleListening();
+                    speakResponse('Stopping speech recognition');
+                    commandExecuted = true;
+                }
+            }
+            // Weather commands
+            else if (cmd.includes('weather') || cmd.includes('current weather') || cmd.includes('what\'s the weather')) {
+                showCurrentWeather();
+                speakResponse('Showing current weather');
+                commandExecuted = true;
+            } else if (cmd.includes('hourly') || cmd.includes('hour') || cmd.includes('24 hour') || cmd.includes('24 hours')) {
+                showHourlyWeather();
+                speakResponse('Showing hourly forecast');
+                commandExecuted = true;
+            } else if (cmd.includes('weekly') || cmd.includes('7 day') || cmd.includes('seven day') || cmd.includes('week') || cmd.includes('7day') || cmd.includes('7-day')) {
+                showWeeklyWeather();
+                speakResponse('Showing 7 day forecast');
+                commandExecuted = true;
+            }
+            // Speed control commands
+            else if (cmd.includes('speak faster') || cmd.includes('faster')) {
+                const newSpeed = Math.min(settings.speechSpeed + 0.2, 2.0);
+                updateSpeechSpeed(newSpeed);
+                speakResponse('Speaking faster');
+                commandExecuted = true;
+            } else if (cmd.includes('speak slower') || cmd.includes('slower')) {
+                const newSpeed = Math.max(settings.speechSpeed - 0.2, 0.5);
+                updateSpeechSpeed(newSpeed);
+                speakResponse('Speaking slower');
+                commandExecuted = true;
+            } else if (cmd.includes('pause more')) {
+                const newPause = Math.min(settings.pauseBetweenWords + 0.5, 5.0);
+                updatePauseBetweenWords(newPause);
+                speakResponse('Increased pause time');
+                commandExecuted = true;
+            } else if (cmd.includes('pause less')) {
+                const newPause = Math.max(settings.pauseBetweenWords - 0.5, 0.5);
+                updatePauseBetweenWords(newPause);
+                speakResponse('Decreased pause time');
+                commandExecuted = true;
+            } else if (cmd.includes('voice commands off')) {
+                updateVoiceCommandSetting(false);
+                commandExecuted = true;
+            } else if (cmd.includes('voice commands on')) {
+                updateVoiceCommandSetting(true);
+                speakResponse('Voice commands enabled');
+                commandExecuted = true;
+            } else if (cmd.includes('enhanced mode on')) {
+                updateEnhancedMode(true);
+                speakResponse('Enhanced mode enabled');
+                commandExecuted = true;
+            } else if (cmd.includes('enhanced mode off')) {
+                updateEnhancedMode(false);
+                speakResponse('Enhanced mode disabled');
+                commandExecuted = true;
+            }
+            
+            if (!commandExecuted) {
+                console.log('❌ Command not recognized:', cmd);
+                speakResponse('Command not recognized');
+            } else {
+                console.log('✅ Command executed successfully:', cmd);
+            }
+        }
+
+        function speakResponse(text) {
+            if (!settings.speakVoiceCommands) {
+                console.log('🔇 Voice command speech disabled');
+                return;
+            }
+            
+            console.log('🔊 VOICE COMMAND RESPONSE:', text);
+            
+            setTimeout(() => {
+                try {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.rate = settings.speechSpeed || 1.0;
+                    utterance.pitch = 1.1;
+                    utterance.volume = 0.9;
+                    
+                    utterance.onstart = function() {
+                        console.log('✅ Voice command response started:', text);
+                    };
+                    
+                    utterance.onend = function() {
+                        console.log('✅ Voice command response completed:', text);
+                    };
+                    
+                    utterance.onerror = function(event) {
+                        console.log('⚠️ Voice command speech error:', event.error);
+                    };
+                    
+                    if (speechSynth.paused) {
+                        speechSynth.resume();
+                    }
+                    
+                    speechSynth.speak(utterance);
+                    
+                } catch (error) {
+                    console.error('❌ Voice command speech error:', error);
+                }
+            }, 50);
+        }
+
+        function speakTextInput() {
+            const textInput = document.getElementById('largeTextInputField');
+            if (!textInput) return;
+            
+            const text = textInput.value.trim();
+            if (text) {
+                speechSynth.cancel();
+                setTimeout(() => {
+                    try {
+                        const utterance = new SpeechSynthesisUtterance(text);
+                        utterance.rate = settings.speechSpeed;
+                        utterance.pitch = 1.0;
+                        utterance.volume = 1.0;
+                        
+                        utterance.onend = function() {
+                            textInput.value = '';
+                            updateTextSpeakButton();
+                        };
+                        
+                        speechSynth.speak(utterance);
+                    } catch (error) {
+                        console.error('❌ Error speaking text input:', error);
+                    }
+                }, 200);
+            }
+        }
+
+        // === UI FUNCTIONS ===
+        function showPage(pageId, addToHistory = true) {
+            console.log('📄 Showing page:', pageId);
+            
+            try {
+                document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+                
+                const targetPage = document.getElementById(pageId + 'Page');
+                if (targetPage) {
+                    targetPage.classList.add('active');
+                    currentPage = pageId;
+                    
+                    if (addToHistory) {
+                        pageHistory.push(pageId);
+                    }
+                    
+                    if (pageId !== 'speech') {
+                        clearSessionTimeout();
+                        if (isListening && recognition) {
+                            try {
+                                recognition.abort();
+                            } catch (e) {
+                                console.log('Error stopping recognition:', e);
+                            }
+                            isListening = false;
+                            isSpeaking = false;
+                        }
+                    }
+                    
+                    if (pageId === 'speech') {
+                        console.log('📄 Entering speech page - setting up recognition');
+                        stopVoiceCommands();
+                        clearSpeechText();
+                        isSpeaking = false;
+                        
+                        // Reset all recognition state
+                        if (recognition) {
+                            try {
+                                recognition.abort();
+                            } catch (e) {
+                                console.log('Error aborting recognition:', e);
+                            }
+                            isListening = false;
+                        }
+                        
+                        // Simple auto-start sequence
+                        setTimeout(() => {
+                            if (currentPage === 'speech') {
+                                console.log('🎤 Auto-starting recognition...');
+                                const listenButton = document.getElementById('listenButton');
+                                if (listenButton) {
+                                    listenButton.textContent = 'STOP LISTENING';
+                                    listenButton.className = 'control-btn btn-stop';
+                                }
+                                updateStatus('🎤 Initializing speech recognition...');
+                                
+                                // Just start recognition directly
+                                setTimeout(() => {
+                                    if (currentPage === 'speech') {
+                                        startListening();
+                                    }
+                                }, 1000);
+                            }
+                        }, 500);
+                    } else {
+                        if (microphonePermissionGranted && isInitialized && !voiceCommandsInitialized && !isListening) {
+                            setTimeout(() => {
+                                initializeVoiceCommandsWithPermissions();
+                            }, 300);
+                        } else if (voiceCommandsInitialized && !isVoiceCommandListening && !isListening) {
+                            setTimeout(() => {
+                                startVoiceCommands();
+                            }, 300);
+                        }
+                    }
+                    
+                    if (pageId === 'phone') {
+                        displayContactsOnPhonePage();
+                    }
+                    
+                    if (pageId === 'textInput') {
+                        forceKeyboardOpen();
+                        setTimeout(() => forceKeyboardOpen(), 100);
+                        setTimeout(() => forceKeyboardOpen(), 300);
+                        setTimeout(() => forceKeyboardOpen(), 500);
+                    }
+                }
+            } catch (error) {
+                console.error('❌ Error showing page:', error);
+            }
+        }
+        
+        function forceKeyboardOpen() {
+            const textInput = document.getElementById('largeTextInputField');
+            if (!textInput) return;
+            
+            try {
+                textInput.removeAttribute('readonly');
+                textInput.removeAttribute('disabled');
+                textInput.focus();
+                textInput.click();
+                textInput.select();
+                
+                if (/iPhone|iPad/.test(navigator.userAgent)) {
+                    const tempInput = document.createElement('input');
+                    tempInput.type = 'text';
+                    tempInput.style.position = 'absolute';
+                    tempInput.style.left = '-9999px';
+                    tempInput.style.opacity = '0';
+                    
+                    document.body.appendChild(tempInput);
+                    tempInput.focus();
+                    
+                    setTimeout(() => {
+                        textInput.focus();
+                        textInput.click();
+                        document.body.removeChild(tempInput);
+                    }, 100);
+                }
+                
+            } catch (error) {
+                console.error('❌ Keyboard forcing failed:', error);
+            }
+        }
+
+        function startTalkingFromHome() {
+            console.log('🎤 Starting talking from home');
+            showPage('speech');
+        }
+
+        function toggleListening() {
+            if (isListening || document.getElementById('listenButton')?.textContent === 'STOP LISTENING') {
+                clearSessionTimeout();
+                if (recognition && isListening) {
+                    try {
+                        recognition.abort();
+                    } catch (error) {
+                        console.log('Error aborting recognition:', error);
+                    }
+                }
+                isListening = false;
+                isSpeaking = false;
+                updateListenButton();
+                updateStatus('🛑 Stopped listening. Click "START TALKING" to restart.');
+                
+                setTimeout(() => {
+                    if (!isListening && microphonePermissionGranted && isInitialized) {
+                        startVoiceCommands();
+                    }
+                }, 1000);
+            } else {
+                lastSpeechTime = Date.now();
+                startListening();
+            }
+        }
+
+        function startListening() {
+            console.log('🎤 startListening() called');
+            
+            if (!recognition) {
+                console.error('❌ No recognition object available');
+                updateStatus('❌ Speech recognition not available - refresh page');
+                return;
+            }
+            
+            if (isListening) {
+                console.log('🚫 Already listening');
+                return;
+            }
+            
+            // Stop voice commands if running
+            if (isVoiceCommandListening) {
+                console.log('🛑 Stopping voice commands to start main recognition');
+                stopVoiceCommands();
+            }
+            
+            // Request microphone permission first
+            console.log('🎤 Requesting microphone permission...');
+            updateStatus('🎤 Requesting microphone access...');
+            
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    console.log('✅ Microphone permission granted');
+                    microphonePermissionGranted = true;
+                    stream.getTracks().forEach(track => track.stop());
+                    
+                    // Now start recognition
+                    updateStatus('🎤 Starting speech recognition...');
+                    setTimeout(() => {
+                        attemptStartRecognition();
+                    }, 500);
+                })
+                .catch(error => {
+                    console.error('❌ Microphone permission denied:', error);
+                    microphonePermissionGranted = false;
+                    updateStatus('❌ Microphone permission denied - please allow access');
+                    
+                    // Reset button state
+                    const listenButton = document.getElementById('listenButton');
+                    if (listenButton) {
+                        listenButton.textContent = 'START TALKING';
+                        listenButton.className = 'control-btn btn-listen';
+                    }
+                });
+        }
+        
+        function attemptStartRecognition() {
+            console.log('🎤 attemptStartRecognition called');
+            
+            if (isListening) {
+                console.log('🚫 Already listening - aborting attempt');
+                return;
+            }
+            
+            // Check if recognition object exists
+            if (!recognition) {
+                console.error('❌ No recognition object available');
+                updateStatus('❌ Speech recognition not initialized - refresh page');
+                return;
+            }
+            
+            try {
+                console.log('🎤 Attempting to start recognition...');
+                updateStatus('🎤 Starting speech recognition...');
+                
+                // Reset all state variables before starting
+                isListening = false;
+                isProcessingCurrentPhrase = false;
+                if (speechTimeout) {
+                    clearTimeout(speechTimeout);
+                    speechTimeout = null;
+                }
+                
+                recognition.start();
+                console.log('✅ Recognition.start() called successfully');
+                
+            } catch (error) {
+                console.error('❌ Recognition start failed:', error.message);
+                isListening = false;
+                updateListenButton();
+                
+                if (error.message.includes('already started') || error.message.includes('already-started')) {
+                    console.log('🔄 Recognition conflict detected - forcing clean restart');
+                    updateStatus('🔄 Resolving recognition conflict...');
+                    
+                    // Force a complete reset
+                    try {
+                        recognition.abort();
+                        console.log('✅ Recognition aborted for clean restart');
+                    } catch (abortError) {
+                        console.log('⚠️ Abort error (expected):', abortError.message);
+                    }
+                    
+                    // Wait longer and try again with fresh state
+                    setTimeout(() => {
+                        if (currentPage === 'speech' && !isListening) {
+                            console.log('🔄 Attempting clean restart after conflict resolution');
+                            updateStatus('🎤 Restarting speech recognition...');
+                            
+                            try {
+                                recognition.start();
+                                console.log('✅ Clean restart successful');
+                            } catch (restartError) {
+                                console.error('❌ Clean restart failed:', restartError.message);
+                                updateStatus('❌ Recognition restart failed - please refresh the page');
+                                
+                                // Reset button to allow manual retry
+                                const listenButton = document.getElementById('listenButton');
+                                if (listenButton) {
+                                    listenButton.textContent = 'START TALKING';
+                                    listenButton.className = 'control-btn btn-listen';
+                                }
+                            }
+                        }
+                    }, 1500);
+                    
+                } else if (error.message.includes('not-allowed')) {
+                    updateStatus('❌ Microphone permission denied - please allow access');
+                    microphonePermissionGranted = false;
+                } else {
+                    updateStatus('❌ Recognition error: ' + error.message + ' - Try again or refresh page');
+                }
+            }
+        }
+
+        function updateListenButton() {
+            const listenButton = document.getElementById('listenButton');
+            if (listenButton) {
+                if (isListening) {
+                    listenButton.textContent = 'STOP LISTENING';
+                    listenButton.className = 'control-btn btn-stop';
+                } else {
+                    listenButton.textContent = 'START TALKING';
+                    listenButton.className = 'control-btn btn-listen';
+                }
+            }
+        }
+
+        function updateStatus(message) {
+            const statusText = document.getElementById('statusText');
+            if (statusText) statusText.textContent = message;
+        }
+
+        function updateSpeechDisplay(text) {
+            const recognizedTextEl = document.getElementById('recognizedText');
+            if (recognizedTextEl) {
+                if (!text || text === '') {
+                    recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Ready for your next phrase...</div>';
+                } else {
+                    // Simply show the current phrase - no cascading, no history accumulation
+                    const html = `<div class="final-phrase" style="font-size: 18px; font-weight: bold; border: 2px solid #0099cc; padding: 12px; margin-bottom: 8px; background-color: #e3f2fd;">
+                                    ✅ CAPTURED: ${text}
+                                 </div>
+                                 <div style="color: #999; font-size: 12px; margin-top: 8px; text-align: center; padding: 6px; background: #f9f9f9; border-radius: 4px;">
+                                    🎤 Continuous listening - Say another phrase or click "STOP LISTENING"
+                                 </div>`;
+                    
+                    recognizedTextEl.innerHTML = html;
+                }
+            }
+        }
+
+        function clearSpeechText() {
+            phraseHistory = [];
+            lastProcessedPhrase = '';
+            lastPhraseTime = 0;
+            
+            speechSynth.cancel();
+            isSpeaking = false;
+            
+            lastVoiceCommand = '';
+            lastVoiceCommandTime = 0;
+            
+            // Clear speech recognition state
+            isProcessingCurrentPhrase = false;
+            if (speechTimeout) {
+                clearTimeout(speechTimeout);
+                speechTimeout = null;
+            }
+            
+            const recognizedTextEl = document.getElementById('recognizedText');
+            if (recognizedTextEl) {
+                recognizedTextEl.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Say something and your phrase will appear here...</div>';
+            }
+            
+            console.log('🗑️ Speech data cleared');
+        }
+
+        function clearTextInput() {
+            const textInput = document.getElementById('largeTextInputField');
+            if (textInput) textInput.value = '';
+        }
+
+        function updateTextSpeakButton() {
+            const speakBtn = document.getElementById('speakTextBtn');
+            if (speakBtn) {
+                speakBtn.disabled = false;
+                speakBtn.style.opacity = '1';
+            }
+        }
+
+        // === SESSION TIMEOUT ===
+        function resetSessionTimeout() {
+            if (sessionTimeoutId) clearTimeout(sessionTimeoutId);
+            sessionTimeoutId = setTimeout(() => {
+                if (isListening && currentPage === 'speech') {
+                    try {
+                        if (recognition) recognition.abort();
+                    } catch (e) {
+                        console.log('Error aborting recognition on timeout:', e);
+                    }
+                    isListening = false;
+                    isSpeaking = false;
+                    updateListenButton();
+                    updateStatus('⏰ Session timeout (3 minutes) - Click "START TALKING" to restart');
+                }
+                clearSessionTimeout();
+            }, SESSION_TIMEOUT);
+        }
+
+        function clearSessionTimeout() {
+            if (sessionTimeoutId) {
+                clearTimeout(sessionTimeoutId);
+                sessionTimeoutId = null;
             }
         }
 
@@ -2094,8 +2304,29 @@
 
         // === WEATHER ===
         function getUserLocation() {
-            userLocation = { lat: 38.8117, lon: -90.8529 }; // Wentzville, MO
-            console.log('📍 Using default location');
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        userLocation = {
+                            lat: position.coords.latitude,
+                            lon: position.coords.longitude
+                        };
+                        console.log('✅ Got location:', userLocation);
+                    },
+                    function(error) {
+                        console.log('❌ Location error, using default:', error);
+                        userLocation = { lat: 38.8117, lon: -90.8529 };
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 300000
+                    }
+                );
+            } else {
+                userLocation = { lat: 38.8117, lon: -90.8529 };
+                console.log('📍 Using default location');
+            }
         }
 
         async function showCurrentWeather() {
@@ -2404,6 +2635,7 @@
                 slider.value = value;
             }
             
+            console.log(`🔧 Pause setting updated to: ${value} seconds`);
             saveSettings();
         }
 
@@ -2464,67 +2696,25 @@
             alert('Enhanced Recognition requires OpenAI API integration. This is a demo placeholder.');
         }
 
-        // === INITIALIZATION - IMMEDIATE VOICE COMMANDS ON HOME ===
-        function initApp() {
-            console.log('🚀 Initializing Leslie Speech Assistant...');
-            
-            if (isInitialized) {
-                console.log('⚠️ App already initialized');
-                return;
-            }
-            
-            try {
-                loadSettings();
-                setupEventHandlers();
-                
-                if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                    console.error('❌ Speech recognition not supported');
-                    updateStatus('❌ Speech recognition not supported in this browser');
-                    return;
-                }
-                
-                console.log('✅ Speech Recognition supported');
-                
-                initializeContacts();
-                setupSwipeGestures();
-                getUserLocation();
-                updateEnhancedSectionVisibility();
-                updateTextSpeakButton();
-                
-                // START voice commands IMMEDIATELY on home page
-                if (currentPage !== 'speech') {
-                    console.log('🗣️ Starting voice commands IMMEDIATELY on home page...');
-                    // Start right away - no delay
-                    startVoiceCommands();
-                }
-                
-                isInitialized = true;
-                console.log('✅ Leslie initialized with IMMEDIATE voice commands');
-                
-            } catch (error) {
-                console.error('❌ Error during initialization:', error);
-            }
-        }
-
-        // === GLOBAL FUNCTIONS FOR INLINE HANDLERS ===
-        window.showCurrentWeather = showCurrentWeather;
-        window.showHourlyWeather = showHourlyWeather;
-        window.showWeeklyWeather = showWeeklyWeather;
-        window.hideWeather = hideWeather;
-
-        // === EVENT LISTENERS ===
+        // === INITIALIZATION ===
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('🚀 DOM loaded, initializing Leslie...');
+            console.log('🚀 DOM loaded, initializing Leslie Speech Assistant...');
             try {
                 initApp();
             } catch (error) {
-                console.error('❌ Error during initialization:', error);
+                console.error('❌ Error during DOMContentLoaded initialization:', error);
+            }
+        });
+
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden && currentPage !== 'speech' && !isListening && !isVoiceCommandListening && microphonePermissionGranted && isInitialized) {
+                setTimeout(() => startVoiceCommands(), 1000);
             }
         });
 
         window.addEventListener('load', function() {
             if (!isInitialized) {
-                console.log('🔄 Window loaded - backup initialization...');
+                console.log('🔄 Window loaded - attempting backup initialization...');
                 try {
                     initApp();
                 } catch (error) {
