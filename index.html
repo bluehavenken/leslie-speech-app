@@ -1348,7 +1348,7 @@
             updateVoiceCommandStatus('ready');
         }
 
-        // === VOICE COMMANDS - SEPARATE INSTANCE, ONLY ON NON-SPEECH PAGES, ANTI-PING FIXES ===
+        // === VOICE COMMANDS - SEPARATE INSTANCE, ONLY ON NON-SPEECH PAGES, NO AUTO-RESTART TO PREVENT PINGING ===
         async function startVoiceCommands() {
             if (appState.speechPageActive || appState.voiceCommandsActive || appState.isTransitioning) {
                 return; // Don't run voice commands on speech page
@@ -1390,18 +1390,11 @@
                 };
 
                 voiceCommandRecognition.onend = () => {
-                    console.log('🗣️ Voice commands ended');
+                    console.log('🗣️ Voice commands ended - NO AUTO-RESTART to prevent pinging');
                     appState.voiceCommandsActive = false;
                     appState.isTransitioning = false;
-                    
-                    // Auto-restart voice commands if not on speech page with longer delay
-                    if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
-                        setTimeout(() => {
-                            if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
-                                startVoiceCommands();
-                            }
-                        }, 5000); // 5 second delay to prevent pinging
-                    }
+                    updateVoiceCommandStatus('ready');
+                    // NO AUTO-RESTART - this was causing the pinging every 5 seconds
                 };
 
                 voiceCommandRecognition.onerror = (event) => {
@@ -1414,13 +1407,15 @@
                         return;
                     }
                     
-                    // Restart on errors if not on speech page with longer delay
-                    if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
+                    // Only restart on specific errors with long delay
+                    if (event.error === 'network' && !appState.speechPageActive && permissionGranted) {
                         setTimeout(() => {
                             if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
                                 startVoiceCommands();
                             }
-                        }, 8000); // 8 second delay after errors
+                        }, 30000); // 30 second delay after network errors only
+                    } else {
+                        updateVoiceCommandStatus('ready');
                     }
                 };
 
@@ -1484,6 +1479,8 @@
         }
 
         function extractCommand(text) {
+            console.log('🔍 Extracting command from text:', text);
+            
             const commands = {
                 'home': ['home', 'go home', 'main page'],
                 'start talking': ['start talking', 'speech', 'talk', 'speaking'],
@@ -1494,7 +1491,21 @@
                 'weather': ['weather', 'current weather'],
                 'hourly': ['hourly', 'hourly weather', 'hour'],
                 'weekly': ['weekly', 'weekly weather', '7 day', 'seven day'],
-                'close weather': ['close weather', 'hide weather', 'weather close', 'close the weather', 'close weather display', 'hide weather display'],
+                'close weather': [
+                    'close weather', 
+                    'hide weather', 
+                    'weather close', 
+                    'close the weather', 
+                    'close weather display', 
+                    'hide weather display',
+                    'dismiss weather',
+                    'weather dismiss',
+                    'close that weather',
+                    'hide that weather',
+                    'weather away',
+                    'get rid of weather',
+                    'remove weather'
+                ],
                 'free mode': ['free mode', 'browser mode'],
                 'pro mode': ['pro mode', 'whisper mode'],
                 'stop listening': ['stop listening', 'stop'],
@@ -1503,6 +1514,19 @@
                 'pause more': ['pause more', 'more pause'],
                 'pause less': ['pause less', 'less pause']
             };
+            
+            // Special handling for weather close - check this first
+            if (text.includes('weather') && (
+                text.includes('close') || 
+                text.includes('hide') || 
+                text.includes('dismiss') || 
+                text.includes('away') || 
+                text.includes('remove') ||
+                text.includes('get rid')
+            )) {
+                console.log('🗣️ Matched CLOSE WEATHER command from text:', text);
+                return 'close weather';
+            }
             
             for (const [cmd, variations] of Object.entries(commands)) {
                 if (variations.some(variation => text.includes(variation))) {
@@ -1808,12 +1832,14 @@
             } else if (status === 'ready') {
                 if (appState.speechPageActive) {
                     statusEl.textContent = '🎤 Speech Mode Active';
+                } else if (appState.voiceCommandsActive) {
+                    statusEl.textContent = '🎤 Voice Commands Active';
                 } else {
-                    statusEl.textContent = '🎤 Voice Commands Ready';
+                    statusEl.textContent = '🎤 Voice Commands Stopped - Press V to restart';
                 }
                 statusEl.classList.add('ready');
             } else {
-                statusEl.textContent = '🎤 Voice Commands Ready';
+                statusEl.textContent = '🎤 Voice Commands Ready - Press V to restart';
                 statusEl.classList.add('ready');
             }
         }
@@ -2197,6 +2223,10 @@
                                     startVoiceCommands();
                                 }
                             }
+                        } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
+                            // Manual restart of voice commands
+                            console.log('🗣️ Manual voice command restart via click');
+                            startVoiceCommands();
                         }
                     });
                 }
@@ -2876,11 +2906,21 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Auto-start voice commands on home page (restored for accessibility)
+                // Auto-start voice commands on home page (restored for accessibility) with manual restart capability
                 if (!appState.speechPageActive) {
                     setTimeout(() => {
                         startVoiceCommands();
                     }, 2000); // 2 second delay
+                    
+                    // Add a way to manually restart voice commands by saying "Hey Leslie" twice
+                    let lastVoiceCommandTime = 0;
+                    window.addEventListener('keydown', (e) => {
+                        // Press V key to restart voice commands manually
+                        if (e.key.toLowerCase() === 'v' && !appState.speechPageActive && !appState.voiceCommandsActive) {
+                            console.log('🗣️ Manual voice command restart triggered');
+                            startVoiceCommands();
+                        }
+                    });
                 }
                 
             } catch (error) {
