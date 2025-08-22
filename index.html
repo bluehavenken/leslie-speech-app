@@ -1,4 +1,4 @@
-.<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -817,7 +817,7 @@
                             • <strong>Pro Mode Available:</strong> OpenAI Whisper with API key<br>
                             • <strong>Contact Loading:</strong> Real contacts from your phone<br>
                             • <strong>Weather:</strong> Swipe bottom/left/right edges for weather info<br>
-                            • <strong>Anti-Ping System:</strong> Variable timing prevents browser interference
+                            • <strong>Anti-Ping System:</strong> Smart timing prevents browser interference
                         </div>
                     </div>
                 </div>
@@ -919,7 +919,6 @@
         let isInitialized = false;
         let speechTimeoutTimer = null; // For 2-minute timeout
         let speechResultCount = 0;
-        let restartCount = 0; // Track restarts to prevent endless loops
         let lastSpokenText = ''; // Track last spoken text to prevent feedback loops
         let speechFeedbackTimer = null; // Timer to prevent feedback loops
         
@@ -933,9 +932,11 @@
             voiceCommandsActive: false,
             isCurrentlySpeaking: false,
             manuallyStoppedSpeech: false,
-            isTransitioning: false, // Prevent overlapping operations
-            lastRecognitionTime: 0, // Track last recognition to prevent rapid restarts
-            temporarilyPausedForSpeaking: false // Track if paused while speaking
+            isTransitioning: false,
+            lastRecognitionTime: 0,
+            temporarilyPausedForSpeaking: false,
+            voiceCommandRestartCount: 0, // Track voice command restarts separately
+            speechRestartCount: 0 // Track speech page restarts separately
         };
         
         // Settings
@@ -970,7 +971,7 @@
             }
         }
 
-        // === SPEECH PAGE RECOGNITION - AUTO-START, CONTINUOUS WITH ANTI-PING FIXES ===
+        // === SPEECH PAGE RECOGNITION - SIMPLIFIED FOR TRUE CONTINUOUS MODE ===
         async function startSpeechRecognition() {
             console.log('🎤 Starting speech page recognition...');
             
@@ -987,9 +988,9 @@
             // Stop voice commands when on speech page
             await stopVoiceCommands();
             
-            // Reset flags
+            // Reset flags and counters
             appState.manuallyStoppedSpeech = false;
-            restartCount = 0;
+            appState.speechRestartCount = 0;
             
             if (settings.recognitionMode === 'pro') {
                 await startProModeRecording();
@@ -1015,12 +1016,12 @@
                     } catch (e) {}
                 }
                 
-                // Wait for cleanup to prevent overlap
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                // Wait for cleanup
+                await new Promise(resolve => setTimeout(resolve, 500));
                 
                 speechRecognition = new SpeechRecognition();
-                speechRecognition.continuous = true; // Use continuous mode but with proper management
-                speechRecognition.interimResults = false; // No interim results to reduce noise
+                speechRecognition.continuous = true;
+                speechRecognition.interimResults = false; 
                 speechRecognition.lang = 'en-US';
                 speechRecognition.maxAlternatives = 1;
 
@@ -1039,42 +1040,26 @@
                     appState.speechListening = false;
                     appState.isTransitioning = false;
                     
-                    // Only restart if still on speech page, not manually stopped, and not speaking
+                    // SIMPLIFIED RESTART LOGIC - Only restart if still on speech page and not manually stopped
                     if (appState.speechPageActive && 
                         !appState.manuallyStoppedSpeech && 
                         !appState.isCurrentlySpeaking &&
-                        !appState.temporarilyPausedForSpeaking &&
-                        restartCount < 5) {
+                        appState.speechRestartCount < 10) { // Increased limit
                         
-                        const timeSinceLastRecognition = Date.now() - appState.lastRecognitionTime;
+                        console.log('🔄 Restarting speech recognition (restart #' + (appState.speechRestartCount + 1) + ')');
+                        appState.speechRestartCount++;
                         
-                        // Only restart if enough time has passed since last recognition
-                        if (timeSinceLastRecognition > 3000) { // 3 seconds minimum
-                            console.log('🔄 Restarting speech recognition (restart #' + (restartCount + 1) + ')');
-                            restartCount++;
-                            
-                            // Longer delay to prevent pinging
-                            setTimeout(() => {
-                                if (appState.speechPageActive && 
-                                    !appState.manuallyStoppedSpeech && 
-                                    !appState.isCurrentlySpeaking &&
-                                    !appState.temporarilyPausedForSpeaking) {
-                                    startSpeechRecognition();
-                                }
-                            }, 2000); // 2 second delay
-                        } else {
-                            console.log('⏸️ Skipping restart - too soon since last recognition');
-                            updateStatus('⏸️ Paused - waiting before restart');
-                            // Try again later
-                            setTimeout(() => {
-                                if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
-                                    startSpeechRecognition();
-                                }
-                            }, 5000); // 5 second delay
-                        }
+                        // Simple restart with minimal delay
+                        setTimeout(() => {
+                            if (appState.speechPageActive && 
+                                !appState.manuallyStoppedSpeech && 
+                                !appState.isCurrentlySpeaking) {
+                                startSpeechRecognition();
+                            }
+                        }, 1000); // Only 1 second delay
                     } else {
                         updateUI();
-                        if (restartCount >= 5) {
+                        if (appState.speechRestartCount >= 10) {
                             updateStatus('⚠️ Stopped after multiple restarts - Click STOP then START to resume');
                         } else if (appState.isCurrentlySpeaking) {
                             updateStatus('🔊 Speaking - will resume listening when finished');
@@ -1095,19 +1080,18 @@
                         return;
                     }
                     
-                    // Only restart on certain errors and if restart count is reasonable
-                    if (['network', 'audio-capture'].includes(event.error) && 
-                        appState.speechPageActive && 
+                    // SIMPLIFIED ERROR RESTART - Just restart if on speech page
+                    if (appState.speechPageActive && 
                         !appState.manuallyStoppedSpeech && 
-                        restartCount < 3) {
+                        appState.speechRestartCount < 5) {
                         
                         console.log('🔄 Restarting after error:', event.error);
-                        restartCount++;
+                        appState.speechRestartCount++;
                         setTimeout(() => {
                             if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                                 startSpeechRecognition();
                             }
-                        }, 5000); // 5 second delay after error
+                        }, 2000); // 2 second delay after error
                     } else {
                         updateStatus('⚠️ Error - Click STOP then START to try again');
                         updateUI();
@@ -1145,7 +1129,6 @@
                     }
                 }
                 
-                // Process final results ONLY once per result
                 if (finalText.trim()) {
                     const text = finalText.trim();
                     
@@ -1157,25 +1140,20 @@
                     
                     console.log('🎤 Final result #' + (speechResultCount + 1) + ':', text);
                     
-                    // Update recognition time
+                    // Update recognition time and counter
                     appState.lastRecognitionTime = Date.now();
-                    
-                    // Immediately increment counter to prevent duplication
                     speechResultCount++;
                     
                     // Show result on screen
                     showFinalResult(text, speechResultCount);
                     
-                    // ANTI-FEEDBACK: Temporarily pause recognition while speaking
-                    appState.temporarilyPausedForSpeaking = true;
-                    
-                    // Speak result with delay and feedback prevention
+                    // Speak result with delay
                     setTimeout(() => {
                         speakTextResult(text);
                     }, 500);
                     
                     resetSpeechTimeout(); // Reset timeout on activity
-                    restartCount = 0; // Reset restart count on successful recognition
+                    appState.speechRestartCount = 0; // Reset restart count on successful recognition
                 }
             } catch (error) {
                 console.error('❌ Error processing speech results:', error);
@@ -1186,10 +1164,9 @@
             const textEl = document.getElementById('recognizedText');
             if (!textEl) return;
             
-            // Clear ALL previous content - show only current phrase
+            // Clear previous content and show only current phrase
             textEl.innerHTML = '';
             
-            // Show only the current phrase without numbering
             const finalResultDiv = document.createElement('div');
             finalResultDiv.className = 'final-result';
             finalResultDiv.style.cssText = 'background: #e8f5e8; padding: 20px; border-radius: 8px; border-left: 5px solid #28a745; font-size: 20px; line-height: 1.6; text-align: center; margin: 20px 0;';
@@ -1202,8 +1179,6 @@
 
         function speakTextResult(text) {
             if (!settings.speakVoiceCommands) {
-                // If speaking is disabled, clear the pause flag and let continuous mode continue
-                appState.temporarilyPausedForSpeaking = false;
                 return;
             }
             
@@ -1214,7 +1189,7 @@
             lastSpokenText = text;
             
             try {
-                // Force cancel any existing speech immediately
+                // Force cancel any existing speech
                 speechSynth.cancel();
                 
                 // Clear any existing feedback timer
@@ -1222,9 +1197,7 @@
                     clearTimeout(speechFeedbackTimer);
                 }
                 
-                // Wait longer to ensure complete cancellation
                 setTimeout(() => {
-                    // Double-check cancellation worked
                     if (speechSynth.speaking) {
                         speechSynth.cancel();
                     }
@@ -1250,38 +1223,28 @@
                                 clearScreenAfterSpeaking();
                             }, 1000);
                             
-                            // Reset flags after speaking - continuous mode will keep listening
+                            // Reset feedback prevention
                             speechFeedbackTimer = setTimeout(() => {
-                                appState.temporarilyPausedForSpeaking = false;
-                                lastSpokenText = ''; // Clear the feedback prevention
-                                
-                                // Continuous mode handles ongoing listening automatically
+                                lastSpokenText = '';
                                 updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
-                                
-                            }, 2000); // 2 second delay after speaking to prevent feedback
+                            }, 2000);
                         };
                         
                         utterance.onerror = (event) => {
                             console.error('🔊 Speech error:', event.error);
                             appState.isCurrentlySpeaking = false;
-                            appState.temporarilyPausedForSpeaking = false;
-                            lastSpokenText = ''; // Clear feedback prevention
-                            
-                            // Continuous mode handles ongoing listening automatically  
+                            lastSpokenText = '';
                             updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
                         };
                         
                         speechSynth.speak(utterance);
-                    }, 200); // Additional delay to prevent overlap
-                }, 500); // Longer initial delay
+                    }, 200);
+                }, 300);
                 
             } catch (error) {
                 console.error('❌ Error speaking text:', error);
                 appState.isCurrentlySpeaking = false;
-                appState.temporarilyPausedForSpeaking = false;
-                lastSpokenText = ''; // Clear feedback prevention
-                
-                // Continuous mode handles ongoing listening automatically
+                lastSpokenText = '';
                 updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
             }
         }
@@ -1311,8 +1274,7 @@
             console.log('🛑 Stopping speech recognition...');
             
             appState.manuallyStoppedSpeech = true;
-            appState.temporarilyPausedForSpeaking = false;
-            restartCount = 999; // Prevent any restarts
+            appState.speechRestartCount = 999; // Prevent any restarts
             
             // Clear timers
             if (speechTimeoutTimer) {
@@ -1347,13 +1309,13 @@
             updateVoiceCommandStatus('ready');
         }
 
-        // === VOICE COMMANDS - TRUE CONTINUOUS WITH SMART RESTART TO ELIMINATE PREDICTABLE PINGING ===
+        // === VOICE COMMANDS - EXTREME ANTI-PING MEASURES ===
         async function startVoiceCommands() {
             if (appState.speechPageActive || appState.voiceCommandsActive || appState.isTransitioning) {
-                return; // Don't run voice commands on speech page
+                return;
             }
             
-            console.log('🗣️ Starting voice commands with anti-ping measures...');
+            console.log('🗣️ Starting voice commands with EXTREME anti-ping measures...');
             
             if (!await checkPermission()) {
                 updateVoiceCommandStatus('permission-needed');
@@ -1373,10 +1335,10 @@
                     } catch (e) {}
                 }
                 
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 
                 voiceCommandRecognition = new SpeechRecognition();
-                voiceCommandRecognition.continuous = true; // Use continuous but handle ends gracefully
+                voiceCommandRecognition.continuous = true;
                 voiceCommandRecognition.interimResults = false;
                 voiceCommandRecognition.lang = 'en-US';
                 voiceCommandRecognition.maxAlternatives = 1;
@@ -1389,21 +1351,30 @@
                 };
 
                 voiceCommandRecognition.onend = () => {
-                    console.log('🗣️ Voice commands ended - smart restart for accessibility');
+                    console.log('🗣️ Voice commands ended - EXTREME anti-ping restart');
                     appState.voiceCommandsActive = false;
                     appState.isTransitioning = false;
                     
-                    // MUST restart for accessibility but use unpredictable timing to prevent ping detection
-                    if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
-                        // Use highly variable timing: 8-20 seconds with random patterns
-                        const baseDelay = 8000; // 8 second minimum
-                        const randomDelay = Math.random() * 12000; // 0-12 seconds additional
-                        const totalDelay = baseDelay + randomDelay; // 8-20 seconds total
+                    // EXTREME ANTI-PING: Much longer, highly variable delays
+                    if (!appState.speechPageActive && 
+                        permissionGranted && 
+                        !appState.isCurrentlySpeaking &&
+                        appState.voiceCommandRestartCount < 3) { // Severely limit restarts
                         
-                        console.log(`🔄 Restarting voice commands in ${Math.round(totalDelay/1000)} seconds (anti-ping timing)`);
+                        // EXTREME timing: 30-120 seconds with high randomization
+                        const baseDelay = 30000; // 30 second minimum
+                        const randomDelay = Math.random() * 90000; // 0-90 seconds additional
+                        const totalDelay = baseDelay + randomDelay; // 30-120 seconds total
+                        
+                        appState.voiceCommandRestartCount++;
+                        console.log(`🔄 EXTREME anti-ping restart in ${Math.round(totalDelay/1000)} seconds (restart #${appState.voiceCommandRestartCount})`);
                         
                         setTimeout(() => {
                             if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
+                                // Reset restart count occasionally to allow continued operation
+                                if (appState.voiceCommandRestartCount >= 3) {
+                                    appState.voiceCommandRestartCount = 0;
+                                }
                                 startVoiceCommands();
                             }
                         }, totalDelay);
@@ -1422,13 +1393,18 @@
                         return;
                     }
                     
-                    // Restart on errors but with very long, variable delays
-                    if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
-                        const baseDelay = 20000; // 20 second minimum after errors
-                        const randomDelay = Math.random() * 25000; // 0-25 seconds additional  
-                        const totalDelay = baseDelay + randomDelay; // 20-45 seconds total
+                    // EXTREME ERROR DELAY: 60-240 seconds
+                    if (!appState.speechPageActive && 
+                        permissionGranted && 
+                        !appState.isCurrentlySpeaking &&
+                        appState.voiceCommandRestartCount < 2) { // Even more limited on errors
                         
-                        console.log(`🔄 Restarting voice commands after error in ${Math.round(totalDelay/1000)} seconds`);
+                        const baseDelay = 60000; // 60 second minimum after errors
+                        const randomDelay = Math.random() * 180000; // 0-180 seconds additional  
+                        const totalDelay = baseDelay + randomDelay; // 60-240 seconds total
+                        
+                        appState.voiceCommandRestartCount++;
+                        console.log(`🔄 EXTREME error restart in ${Math.round(totalDelay/1000)} seconds`);
                         
                         setTimeout(() => {
                             if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
@@ -1442,7 +1418,6 @@
 
                 voiceCommandRecognition.onresult = (event) => {
                     processCommandResults(event);
-                    // Let continuous mode handle listening - no manual restart
                 };
                 
                 voiceCommandRecognition.start();
@@ -1481,7 +1456,6 @@
                         }
                     }
                 }
-                // NO MANUAL RESTART - continuous mode handles this automatically
             } catch (error) {
                 console.error('❌ Error processing command results:', error);
             }
@@ -1716,10 +1690,10 @@
             // Stop all recognition when changing pages
             stopAllRecognition();
             
-            // Reset flags
+            // Reset flags and counters
             appState.manuallyStoppedSpeech = false;
-            appState.temporarilyPausedForSpeaking = false;
-            restartCount = 0;
+            appState.speechRestartCount = 0;
+            appState.voiceCommandRestartCount = 0; // Reset voice command restart count
             lastSpokenText = '';
             
             // Handle speech page state change
@@ -1745,21 +1719,21 @@
                     }
                     
                     updateStatus('🎤 Starting continuous listening...');
-                    speechResultCount = 0; // Reset counter
+                    speechResultCount = 0;
                     
                     // Auto-start speech recognition immediately
                     setTimeout(() => {
                         if (appState.speechPageActive) {
                             startSpeechRecognition();
                         }
-                    }, 1500); // 1.5 second delay to let page settle
+                    }, 1000); // Reduced delay
                 } else {
-                    // Auto-start voice commands for accessibility with anti-ping measures
+                    // Auto-start voice commands with EXTREME anti-ping measures
                     setTimeout(() => {
                         if (!appState.speechPageActive) {
                             startVoiceCommands();
                         }
-                    }, 4000); // 4 second delay to prevent conflicts and reduce ping detection
+                    }, 15000); // 15 second delay to prevent conflicts and minimize ping detection
                 }
                 
                 if (pageId === 'phone') {
@@ -1790,7 +1764,7 @@
             if (textEl) {
                 textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Listening for next phrase...</div>`;
             }
-            speechResultCount = 0; // Reset counter
+            speechResultCount = 0;
         }
 
         // === UI UPDATES ===
@@ -1818,8 +1792,6 @@
             } else if (statusEl && appState.speechPageActive) {
                 if (appState.isCurrentlySpeaking) {
                     statusEl.textContent = '🔊 Speaking your phrase back to you...';
-                } else if (appState.temporarilyPausedForSpeaking) {
-                    statusEl.textContent = '⏸️ Paused while speaking - will resume automatically';
                 } else if (appState.speechListening || (mediaRecorder && mediaRecorder.state === 'recording')) {
                     statusEl.textContent = '🎤 Listening continuously...';
                 } else if (!permissionGranted) {
@@ -1927,7 +1899,6 @@
             appState.speechListening = false;
             appState.voiceCommandsActive = false;
             appState.isCurrentlySpeaking = false;
-            appState.temporarilyPausedForSpeaking = false;
             
             setTimeout(() => {
                 appState.isTransitioning = false;
@@ -2236,7 +2207,7 @@
                     });
                 });
                 
-                // Voice command status click handler - for permission and manual restart
+                // Voice command status click handler
                 const statusEl = document.getElementById('voiceCommandStatus');
                 if (statusEl) {
                     statusEl.addEventListener('click', async () => {
@@ -2249,6 +2220,7 @@
                             }
                         } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
                             console.log('🗣️ Manual restart of voice commands');
+                            appState.voiceCommandRestartCount = 0; // Reset restart count on manual restart
                             startVoiceCommands();
                         }
                     });
@@ -2923,17 +2895,17 @@
                 getUserLocation();
                 updateTextSpeakButton();
                 
-                // Check permissions and start voice commands on non-speech pages
+                // Check permissions and start voice commands
                 await checkPermission();
                 
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Auto-start voice commands for accessibility but with anti-ping measures
+                // Auto-start voice commands with EXTREME anti-ping delay
                 if (!appState.speechPageActive) {
                     setTimeout(() => {
                         startVoiceCommands();
-                    }, 3000); // 3 second delay to let everything settle
+                    }, 20000); // 20 second delay on initialization
                 }
                 
             } catch (error) {
@@ -2960,26 +2932,24 @@
             stopAllRecognition();
         });
 
-        // === VISIBILITY CHANGE - CONSERVATIVE RESTART ===
+        // === VISIBILITY CHANGE - EXTREME CONSERVATIVE RESTART ===
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 console.log('📴 Page hidden - pausing recognition...');
-                // Don't stop everything, just pause gracefully
             } else {
-                console.log('📱 Page visible - conservative restart...');
-                // Only restart after longer delay and if nothing is active
+                console.log('📱 Page visible - EXTREME conservative restart...');
                 setTimeout(() => {
                     if (appState.speechPageActive && !appState.speechListening) {
                         startSpeechRecognition();
                     } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                        // Very long delay to prevent ping detection on visibility change
+                        // EXTREME delay on visibility change to prevent ping detection
                         setTimeout(() => {
                             if (!appState.speechPageActive && !appState.voiceCommandsActive) {
                                 startVoiceCommands();
                             }
-                        }, 10000); // 10 second delay on visibility change
+                        }, 45000); // 45 second delay on visibility change
                     }
-                }, 2000);
+                }, 5000);
             }
         });
     </script>
