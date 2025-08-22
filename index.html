@@ -1014,8 +1014,8 @@
                 await new Promise(resolve => setTimeout(resolve, 800));
                 
                 speechRecognition = new SpeechRecognition();
-                speechRecognition.continuous = true; // Continuous listening
-                speechRecognition.interimResults = true; // Show interim results
+                speechRecognition.continuous = false; // Try non-continuous to reduce pinging
+                speechRecognition.interimResults = false; // Remove interim results to reduce pinging
                 speechRecognition.lang = 'en-US';
                 speechRecognition.maxAlternatives = 1;
 
@@ -1033,20 +1033,20 @@
                     appState.speechListening = false;
                     appState.isTransitioning = false;
                     
-                    // Only auto-restart if still on speech page, not manually stopped, and restart count is reasonable
-                    if (appState.speechPageActive && !appState.manuallyStoppedSpeech && restartCount < 3) {
-                        console.log('🔄 Auto-restarting speech recognition (restart #' + (restartCount + 1) + ')');
+                    // Immediately restart for continuous effect without browser's continuous mode
+                    if (appState.speechPageActive && !appState.manuallyStoppedSpeech && restartCount < 10) {
+                        console.log('🔄 Immediately restarting for continuous effect (restart #' + (restartCount + 1) + ')');
                         restartCount++;
                         
-                        // Much longer delay for restart to prevent rapid cycling and pinging
+                        // Very short delay for immediate restart without pinging
                         setTimeout(() => {
                             if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                                 startSpeechRecognition();
                             }
-                        }, 5000); // 5 second delay instead of 2
+                        }, 100); // Very short delay
                     } else {
                         updateUI();
-                        if (restartCount >= 3) {
+                        if (restartCount >= 10) {
                             updateStatus('⚠️ Stopped after restarts - Click STOP then START to resume');
                         } else {
                             updateStatus('✅ Stopped listening');
@@ -1105,23 +1105,14 @@
             if (!appState.speechPageActive) return;
             
             try {
-                let interimText = '';
                 let finalText = '';
                 
-                // Process only NEW results to avoid duplication
+                // Process only final results since we removed interim results to reduce pinging
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const result = event.results[i];
                     if (result.isFinal) {
                         finalText += result[0].transcript;
-                    } else {
-                        interimText += result[0].transcript;
                     }
-                }
-                
-                // Show interim results (but don't interfere with final results)
-                if (interimText.trim() && !finalText.trim()) {
-                    showInterimResult(interimText.trim());
-                    resetSpeechTimeout(); // Reset timeout on activity
                 }
                 
                 // Process final results ONLY once per result
@@ -1338,17 +1329,22 @@
                 };
 
                 voiceCommandRecognition.onend = () => {
-                    console.log('🗣️ Voice commands ended - NO AUTO-RESTART to prevent pinging');
+                    console.log('🗣️ Voice commands ended');
                     appState.voiceCommandsActive = false;
                     appState.isTransitioning = false;
-                    updateVoiceCommandStatus('ready');
                     
-                    // NO AUTO-RESTART - completely manual to stop pinging
-                    // User can click status indicator to restart if needed
+                    // Auto-restart voice commands if not on speech page
+                    if (!appState.speechPageActive && permissionGranted) {
+                        setTimeout(() => {
+                            if (!appState.speechPageActive && !appState.isTransitioning) {
+                                startVoiceCommands();
+                            }
+                        }, 2000); // 2 second delay
+                    }
                 };
 
                 voiceCommandRecognition.onerror = (event) => {
-                    console.log('🗣️ Voice command error:', event.error, '- NO AUTO-RESTART to prevent pinging');
+                    console.log('🗣️ Voice command error:', event.error);
                     appState.voiceCommandsActive = false;
                     appState.isTransitioning = false;
                     
@@ -1357,8 +1353,14 @@
                         return;
                     }
                     
-                    updateVoiceCommandStatus('ready');
-                    // NO AUTO-RESTART on errors - completely manual to stop pinging
+                    // Restart on errors if not on speech page
+                    if (!appState.speechPageActive && permissionGranted) {
+                        setTimeout(() => {
+                            if (!appState.speechPageActive && !appState.isTransitioning) {
+                                startVoiceCommands();
+                            }
+                        }, 3000); // 3 second delay after errors
+                    }
                 };
 
                 voiceCommandRecognition.onresult = (event) => {
@@ -1642,9 +1644,12 @@
                         }
                     }, 1000); // 1 second delay to let page settle
                 } else {
-                    // DO NOT auto-start voice commands to prevent pinging
-                    // User must manually click status indicator to activate
-                    updateVoiceCommandStatus('ready');
+                    // Auto-start voice commands if not on speech page (restored for accessibility)
+                    setTimeout(() => {
+                        if (!appState.speechPageActive) {
+                            startVoiceCommands();
+                        }
+                    }, 1000);
                 }
                 
                 if (pageId === 'phone') {
@@ -1739,11 +1744,11 @@
                 if (appState.speechPageActive) {
                     statusEl.textContent = '🎤 Speech Mode Active';
                 } else {
-                    statusEl.textContent = '🎤 Voice Commands Ready - Click to Activate';
+                    statusEl.textContent = '🎤 Voice Commands Ready';
                 }
                 statusEl.classList.add('ready');
             } else {
-                statusEl.textContent = '🎤 Voice Commands Ready - Click to Activate';
+                statusEl.textContent = '🎤 Voice Commands Ready';
                 statusEl.classList.add('ready');
             }
         }
@@ -2118,18 +2123,12 @@
                 const statusEl = document.getElementById('voiceCommandStatus');
                 if (statusEl) {
                     statusEl.addEventListener('click', async () => {
-                        console.log('🖱️ Status indicator clicked');
                         if (!permissionGranted) {
-                            console.log('🖱️ Requesting permission...');
                             if (await checkPermission()) {
                                 if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                                    console.log('🖱️ Starting voice commands after permission grant');
                                     startVoiceCommands();
                                 }
                             }
-                        } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                            console.log('🖱️ Manually starting voice commands');
-                            startVoiceCommands();
                         }
                     });
                 }
@@ -2809,9 +2808,12 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // DO NOT auto-start voice commands to prevent pinging
-                // User must click status indicator to activate voice commands manually
-                updateVoiceCommandStatus('ready');
+                // Auto-start voice commands on home page (restored for accessibility)
+                if (!appState.speechPageActive) {
+                    setTimeout(() => {
+                        startVoiceCommands();
+                    }, 1000);
+                }
                 
             } catch (error) {
                 console.error('❌ Error during initialization:', error);
@@ -2847,8 +2849,9 @@
                 setTimeout(() => {
                     if (appState.speechPageActive && !appState.speechListening) {
                         startSpeechRecognition();
+                    } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
+                        startVoiceCommands();
                     }
-                    // DO NOT auto-restart voice commands to prevent pinging
                 }, 1000);
             }
         });
