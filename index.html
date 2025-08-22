@@ -506,69 +506,7 @@
             background-color: #f8f9fa;
             margin-bottom: 16px;
         }
-        .voice-command-status {
-            position: fixed;
-            top: 15px;
-            right: 15px;
-            background: rgba(255, 193, 7, 0.9);
-            color: #333;
-            padding: 10px 15px;
-            border-radius: 25px;
-            font-size: 14px;
-            font-weight: bold;
-            z-index: 1000;
-            display: none;
-            border: 2px solid rgba(255, 193, 7, 0.3);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        }
-        .voice-command-status.active {
-            background: rgba(40, 167, 69, 0.9);
-            color: white;
-            display: block;
-            border-color: rgba(40, 167, 69, 0.3);
-            animation: pulse 2s infinite;
-        }
-        .voice-command-status.permission-needed {
-            background: rgba(220, 53, 69, 0.9);
-            color: white;
-            display: block;
-            border-color: rgba(220, 53, 69, 0.3);
-            animation: bounce 2s infinite;
-            transform: scale(1.1);
-            font-size: 16px;
-            padding: 12px 18px;
-        }
-        .voice-command-status.ready {
-            background: rgba(40, 167, 69, 0.9);
-            color: white;
-            display: block;
-            border-color: rgba(40, 167, 69, 0.3);
-        }
-        .voice-command-status.processing {
-            background: rgba(255, 193, 7, 0.9);
-            color: #333;
-            display: block;
-            border-color: rgba(255, 193, 7, 0.3);
-        }
-        .voice-command-status.speaking {
-            background: rgba(153, 102, 255, 0.9);
-            color: white;
-            display: block;
-            border-color: rgba(153, 102, 255, 0.3);
-        }
-        .voice-command-status.listening {
-            background: rgba(0, 153, 204, 0.9);
-            color: white;
-            display: block;
-            border-color: rgba(0, 153, 204, 0.3);
-        }
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-            100% { transform: scale(1); }
-        }
-        @keyframes bounce {
-            0%, 20%, 50%, 80%, 100% { transform: translateY(0) scale(1.1); }
+        /* voice-command-status removed */
             40% { transform: translateY(-4px) scale(1.1); }
             60% { transform: translateY(-2px) scale(1.1); }
         }
@@ -903,8 +841,6 @@
         <div id="swipeLeft" class="swipe-edge swipe-left"></div>
         <div id="swipeRight" class="swipe-edge swipe-right"></div>
 
-        <!-- Voice Command Status Indicator -->
-        <div id="voiceCommandStatus" class="voice-command-status">🎤 Voice Commands Ready</div>
     </div>
 
     <script>
@@ -944,7 +880,12 @@
         let lastProcessedText = '';
         let lastProcessedTime = 0;
 
-        // === PERMISSION CHECK (STOP THE LOOP) ===
+        
+// === RESTART THROTTLE (reduce 'pinging') ===
+let lastRestartAt = 0;
+const MIN_RESTART_INTERVAL_MS = 25000; // 25s cooldown on non-speech pages
+
+// === PERMISSION CHECK (STOP THE LOOP) ===
         async function checkPermission() {
             // Only check once to prevent endless loops
             if (permissionChecked) {
@@ -1014,6 +955,15 @@
                     
                     // ALWAYS restart unless manually stopped - required for accessibility
                     if (!appState.manuallyStoppedSpeech) {
+                        const now = Date.now();
+                        const since = now - lastRestartAt;
+                        const canRestart = since >= MIN_RESTART_INTERVAL_MS;
+                        if (!appState.speechPageActive && !canRestart) {
+                            console.log('⏳ Cooldown active, not restarting yet');
+                            return;
+                        }
+                        lastRestartAt = now;
+
                         if (appState.speechPageActive) {
                             // Speech page: restart immediately for continuous operation
                             console.log('🔄 Speech page: restarting immediately');
@@ -1760,16 +1710,7 @@
             }
         }
 
-        function updateVoiceCommandStatus(status = null) {
-            const statusEl = document.getElementById('voiceCommandStatus');
-            if (!statusEl) return;
-            
-            statusEl.className = 'voice-command-status';
-            
-            if (status === 'permission-needed') {
-                statusEl.textContent = '🔴 Click Here to Enable Microphone';
-                statusEl.classList.add('permission-needed');
-            } else if (status === 'active') {
+        function updateVoiceCommandStatus(status = null) { /* removed UI badge - no-op */ } else if (status === 'active') {
                 statusEl.textContent = '🎤 Voice Commands Active - Say "Hey Leslie"';
                 statusEl.classList.add('active');
             } else if (status === 'processing') {
@@ -1818,7 +1759,29 @@
                         if (appState.isListening) {
                             console.log('🛑 User manually stopped recognition on speech page');
                             stopSpeechRecognition();
-                        } else {
+                        } 
+
+function setupTextInputEnhancements() {
+    const field = document.getElementById('largeTextInputField');
+    const btn = document.getElementById('speakTextBtn');
+    if (!field || !btn) return;
+    const update = () => { btn.disabled = field.value.trim().length === 0; };
+    field.addEventListener('input', update);
+    update();
+    btn.addEventListener('click', () => {
+        const t = field.value.trim();
+        if (!t) return;
+        try { speechSynthesis.cancel(); } catch(e) {}
+        const u = new SpeechSynthesisUtterance(t);
+        u.rate = settings.speechSpeed || 1.0;
+        u.lang = 'en-US';
+        u.onstart = () => { appState.isCurrentlySpeaking = true; };
+        u.onend = () => { appState.isCurrentlySpeaking = false; };
+        speechSynthesis.speak(u);
+    });
+}
+
+else {
                             console.log('🎤 User manually starting recognition on speech page');
                             appState.manuallyStoppedSpeech = false;
                             startContinuousRecognition();
