@@ -968,9 +968,9 @@
             }
         }
 
-        // === SPEECH PAGE RECOGNITION - GUARANTEED AUTO-START ===
+        // === SPEECH PAGE RECOGNITION - ANTI-FEEDBACK WITH PROPER DELAYS ===
         async function startSpeechRecognition() {
-            console.log('🎤 FORCE Starting speech recognition...');
+            console.log('🎤 Starting speech recognition...');
             
             if (appState.speechListening) {
                 console.log('🚫 Already listening');
@@ -1010,7 +1010,7 @@
                         speechRecognition.abort();
                         speechRecognition = null;
                     } catch (e) {}
-                    await new Promise(resolve => setTimeout(resolve, 200));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
                 
                 speechRecognition = new SpeechRecognition();
@@ -1031,15 +1031,14 @@
                     console.log('🎤 Speech recognition ENDED');
                     appState.speechListening = false;
                     
-                    // GUARANTEED RESTART - Always restart if on speech page and not manually stopped
+                    // ANTI-PING RESTART - Use longer delay to prevent browser ping detection
                     if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
-                        console.log('🔄 GUARANTEED RESTART immediately');
-                        // Use requestAnimationFrame for immediate restart without any timer delays
-                        requestAnimationFrame(() => {
+                        console.log('🔄 Restarting speech in 3 seconds (anti-ping)');
+                        setTimeout(() => {
                             if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                                 startSpeechRecognition();
                             }
-                        });
+                        }, 3000); // 3 second delay to prevent ping detection
                     } else {
                         updateUI();
                         updateStatus('✅ Stopped');
@@ -1056,14 +1055,14 @@
                         return;
                     }
                     
-                    // GUARANTEED ERROR RESTART - Use requestAnimationFrame for immediate restart
+                    // ANTI-PING ERROR RESTART - Longer delay after errors
                     if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
-                        console.log('🔄 ERROR RESTART immediately');
-                        requestAnimationFrame(() => {
+                        console.log('🔄 ERROR restart in 5 seconds');
+                        setTimeout(() => {
                             if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                                 startSpeechRecognition();
                             }
-                        });
+                        }, 5000); // 5 second delay after errors
                     } else {
                         updateStatus('⚠️ Error - Click START to try again');
                         updateUI();
@@ -1086,6 +1085,9 @@
             }
         }
 
+        let lastProcessedText = '';
+        let lastProcessedTime = 0;
+
         function processSpeechResults(event) {
             if (!appState.speechPageActive) return;
             
@@ -1094,17 +1096,27 @@
                     const result = event.results[i];
                     if (result.isFinal) {
                         const text = result[0].transcript.trim();
-                        if (text) {
-                            console.log('🎤 Speech result:', text);
+                        const currentTime = Date.now();
+                        
+                        // ANTI-FEEDBACK: Prevent processing the same text within 5 seconds
+                        if (text && 
+                            (text !== lastProcessedText || currentTime - lastProcessedTime > 5000)) {
+                            
+                            console.log('🎤 NEW Speech result:', text);
+                            lastProcessedText = text;
+                            lastProcessedTime = currentTime;
+                            
                             speechResultCount++;
                             showFinalResult(text);
                             
                             // Speak result back
                             if (settings.speakVoiceCommands) {
-                                setTimeout(() => speakTextResult(text), 200);
+                                setTimeout(() => speakTextResult(text), 500);
                             }
                             
                             resetSpeechTimeout();
+                        } else {
+                            console.log('🚫 Ignoring duplicate/recent text:', text);
                         }
                     }
                 }
@@ -1145,13 +1157,14 @@
                     appState.isCurrentlySpeaking = false;
                     updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
                     
-                    // Clear display after speaking
+                    // Clear display after speaking and show ready message
                     setTimeout(() => {
                         const textEl = document.getElementById('recognizedText');
                         if (textEl && appState.speechPageActive) {
                             textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for next phrase...</div>`;
+                            console.log('🧹 Display cleared after speaking');
                         }
-                    }, 1000);
+                    }, 2000); // 2 second delay before clearing
                 };
                 
                 utterance.onerror = () => {
@@ -1208,13 +1221,13 @@
             updateVoiceCommandStatus('ready');
         }
 
-        // === VOICE COMMANDS - MEGA ANTI-PING (NO SHORT RESTARTS) ===
+        // === VOICE COMMANDS - FAST RESTART FOR USABILITY ===
         async function startVoiceCommands() {
             if (appState.speechPageActive || appState.voiceCommandsActive) {
                 return;
             }
             
-            console.log('🗣️ Starting voice commands with MEGA anti-ping...');
+            console.log('🗣️ Starting voice commands...');
             
             if (!await checkPermission()) {
                 updateVoiceCommandStatus('permission-needed');
@@ -1245,16 +1258,16 @@
                 };
 
                 voiceCommandRecognition.onend = () => {
-                    console.log('🗣️ Voice commands ended - SAFE anti-ping restart');
+                    console.log('🗣️ Voice commands ended - FAST restart for usability');
                     appState.voiceCommandsActive = false;
                     
-                    // SAFE ANTI-PING: 60-120 second delays (1-2 minutes - long enough to avoid detection, short enough to work)
+                    // FAST RESTART: 10-30 seconds for usability (still avoids ping detection)
                     if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
-                        const minDelay = 60000; // 60 seconds (1 minute) minimum
-                        const randomDelay = Math.random() * 60000; // 0-60 seconds additional
-                        const totalDelay = minDelay + randomDelay; // 60-120 seconds (1-2 minutes) total
+                        const minDelay = 10000; // 10 seconds minimum
+                        const randomDelay = Math.random() * 20000; // 0-20 seconds additional
+                        const totalDelay = minDelay + randomDelay; // 10-30 seconds total
                         
-                        console.log(`🔄 SAFE anti-ping restart in ${Math.round(totalDelay/1000)} seconds`);
+                        console.log(`🔄 FAST restart in ${Math.round(totalDelay/1000)} seconds`);
                         
                         voiceCommandRestartTimer = setTimeout(() => {
                             if (!appState.speechPageActive && !appState.isCurrentlySpeaking) {
@@ -1275,13 +1288,13 @@
                         return;
                     }
                     
-                    // SAFE ERROR DELAY: 120-240 seconds (2-4 minutes)
+                    // FAST ERROR RESTART: 15-45 seconds
                     if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
-                        const minDelay = 120000; // 120 seconds (2 minutes) minimum after errors
-                        const randomDelay = Math.random() * 120000; // 0-120 seconds additional
-                        const totalDelay = minDelay + randomDelay; // 120-240 seconds (2-4 minutes) total
+                        const minDelay = 15000; // 15 seconds minimum after errors
+                        const randomDelay = Math.random() * 30000; // 0-30 seconds additional
+                        const totalDelay = minDelay + randomDelay; // 15-45 seconds total
                         
-                        console.log(`🔄 SAFE error restart in ${Math.round(totalDelay/1000)} seconds`);
+                        console.log(`🔄 FAST error restart in ${Math.round(totalDelay/1000)} seconds`);
                         
                         voiceCommandRestartTimer = setTimeout(() => {
                             if (!appState.speechPageActive && !appState.isCurrentlySpeaking) {
@@ -1541,37 +1554,27 @@
                 currentPage = pageId;
                 
                 if (pageId === 'speech') {
-                    console.log('🎤 SPEECH PAGE ACTIVATED - IMMEDIATE AUTO-START');
+                    console.log('🎤 SPEECH PAGE ACTIVATED - AUTO-START WITH SMALL DELAY');
                     
                     const textEl = document.getElementById('recognizedText');
                     if (textEl) {
-                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Starting immediately...</div>`;
+                        textEl.innerHTML = `<div style="color: #0099cc; font-weight: bold; text-align: center; padding: 20px;">🎤 Starting in 2 seconds...</div>`;
                     }
                     
-                    updateStatus('🎤 Starting immediately...');
+                    updateStatus('🎤 Starting in 2 seconds...');
                     speechResultCount = 0;
                     
-                    // IMMEDIATE AUTO-START - NO DELAYS!
-                    if (appState.speechPageActive) {
-                        console.log('🎤 IMMEDIATE AUTO-START');
-                        startSpeechRecognition();
-                    }
-                    
-                    // Multiple backup attempts with NO delays that could cause pings
-                    const attemptAutoStart = () => {
-                        if (appState.speechPageActive && !appState.speechListening) {
-                            console.log('🎤 BACKUP AUTO-START');
+                    // AUTO-START with 2 second delay to let page settle
+                    setTimeout(() => {
+                        if (appState.speechPageActive) {
+                            console.log('🎤 AUTO-START NOW');
                             startSpeechRecognition();
                         }
-                    };
-                    
-                    // Use requestAnimationFrame instead of setTimeout to avoid any timing patterns
-                    requestAnimationFrame(attemptAutoStart);
-                    requestAnimationFrame(() => requestAnimationFrame(attemptAutoStart));
+                    }, 2000);
                     
                 } else {
-                    // Start voice commands with safe 60-90 second delay (not too long, not too short)
-                    const voiceStartDelay = 60000 + Math.random() * 30000; // 60-90 seconds
+                    // Start voice commands with fast 15-30 second delay for usability
+                    const voiceStartDelay = 15000 + Math.random() * 15000; // 15-30 seconds
                     setTimeout(() => {
                         if (!appState.speechPageActive) {
                             startVoiceCommands();
@@ -2582,9 +2585,9 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Start voice commands with safe 90-120 second delay on initialization
+                // Start voice commands with fast 20-40 second delay on initialization
                 if (!appState.speechPageActive) {
-                    const initDelay = 90000 + Math.random() * 30000; // 90-120 seconds
+                    const initDelay = 20000 + Math.random() * 20000; // 20-40 seconds
                     setTimeout(() => {
                         if (!appState.speechPageActive) {
                             startVoiceCommands();
