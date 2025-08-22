@@ -880,11 +880,9 @@
         let lastProcessedText = '';
         let lastProcessedTime = 0;
 
-        
-// === RESTART THROTTLE (reduce 'pinging') ===
+        // === RESTART THROTTLE ===
 let lastRestartAt = 0;
-const MIN_RESTART_INTERVAL_MS = 25000; // 25s cooldown on non-speech pages
-
+const MIN_RESTART_INTERVAL_MS = 25000;
 // === PERMISSION CHECK (STOP THE LOOP) ===
         async function checkPermission() {
             // Only check once to prevent endless loops
@@ -955,15 +953,6 @@ const MIN_RESTART_INTERVAL_MS = 25000; // 25s cooldown on non-speech pages
                     
                     // ALWAYS restart unless manually stopped - required for accessibility
                     if (!appState.manuallyStoppedSpeech) {
-                        const now = Date.now();
-                        const since = now - lastRestartAt;
-                        const canRestart = since >= MIN_RESTART_INTERVAL_MS;
-                        if (!appState.speechPageActive && !canRestart) {
-                            console.log('⏳ Cooldown active, not restarting yet');
-                            return;
-                        }
-                        lastRestartAt = now;
-
                         if (appState.speechPageActive) {
                             // Speech page: restart immediately for continuous operation
                             console.log('🔄 Speech page: restarting immediately');
@@ -1710,7 +1699,7 @@ const MIN_RESTART_INTERVAL_MS = 25000; // 25s cooldown on non-speech pages
             }
         }
 
-        function updateVoiceCommandStatus(status = null) { /* removed UI badge - no-op */ } else if (status === 'active') {
+        function updateVoiceCommandStatus(status=null){} else if (status === 'active') {
                 statusEl.textContent = '🎤 Voice Commands Active - Say "Hey Leslie"';
                 statusEl.classList.add('active');
             } else if (status === 'processing') {
@@ -1759,29 +1748,7 @@ const MIN_RESTART_INTERVAL_MS = 25000; // 25s cooldown on non-speech pages
                         if (appState.isListening) {
                             console.log('🛑 User manually stopped recognition on speech page');
                             stopSpeechRecognition();
-                        } 
-
-function setupTextInputEnhancements() {
-    const field = document.getElementById('largeTextInputField');
-    const btn = document.getElementById('speakTextBtn');
-    if (!field || !btn) return;
-    const update = () => { btn.disabled = field.value.trim().length === 0; };
-    field.addEventListener('input', update);
-    update();
-    btn.addEventListener('click', () => {
-        const t = field.value.trim();
-        if (!t) return;
-        try { speechSynthesis.cancel(); } catch(e) {}
-        const u = new SpeechSynthesisUtterance(t);
-        u.rate = settings.speechSpeed || 1.0;
-        u.lang = 'en-US';
-        u.onstart = () => { appState.isCurrentlySpeaking = true; };
-        u.onend = () => { appState.isCurrentlySpeaking = false; };
-        speechSynthesis.speak(u);
-    });
-}
-
-else {
+                        } else {
                             console.log('🎤 User manually starting recognition on speech page');
                             appState.manuallyStoppedSpeech = false;
                             startContinuousRecognition();
@@ -2122,7 +2089,7 @@ else {
             displayContactsOnPhonePage();
         }
 
-        function callContact(contact) {
+        async function callContact(contact) {
             const phoneNumber = contact.phone.replace(/[^0-9]/g, '');
             if (phoneNumber) {
                 window.location.href = `tel:${phoneNumber}`;
@@ -2557,57 +2524,28 @@ else {
                 } catch (e) {}
             }
         });
-    
-}
-</script>
+    </script>
 
 <script>
-// ===== Panic-proof bootstrap & error overlay =====
 (function(){
-  function showErrorOverlay(msg, src, line, col, err){
+  async function safeStart(){
     try {
-      const id = 'leslie-error-overlay';
-      let el = document.getElementById(id);
-      if (!el) {
-        el = document.createElement('div');
-        el.id = id;
-        el.style.cssText = 'position:fixed;z-index:999999;left:0;right:0;bottom:0;background:#260000;color:#fff;padding:10px;font:12px/1.4 system-ui,Arial;border-top:2px solid #d00;max-height:40vh;overflow:auto;';
-        document.body.appendChild(el);
-      }
-      const pre = document.createElement('pre');
-      pre.textContent = (msg||'JS Error') + (src ? ('
-' + src + ':' + line + ':' + col) : '') + (err && err.stack ? ('
-'+err.stack) : '');
-      el.appendChild(pre);
-    } catch(e){}
-  }
-  window.onerror = function(msg, src, line, col, err){
-    showErrorOverlay(msg, src, line, col, err);
-  };
-  window.addEventListener('unhandledrejection', function(e){
-    showErrorOverlay('Unhandled promise rejection: ' + (e.reason && e.reason.message || e.reason), '', 0, 0, e.reason);
-  });
-
-  async function safeBootstrap(){
-    try {
-      if (typeof initApp === 'function') { 
-        await initApp(); 
-        return;
-      }
-      // If your code uses a different init, try common fallbacks:
+      if (typeof initApp === 'function') { await initApp(); return; }
       if (typeof initializeApp === 'function') { await initializeApp(); return; }
       if (typeof setupApp === 'function') { await setupApp(); return; }
-      // Otherwise, dispatch the DOM event many scripts listen for
-      document.dispatchEvent(new Event('DOMContentLoaded'));
-    } catch(e){
-      showErrorOverlay('safeBootstrap failed: ' + e.message);
+      // Fallback: dispatch DOMContentLoaded for legacy code paths
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {});
+      }
+    } catch(e) {
+      // swallow to avoid blocking on mobile
+      console.log('Bootstrap error:', e && e.message);
     }
   }
-
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    safeBootstrap();
+    safeStart();
   } else {
-    document.addEventListener('DOMContentLoaded', safeBootstrap);
+    document.addEventListener('DOMContentLoaded', safeStart, { once: true });
   }
 })();
 </script>
