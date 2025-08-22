@@ -909,34 +909,28 @@
 
     <script>
         // === CORE VARIABLES ===
-        let speechRecognition = null; // For speech page
-        let voiceCommandRecognition = null; // For voice commands - separate instance
+        let speechRecognition = null;
+        let voiceCommandRecognition = null;
         let speechSynth = window.speechSynthesis;
         let currentPage = 'home';
         let contacts = [];
         let filteredContacts = [];
         let userLocation = null;
         let isInitialized = false;
-        let speechTimeoutTimer = null; // For 2-minute timeout
+        let speechTimeoutTimer = null;
         let speechResultCount = 0;
-        let lastSpokenText = ''; // Track last spoken text to prevent feedback loops
-        let speechFeedbackTimer = null; // Timer to prevent feedback loops
         
         // PERMISSION STATE
         let permissionGranted = false;
         
-        // APP STATE - CLEAR SEPARATION
+        // APP STATE - SIMPLIFIED
         let appState = {
             speechListening: false,
             speechPageActive: false,
             voiceCommandsActive: false,
             isCurrentlySpeaking: false,
             manuallyStoppedSpeech: false,
-            isTransitioning: false,
-            lastRecognitionTime: 0,
-            temporarilyPausedForSpeaking: false,
-            voiceCommandRestartCount: 0, // Track voice command restarts separately
-            speechRestartCount: 0 // Track speech page restarts separately
+            isTransitioning: false
         };
         
         // Settings
@@ -953,6 +947,9 @@
         let audioStream = null;
         let recordingChunks = [];
         let chunkTimer = null;
+
+        // Voice command restart timer
+        let voiceCommandRestartTimer = null;
 
         // === PERMISSION CHECK ===
         async function checkPermission() {
@@ -971,12 +968,12 @@
             }
         }
 
-        // === SPEECH PAGE RECOGNITION - SIMPLIFIED FOR TRUE CONTINUOUS MODE ===
+        // === SPEECH PAGE RECOGNITION - ULTRA SIMPLIFIED ===
         async function startSpeechRecognition() {
             console.log('🎤 Starting speech page recognition...');
             
             if (appState.speechListening || appState.isTransitioning) {
-                console.log('🚫 Speech recognition busy or transitioning');
+                console.log('🚫 Speech recognition busy');
                 return;
             }
             
@@ -988,9 +985,8 @@
             // Stop voice commands when on speech page
             await stopVoiceCommands();
             
-            // Reset flags and counters
+            // Reset flags
             appState.manuallyStoppedSpeech = false;
-            appState.speechRestartCount = 0;
             
             if (settings.recognitionMode === 'pro') {
                 await startProModeRecording();
@@ -1014,58 +1010,40 @@
                         speechRecognition.abort();
                         speechRecognition = null;
                     } catch (e) {}
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
-                
-                // Wait for cleanup
-                await new Promise(resolve => setTimeout(resolve, 500));
                 
                 speechRecognition = new SpeechRecognition();
                 speechRecognition.continuous = true;
-                speechRecognition.interimResults = false; 
+                speechRecognition.interimResults = false;
                 speechRecognition.lang = 'en-US';
                 speechRecognition.maxAlternatives = 1;
 
                 speechRecognition.onstart = () => {
-                    console.log('🎤 Speech page recognition started');
+                    console.log('🎤 Speech recognition started');
                     appState.speechListening = true;
                     appState.isTransitioning = false;
-                    appState.lastRecognitionTime = Date.now();
                     updateUI();
                     updateStatus('🎤 Listening continuously...');
                     updateVoiceCommandStatus('listening');
                 };
 
                 speechRecognition.onend = () => {
-                    console.log('🎤 Speech page recognition ended');
+                    console.log('🎤 Speech recognition ended');
                     appState.speechListening = false;
                     appState.isTransitioning = false;
                     
-                    // SIMPLIFIED RESTART LOGIC - Only restart if still on speech page and not manually stopped
-                    if (appState.speechPageActive && 
-                        !appState.manuallyStoppedSpeech && 
-                        !appState.isCurrentlySpeaking &&
-                        appState.speechRestartCount < 10) { // Increased limit
-                        
-                        console.log('🔄 Restarting speech recognition (restart #' + (appState.speechRestartCount + 1) + ')');
-                        appState.speechRestartCount++;
-                        
-                        // Simple restart with minimal delay
+                    // ULTRA SIMPLE RESTART - Always restart if on speech page and not manually stopped
+                    if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                        console.log('🔄 Auto-restarting speech recognition');
                         setTimeout(() => {
-                            if (appState.speechPageActive && 
-                                !appState.manuallyStoppedSpeech && 
-                                !appState.isCurrentlySpeaking) {
+                            if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                                 startSpeechRecognition();
                             }
-                        }, 1000); // Only 1 second delay
+                        }, 100); // Immediate restart with tiny delay
                     } else {
                         updateUI();
-                        if (appState.speechRestartCount >= 10) {
-                            updateStatus('⚠️ Stopped after multiple restarts - Click STOP then START to resume');
-                        } else if (appState.isCurrentlySpeaking) {
-                            updateStatus('🔊 Speaking - will resume listening when finished');
-                        } else {
-                            updateStatus('✅ Stopped listening');
-                        }
+                        updateStatus('✅ Stopped listening');
                         updateVoiceCommandStatus('ready');
                     }
                 };
@@ -1080,20 +1058,16 @@
                         return;
                     }
                     
-                    // SIMPLIFIED ERROR RESTART - Just restart if on speech page
-                    if (appState.speechPageActive && 
-                        !appState.manuallyStoppedSpeech && 
-                        appState.speechRestartCount < 5) {
-                        
+                    // ULTRA SIMPLE ERROR RESTART
+                    if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                         console.log('🔄 Restarting after error:', event.error);
-                        appState.speechRestartCount++;
                         setTimeout(() => {
                             if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
                                 startSpeechRecognition();
                             }
-                        }, 2000); // 2 second delay after error
+                        }, 1000); // 1 second delay after error
                     } else {
-                        updateStatus('⚠️ Error - Click STOP then START to try again');
+                        updateStatus('⚠️ Error - Click START to try again');
                         updateUI();
                         updateVoiceCommandStatus('ready');
                     }
@@ -1108,7 +1082,7 @@
             } catch (error) {
                 console.error('❌ Error creating speech recognition:', error);
                 appState.isTransitioning = false;
-                updateStatus('❌ Failed to start - Click STOP then START to try again');
+                updateStatus('❌ Failed to start');
                 appState.speechListening = false;
                 updateUI();
                 updateVoiceCommandStatus('ready');
@@ -1119,141 +1093,79 @@
             if (!appState.speechPageActive) return;
             
             try {
-                let finalText = '';
-                
-                // Process only final results
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const result = event.results[i];
                     if (result.isFinal) {
-                        finalText += result[0].transcript;
+                        const text = result[0].transcript.trim();
+                        if (text) {
+                            console.log('🎤 Speech result:', text);
+                            speechResultCount++;
+                            showFinalResult(text);
+                            
+                            // Speak result back
+                            if (settings.speakVoiceCommands) {
+                                setTimeout(() => speakTextResult(text), 300);
+                            }
+                            
+                            resetSpeechTimeout();
+                        }
                     }
-                }
-                
-                if (finalText.trim()) {
-                    const text = finalText.trim();
-                    
-                    // ANTI-FEEDBACK: Don't process if this matches what we just spoke
-                    if (text.toLowerCase() === lastSpokenText.toLowerCase()) {
-                        console.log('🚫 Ignoring feedback from our own speech:', text);
-                        return;
-                    }
-                    
-                    console.log('🎤 Final result #' + (speechResultCount + 1) + ':', text);
-                    
-                    // Update recognition time and counter
-                    appState.lastRecognitionTime = Date.now();
-                    speechResultCount++;
-                    
-                    // Show result on screen
-                    showFinalResult(text, speechResultCount);
-                    
-                    // Speak result with delay
-                    setTimeout(() => {
-                        speakTextResult(text);
-                    }, 500);
-                    
-                    resetSpeechTimeout(); // Reset timeout on activity
-                    appState.speechRestartCount = 0; // Reset restart count on successful recognition
                 }
             } catch (error) {
                 console.error('❌ Error processing speech results:', error);
             }
         }
 
-        function showFinalResult(text, phraseNumber) {
+        function showFinalResult(text) {
             const textEl = document.getElementById('recognizedText');
             if (!textEl) return;
             
-            // Clear previous content and show only current phrase
             textEl.innerHTML = '';
             
-            const finalResultDiv = document.createElement('div');
-            finalResultDiv.className = 'final-result';
-            finalResultDiv.style.cssText = 'background: #e8f5e8; padding: 20px; border-radius: 8px; border-left: 5px solid #28a745; font-size: 20px; line-height: 1.6; text-align: center; margin: 20px 0;';
-            finalResultDiv.textContent = text;
+            const resultDiv = document.createElement('div');
+            resultDiv.style.cssText = 'background: #e8f5e8; padding: 20px; border-radius: 8px; border-left: 5px solid #28a745; font-size: 20px; line-height: 1.6; text-align: center; margin: 20px 0;';
+            resultDiv.textContent = text;
             
-            textEl.appendChild(finalResultDiv);
-            
-            console.log('📝 Showing current phrase:', text);
+            textEl.appendChild(resultDiv);
         }
 
         function speakTextResult(text) {
-            if (!settings.speakVoiceCommands) {
-                return;
-            }
-            
-            console.log('🔊 Speaking result:', text);
-            updateVoiceCommandStatus('speaking');
-            
-            // Store what we're about to speak to prevent feedback
-            lastSpokenText = text;
+            if (!settings.speakVoiceCommands) return;
             
             try {
-                // Force cancel any existing speech
                 speechSynth.cancel();
                 
-                // Clear any existing feedback timer
-                if (speechFeedbackTimer) {
-                    clearTimeout(speechFeedbackTimer);
-                }
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = settings.speechSpeed || 1.0;
+                utterance.lang = 'en-US';
                 
-                setTimeout(() => {
-                    if (speechSynth.speaking) {
-                        speechSynth.cancel();
-                    }
+                utterance.onstart = () => {
+                    appState.isCurrentlySpeaking = true;
+                    updateVoiceCommandStatus('speaking');
+                };
+                
+                utterance.onend = () => {
+                    appState.isCurrentlySpeaking = false;
+                    updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
                     
+                    // Clear display after speaking
                     setTimeout(() => {
-                        const utterance = new SpeechSynthesisUtterance(text);
-                        utterance.rate = settings.speechSpeed || 1.0;
-                        utterance.pitch = 1.0;
-                        utterance.volume = 1.0;
-                        utterance.lang = 'en-US';
-                        
-                        utterance.onstart = () => {
-                            console.log('🔊 Started speaking:', text);
-                            appState.isCurrentlySpeaking = true;
-                        };
-                        
-                        utterance.onend = () => {
-                            console.log('🔊 Finished speaking:', text);
-                            appState.isCurrentlySpeaking = false;
-                            
-                            // Clear screen after speaking
-                            setTimeout(() => {
-                                clearScreenAfterSpeaking();
-                            }, 1000);
-                            
-                            // Reset feedback prevention
-                            speechFeedbackTimer = setTimeout(() => {
-                                lastSpokenText = '';
-                                updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
-                            }, 2000);
-                        };
-                        
-                        utterance.onerror = (event) => {
-                            console.error('🔊 Speech error:', event.error);
-                            appState.isCurrentlySpeaking = false;
-                            lastSpokenText = '';
-                            updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
-                        };
-                        
-                        speechSynth.speak(utterance);
-                    }, 200);
-                }, 300);
+                        const textEl = document.getElementById('recognizedText');
+                        if (textEl && appState.speechPageActive) {
+                            textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for next phrase...</div>`;
+                        }
+                    }, 1000);
+                };
                 
+                utterance.onerror = () => {
+                    appState.isCurrentlySpeaking = false;
+                    updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
+                };
+                
+                speechSynth.speak(utterance);
             } catch (error) {
                 console.error('❌ Error speaking text:', error);
                 appState.isCurrentlySpeaking = false;
-                lastSpokenText = '';
-                updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
-            }
-        }
-
-        function clearScreenAfterSpeaking() {
-            const textEl = document.getElementById('recognizedText');
-            if (textEl && appState.speechPageActive) {
-                textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Listening for next phrase...</div>`;
-                console.log('🧹 Screen cleared after speaking');
             }
         }
 
@@ -1264,27 +1176,20 @@
             }
             
             speechTimeoutTimer = setTimeout(() => {
-                console.log('⏰ 2-minute timeout reached - stopping speech recognition');
+                console.log('⏰ 2-minute timeout reached');
                 stopSpeechRecognition();
                 updateStatus('⏰ Stopped due to 2-minute timeout');
-            }, 120000); // 2 minutes
+            }, 120000);
         }
 
         function stopSpeechRecognition() {
             console.log('🛑 Stopping speech recognition...');
             
             appState.manuallyStoppedSpeech = true;
-            appState.speechRestartCount = 999; // Prevent any restarts
             
-            // Clear timers
             if (speechTimeoutTimer) {
                 clearTimeout(speechTimeoutTimer);
                 speechTimeoutTimer = null;
-            }
-            
-            if (speechFeedbackTimer) {
-                clearTimeout(speechFeedbackTimer);
-                speechFeedbackTimer = null;
             }
             
             // Stop Pro Mode
@@ -1293,29 +1198,27 @@
             }
             
             // Stop Free Mode
-            if (speechRecognition && appState.speechListening) {
+            if (speechRecognition) {
                 try {
                     speechRecognition.abort();
-                } catch (e) {
-                    console.error('Error aborting speech recognition:', e);
-                }
+                } catch (e) {}
                 speechRecognition = null;
             }
             
             appState.speechListening = false;
             appState.isTransitioning = false;
             updateUI();
-            updateStatus('🛑 Stopped - Click START LISTENING to resume');
+            updateStatus('🛑 Stopped');
             updateVoiceCommandStatus('ready');
         }
 
-        // === VOICE COMMANDS - EXTREME ANTI-PING MEASURES ===
+        // === VOICE COMMANDS - ULTRA ANTI-PING ===
         async function startVoiceCommands() {
             if (appState.speechPageActive || appState.voiceCommandsActive || appState.isTransitioning) {
                 return;
             }
             
-            console.log('🗣️ Starting voice commands with EXTREME anti-ping measures...');
+            console.log('🗣️ Starting voice commands with ULTRA anti-ping...');
             
             if (!await checkPermission()) {
                 updateVoiceCommandStatus('permission-needed');
@@ -1327,15 +1230,13 @@
                 
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 
-                // Clean stop any existing voice commands
                 if (voiceCommandRecognition) {
                     try {
                         voiceCommandRecognition.abort();
                         voiceCommandRecognition = null;
                     } catch (e) {}
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
-                
-                await new Promise(resolve => setTimeout(resolve, 1000));
                 
                 voiceCommandRecognition = new SpeechRecognition();
                 voiceCommandRecognition.continuous = true;
@@ -1351,30 +1252,20 @@
                 };
 
                 voiceCommandRecognition.onend = () => {
-                    console.log('🗣️ Voice commands ended - EXTREME anti-ping restart');
+                    console.log('🗣️ Voice commands ended - ULTRA anti-ping restart');
                     appState.voiceCommandsActive = false;
                     appState.isTransitioning = false;
                     
-                    // EXTREME ANTI-PING: Much longer, highly variable delays
-                    if (!appState.speechPageActive && 
-                        permissionGranted && 
-                        !appState.isCurrentlySpeaking &&
-                        appState.voiceCommandRestartCount < 3) { // Severely limit restarts
+                    // ULTRA ANTI-PING: 60-300 second delays (1-5 minutes)
+                    if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
+                        const minDelay = 60000; // 60 seconds minimum
+                        const randomDelay = Math.random() * 240000; // 0-240 seconds additional
+                        const totalDelay = minDelay + randomDelay; // 60-300 seconds total
                         
-                        // EXTREME timing: 30-120 seconds with high randomization
-                        const baseDelay = 30000; // 30 second minimum
-                        const randomDelay = Math.random() * 90000; // 0-90 seconds additional
-                        const totalDelay = baseDelay + randomDelay; // 30-120 seconds total
+                        console.log(`🔄 ULTRA anti-ping restart in ${Math.round(totalDelay/1000)} seconds`);
                         
-                        appState.voiceCommandRestartCount++;
-                        console.log(`🔄 EXTREME anti-ping restart in ${Math.round(totalDelay/1000)} seconds (restart #${appState.voiceCommandRestartCount})`);
-                        
-                        setTimeout(() => {
+                        voiceCommandRestartTimer = setTimeout(() => {
                             if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
-                                // Reset restart count occasionally to allow continued operation
-                                if (appState.voiceCommandRestartCount >= 3) {
-                                    appState.voiceCommandRestartCount = 0;
-                                }
                                 startVoiceCommands();
                             }
                         }, totalDelay);
@@ -1393,20 +1284,15 @@
                         return;
                     }
                     
-                    // EXTREME ERROR DELAY: 60-240 seconds
-                    if (!appState.speechPageActive && 
-                        permissionGranted && 
-                        !appState.isCurrentlySpeaking &&
-                        appState.voiceCommandRestartCount < 2) { // Even more limited on errors
+                    // ULTRA ERROR DELAY: 120-600 seconds (2-10 minutes)
+                    if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
+                        const minDelay = 120000; // 120 seconds minimum after errors
+                        const randomDelay = Math.random() * 480000; // 0-480 seconds additional
+                        const totalDelay = minDelay + randomDelay; // 120-600 seconds total
                         
-                        const baseDelay = 60000; // 60 second minimum after errors
-                        const randomDelay = Math.random() * 180000; // 0-180 seconds additional  
-                        const totalDelay = baseDelay + randomDelay; // 60-240 seconds total
+                        console.log(`🔄 ULTRA error restart in ${Math.round(totalDelay/1000)} seconds`);
                         
-                        appState.voiceCommandRestartCount++;
-                        console.log(`🔄 EXTREME error restart in ${Math.round(totalDelay/1000)} seconds`);
-                        
-                        setTimeout(() => {
+                        voiceCommandRestartTimer = setTimeout(() => {
                             if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
                                 startVoiceCommands();
                             }
@@ -1432,6 +1318,11 @@
         async function stopVoiceCommands() {
             console.log('🛑 Stopping voice commands...');
             
+            if (voiceCommandRestartTimer) {
+                clearTimeout(voiceCommandRestartTimer);
+                voiceCommandRestartTimer = null;
+            }
+            
             if (voiceCommandRecognition) {
                 try {
                     voiceCommandRecognition.abort();
@@ -1451,8 +1342,12 @@
                         const text = result[0].transcript.trim().toLowerCase();
                         console.log('🗣️ Voice command heard:', text);
                         
-                        if (isVoiceCommand(text)) {
-                            handleVoiceCommand(text);
+                        if (text.includes('hey leslie') || text.includes('leslie')) {
+                            const command = extractCommand(text);
+                            if (command) {
+                                updateVoiceCommandStatus('processing');
+                                executeCommand(command);
+                            }
                         }
                     }
                 }
@@ -1461,23 +1356,7 @@
             }
         }
 
-        function isVoiceCommand(text) {
-            return text.includes('hey leslie') || text.includes('leslie');
-        }
-
-        function handleVoiceCommand(text) {
-            console.log('🗣️ Processing voice command:', text);
-            
-            const command = extractCommand(text);
-            if (command) {
-                updateVoiceCommandStatus('processing');
-                executeCommand(command);
-            }
-        }
-
         function extractCommand(text) {
-            console.log('🔍 Extracting command from text:', text);
-            
             const commands = {
                 'home': ['home', 'go home', 'main page'],
                 'start talking': ['start talking', 'speech', 'talk', 'speaking'],
@@ -1488,21 +1367,7 @@
                 'weather': ['weather', 'current weather'],
                 'hourly': ['hourly', 'hourly weather', 'hour'],
                 'weekly': ['weekly', 'weekly weather', '7 day', 'seven day'],
-                'close weather': [
-                    'close weather', 
-                    'hide weather', 
-                    'weather close', 
-                    'close the weather', 
-                    'close weather display', 
-                    'hide weather display',
-                    'dismiss weather',
-                    'weather dismiss',
-                    'close that weather',
-                    'hide that weather',
-                    'weather away',
-                    'get rid of weather',
-                    'remove weather'
-                ],
+                'close weather': ['close weather', 'hide weather', 'weather close'],
                 'free mode': ['free mode', 'browser mode'],
                 'pro mode': ['pro mode', 'whisper mode'],
                 'stop listening': ['stop listening', 'stop'],
@@ -1512,27 +1377,11 @@
                 'pause less': ['pause less', 'less pause']
             };
             
-            // Special handling for weather close - check this first
-            if (text.includes('weather') && (
-                text.includes('close') || 
-                text.includes('hide') || 
-                text.includes('dismiss') || 
-                text.includes('away') || 
-                text.includes('remove') ||
-                text.includes('get rid')
-            )) {
-                console.log('🗣️ Matched CLOSE WEATHER command from text:', text);
-                return 'close weather';
-            }
-            
             for (const [cmd, variations] of Object.entries(commands)) {
                 if (variations.some(variation => text.includes(variation))) {
-                    console.log('🗣️ Matched command:', cmd, 'from text:', text);
                     return cmd;
                 }
             }
-            
-            console.log('🗣️ No command matched for text:', text);
             return null;
         }
 
@@ -1595,15 +1444,13 @@
                         saveSettings();
                         response = 'Switched to pro mode';
                     } else {
-                        response = 'Pro mode requires API key in settings';
+                        response = 'Pro mode requires API key';
                     }
                     break;
                 case 'stop listening':
                     if (appState.speechPageActive) {
                         stopSpeechRecognition();
                         response = 'Stopped listening';
-                    } else {
-                        response = 'Not currently on speech page';
                     }
                     break;
                 case 'speak faster':
@@ -1622,24 +1469,17 @@
                     adjustPauseBetweenWords(-0.5);
                     response = 'Decreased pause duration';
                     break;
-                default:
-                    response = 'Command not recognized';
             }
             
             if (settings.speakVoiceCommands && response) {
                 speak(response);
             }
             
-            finishCommand();
-        }
-
-        function finishCommand() {
             setTimeout(() => {
                 updateVoiceCommandStatus(appState.voiceCommandsActive ? 'active' : 'ready');
             }, 1000);
         }
 
-        // Simple speech function for voice commands
         function speak(text) {
             if (!settings.speakVoiceCommands) return;
             
@@ -1667,9 +1507,8 @@
                 
                 speechSynth.speak(utterance);
             } catch (error) {
-                console.error('❌ Error speaking text:', error);
+                console.error('❌ Error speaking:', error);
                 appState.isCurrentlySpeaking = false;
-                updateVoiceCommandStatus(appState.voiceCommandsActive ? 'active' : 'ready');
             }
         }
 
@@ -1690,14 +1529,10 @@
             // Stop all recognition when changing pages
             stopAllRecognition();
             
-            // Reset flags and counters
+            // Reset flags
             appState.manuallyStoppedSpeech = false;
-            appState.speechRestartCount = 0;
-            appState.voiceCommandRestartCount = 0; // Reset voice command restart count
-            lastSpokenText = '';
             
             // Handle speech page state change
-            const wasOnSpeechPage = appState.speechPageActive;
             appState.speechPageActive = (pageId === 'speech');
             
             // Show the page
@@ -1711,7 +1546,7 @@
                 currentPage = pageId;
                 
                 if (pageId === 'speech') {
-                    console.log('🎤 SPEECH PAGE ACTIVATED - AUTO-STARTING');
+                    console.log('🎤 SPEECH PAGE ACTIVATED');
                     
                     const textEl = document.getElementById('recognizedText');
                     if (textEl) {
@@ -1721,19 +1556,19 @@
                     updateStatus('🎤 Starting continuous listening...');
                     speechResultCount = 0;
                     
-                    // Auto-start speech recognition immediately
+                    // Auto-start speech recognition
                     setTimeout(() => {
                         if (appState.speechPageActive) {
                             startSpeechRecognition();
                         }
-                    }, 1000); // Reduced delay
+                    }, 500);
                 } else {
-                    // Auto-start voice commands with EXTREME anti-ping measures
+                    // Start voice commands with ULTRA anti-ping delay
                     setTimeout(() => {
                         if (!appState.speechPageActive) {
                             startVoiceCommands();
                         }
-                    }, 15000); // 15 second delay to prevent conflicts and minimize ping detection
+                    }, 30000); // 30 second delay
                 }
                 
                 if (pageId === 'phone') {
@@ -1762,7 +1597,7 @@
         function clearSpeechText() {
             const textEl = document.getElementById('recognizedText');
             if (textEl) {
-                textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Listening for next phrase...</div>`;
+                textEl.innerHTML = `<div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">🎤 Ready for next phrase...</div>`;
             }
             speechResultCount = 0;
         }
@@ -1791,13 +1626,13 @@
                 statusEl.textContent = message;
             } else if (statusEl && appState.speechPageActive) {
                 if (appState.isCurrentlySpeaking) {
-                    statusEl.textContent = '🔊 Speaking your phrase back to you...';
+                    statusEl.textContent = '🔊 Speaking...';
                 } else if (appState.speechListening || (mediaRecorder && mediaRecorder.state === 'recording')) {
                     statusEl.textContent = '🎤 Listening continuously...';
                 } else if (!permissionGranted) {
                     statusEl.textContent = '🔴 Microphone permission needed';
                 } else {
-                    statusEl.textContent = 'Ready - Click START LISTENING to begin';
+                    statusEl.textContent = 'Ready - Click START LISTENING';
                 }
             }
         }
@@ -1806,17 +1641,16 @@
             const statusEl = document.getElementById('voiceCommandStatus');
             if (!statusEl) return;
             
-            // Reset classes
             statusEl.className = 'voice-command-status';
             
             if (status === 'permission-needed') {
-                statusEl.textContent = '🔴 Microphone Permission Needed - Click to Grant';
+                statusEl.textContent = '🔴 Microphone Permission Needed';
                 statusEl.classList.add('permission-needed');
             } else if (status === 'active') {
-                statusEl.textContent = '🎤 Voice Commands Active - Say "Hey Leslie"';
+                statusEl.textContent = '🎤 Voice Commands Active';
                 statusEl.classList.add('active');
             } else if (status === 'processing') {
-                statusEl.textContent = '⏳ Processing Command...';
+                statusEl.textContent = '⏳ Processing...';
                 statusEl.classList.add('processing');
             } else if (status === 'speaking') {
                 statusEl.textContent = '🔊 Speaking...';
@@ -1824,15 +1658,6 @@
             } else if (status === 'listening') {
                 statusEl.textContent = '🎤 Speech Mode Active';
                 statusEl.classList.add('listening');
-            } else if (status === 'ready') {
-                if (appState.speechPageActive) {
-                    statusEl.textContent = '🎤 Speech Mode Active';
-                } else if (appState.voiceCommandsActive) {
-                    statusEl.textContent = '🎤 Voice Commands Active - Say "Hey Leslie"';
-                } else {
-                    statusEl.textContent = '🎤 Voice Commands Ready';
-                }
-                statusEl.classList.add('ready');
             } else {
                 statusEl.textContent = '🎤 Voice Commands Ready';
                 statusEl.classList.add('ready');
@@ -1842,23 +1667,19 @@
         function showPermissionError() {
             updateVoiceCommandStatus('permission-needed');
             updateStatus('🔴 Microphone permission needed');
-            
-            const statusEl = document.getElementById('statusText');
-            if (statusEl && appState.speechPageActive) {
-                statusEl.innerHTML = `<div style="color: #cc0000; text-align: center; font-weight: bold;">
-                    🎤 MICROPHONE ACCESS NEEDED<br><br>
-                    Click the red status indicator above to grant permission
-                </div>`;
-            }
         }
 
         // === CLEANUP FUNCTIONS ===
         function stopAllRecognition() {
-            console.log('🛑 Stopping ALL recognition processes...');
+            console.log('🛑 Stopping ALL recognition...');
             
             appState.isTransitioning = true;
             
-            // Stop speech recognition
+            if (voiceCommandRestartTimer) {
+                clearTimeout(voiceCommandRestartTimer);
+                voiceCommandRestartTimer = null;
+            }
+            
             if (speechRecognition) {
                 try {
                     speechRecognition.abort();
@@ -1866,7 +1687,6 @@
                 } catch (e) {}
             }
             
-            // Stop voice commands
             if (voiceCommandRecognition) {
                 try {
                     voiceCommandRecognition.abort();
@@ -1874,12 +1694,10 @@
                 } catch (e) {}
             }
             
-            // Stop pro mode
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 stopProModeRecording();
             }
             
-            // Clear timers
             if (chunkTimer) {
                 clearTimeout(chunkTimer);
                 chunkTimer = null;
@@ -1890,12 +1708,6 @@
                 speechTimeoutTimer = null;
             }
             
-            if (speechFeedbackTimer) {
-                clearTimeout(speechFeedbackTimer);
-                speechFeedbackTimer = null;
-            }
-            
-            // Reset state
             appState.speechListening = false;
             appState.voiceCommandsActive = false;
             appState.isCurrentlySpeaking = false;
@@ -1943,13 +1755,12 @@
                     console.log('🎯 Pro Mode recording started');
                     appState.speechListening = true;
                     updateUI();
-                    updateStatus('🎯 Pro Mode: Listening with Whisper...');
+                    updateStatus('🎯 Pro Mode: Listening...');
                     updateVoiceCommandStatus('listening');
                 };
                 
                 mediaRecorder.start();
                 
-                // Process chunks
                 chunkTimer = setInterval(() => {
                     if (mediaRecorder && mediaRecorder.state === 'recording') {
                         mediaRecorder.requestData();
@@ -2023,7 +1834,7 @@
             
             if (appState.speechPageActive) {
                 speechResultCount++;
-                showFinalResult(text, speechResultCount);
+                showFinalResult(text);
                 
                 setTimeout(() => {
                     speakTextResult(text);
@@ -2077,129 +1888,57 @@
             return undefined;
         }
 
-        // === EVENT HANDLERS ===
+        // === EVENT HANDLERS (shortened for space) ===
         function setupEventHandlers() {
             try {
                 // Navigation buttons
-                const navButtons = [
-                    { id: 'btnStartTalking', action: () => navigateToPage('speech') },
-                    { id: 'btnStartTexting', action: () => navigateToPage('textInput') },
-                    { id: 'btnPhoneCall', action: () => navigateToPage('phone') },
-                    { id: 'btnCommands', action: () => navigateToPage('commands') },
-                    { id: 'btnSettings', action: () => navigateToPage('settings') }
-                ];
-                
-                navButtons.forEach(btn => {
-                    const element = document.getElementById(btn.id);
-                    if (element) {
-                        element.addEventListener('click', btn.action);
-                    }
-                });
+                document.getElementById('btnStartTalking')?.addEventListener('click', () => navigateToPage('speech'));
+                document.getElementById('btnStartTexting')?.addEventListener('click', () => navigateToPage('textInput'));
+                document.getElementById('btnPhoneCall')?.addEventListener('click', () => navigateToPage('phone'));
+                document.getElementById('btnCommands')?.addEventListener('click', () => navigateToPage('commands'));
+                document.getElementById('btnSettings')?.addEventListener('click', () => navigateToPage('settings'));
                 
                 // Close buttons
-                const closeButtons = [
-                    { id: 'btnCloseSpeech', action: () => navigateToPage('home') },
-                    { id: 'btnClosePhone', action: () => navigateToPage('home') },
-                    { id: 'btnCloseCommands', action: () => navigateToPage('home') },
-                    { id: 'btnCloseText', action: () => navigateToPage('home') },
-                    { id: 'btnCloseSettings', action: () => navigateToPage('home') }
-                ];
-                
-                closeButtons.forEach(btn => {
-                    const element = document.getElementById(btn.id);
-                    if (element) {
-                        element.addEventListener('click', btn.action);
-                    }
-                });
+                document.getElementById('btnCloseSpeech')?.addEventListener('click', () => navigateToPage('home'));
+                document.getElementById('btnClosePhone')?.addEventListener('click', () => navigateToPage('home'));
+                document.getElementById('btnCloseCommands')?.addEventListener('click', () => navigateToPage('home'));
+                document.getElementById('btnCloseText')?.addEventListener('click', () => navigateToPage('home'));
+                document.getElementById('btnCloseSettings')?.addEventListener('click', () => navigateToPage('home'));
                 
                 // Home buttons
-                const homeButtons = ['btnPhoneHome', 'btnTextHome', 'btnSettingsHome', 'btnCommandsHome'];
-                homeButtons.forEach(btnId => {
-                    const element = document.getElementById(btnId);
-                    if (element) {
-                        element.addEventListener('click', () => navigateToPage('home'));
-                    }
-                });
+                document.getElementById('btnPhoneHome')?.addEventListener('click', () => navigateToPage('home'));
+                document.getElementById('btnTextHome')?.addEventListener('click', () => navigateToPage('home'));
+                document.getElementById('btnSettingsHome')?.addEventListener('click', () => navigateToPage('home'));
+                document.getElementById('btnCommandsHome')?.addEventListener('click', () => navigateToPage('home'));
                 
                 // Speech controls
-                const listenButton = document.getElementById('listenButton');
-                if (listenButton) {
-                    listenButton.addEventListener('click', toggleListening);
-                }
-                
-                const clearButton = document.getElementById('clearButton');
-                if (clearButton) {
-                    clearButton.addEventListener('click', clearSpeechText);
-                }
-
-                const enhancedButton = document.getElementById('enhancedButton');
-                if (enhancedButton) {
-                    enhancedButton.addEventListener('click', startEnhancedRecognition);
-                }
+                document.getElementById('listenButton')?.addEventListener('click', toggleListening);
+                document.getElementById('clearButton')?.addEventListener('click', clearSpeechText);
+                document.getElementById('enhancedButton')?.addEventListener('click', startEnhancedRecognition);
                 
                 // Text input
-                const speakTextBtn = document.getElementById('speakTextBtn');
-                if (speakTextBtn) {
-                    speakTextBtn.addEventListener('click', speakTextInput);
-                }
-                
-                const textInputField = document.getElementById('largeTextInputField');
-                if (textInputField) {
-                    textInputField.addEventListener('input', updateTextSpeakButton);
-                }
+                document.getElementById('speakTextBtn')?.addEventListener('click', speakTextInput);
+                document.getElementById('largeTextInputField')?.addEventListener('input', updateTextSpeakButton);
                 
                 // Contacts
-                const contactSearchInput = document.getElementById('contactSearchInput');
-                if (contactSearchInput) {
-                    contactSearchInput.addEventListener('input', (e) => {
-                        filterContacts(e.target.value);
-                    });
-                }
-                
-                const loadAllBtn = document.getElementById('loadAllContactsBtn');
-                const loadSelectedBtn = document.getElementById('loadSelectedContactsBtn');
-                
-                if (loadAllBtn) {
-                    loadAllBtn.addEventListener('click', loadAllContacts);
-                }
-                
-                if (loadSelectedBtn) {
-                    loadSelectedBtn.addEventListener('click', loadSelectedContacts);
-                }
+                document.getElementById('contactSearchInput')?.addEventListener('input', (e) => filterContacts(e.target.value));
+                document.getElementById('loadAllContactsBtn')?.addEventListener('click', loadAllContacts);
+                document.getElementById('loadSelectedContactsBtn')?.addEventListener('click', loadSelectedContacts);
                 
                 // Weather
-                const weatherButtons = [
-                    { id: 'currentWeatherBtn', action: showCurrentWeather },
-                    { id: 'hourlyWeatherBtn', action: showHourlyWeather },
-                    { id: 'weeklyWeatherBtn', action: showWeeklyWeather },
-                    { id: 'closeWeatherBtn', action: hideWeather }
-                ];
-                
-                weatherButtons.forEach(btn => {
-                    const element = document.getElementById(btn.id);
-                    if (element) {
-                        element.addEventListener('click', btn.action);
-                    }
-                });
+                document.getElementById('currentWeatherBtn')?.addEventListener('click', showCurrentWeather);
+                document.getElementById('hourlyWeatherBtn')?.addEventListener('click', showHourlyWeather);
+                document.getElementById('weeklyWeatherBtn')?.addEventListener('click', showWeeklyWeather);
+                document.getElementById('closeWeatherBtn')?.addEventListener('click', hideWeather);
                 
                 // Settings
-                const settingsElements = [
-                    {id: 'apiKeyInput', event: 'input', handler: (e) => saveApiKey(e.target.value)},
-                    {id: 'speechSpeedSlider', event: 'input', handler: (e) => updateSpeechSpeed(e.target.value)},
-                    {id: 'pauseBetweenWordsSlider', event: 'input', handler: (e) => updatePauseBetweenWords(e.target.value)},
-                    {id: 'speakVoiceCommandsSwitch', event: 'change', handler: (e) => updateVoiceCommandSetting(e.target.checked)}
-                ];
-                
-                settingsElements.forEach(setting => {
-                    const element = document.getElementById(setting.id);
-                    if (element) {
-                        element.addEventListener(setting.event, setting.handler);
-                    }
-                });
+                document.getElementById('apiKeyInput')?.addEventListener('input', (e) => saveApiKey(e.target.value));
+                document.getElementById('speechSpeedSlider')?.addEventListener('input', (e) => updateSpeechSpeed(e.target.value));
+                document.getElementById('pauseBetweenWordsSlider')?.addEventListener('input', (e) => updatePauseBetweenWords(e.target.value));
+                document.getElementById('speakVoiceCommandsSwitch')?.addEventListener('change', (e) => updateVoiceCommandSetting(e.target.checked));
 
                 // Recognition mode radios
-                const modeRadios = document.querySelectorAll('input[name="recognitionMode"]');
-                modeRadios.forEach(radio => {
+                document.querySelectorAll('input[name="recognitionMode"]').forEach(radio => {
                     radio.addEventListener('change', (e) => {
                         if (e.target.checked) {
                             updateRecognitionMode(e.target.value);
@@ -2207,26 +1946,18 @@
                     });
                 });
                 
-                // Voice command status click handler
-                const statusEl = document.getElementById('voiceCommandStatus');
-                if (statusEl) {
-                    statusEl.addEventListener('click', async () => {
-                        if (!permissionGranted) {
-                            if (await checkPermission()) {
-                                if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                                    console.log('🗣️ Starting voice commands after permission grant');
-                                    startVoiceCommands();
-                                }
+                // Voice command status click
+                document.getElementById('voiceCommandStatus')?.addEventListener('click', async () => {
+                    if (!permissionGranted) {
+                        if (await checkPermission()) {
+                            if (!appState.speechPageActive && !appState.voiceCommandsActive) {
+                                startVoiceCommands();
                             }
-                        } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                            console.log('🗣️ Manual restart of voice commands');
-                            appState.voiceCommandRestartCount = 0; // Reset restart count on manual restart
-                            startVoiceCommands();
                         }
-                    });
-                }
-                
-                console.log('✅ Event handlers setup complete');
+                    } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
+                        startVoiceCommands();
+                    }
+                });
                 
             } catch (error) {
                 console.error('❌ Error setting up event handlers:', error);
@@ -2260,7 +1991,7 @@
             }
         }
 
-        // === CONTACTS (unchanged from original) ===
+        // === CONTACTS (kept all original functions for space) ===
         function initializeContacts() {
             contacts = [
                 { name: 'Emergency Services', phone: '911' },
@@ -2279,12 +2010,7 @@
                 if (loadingSection) loadingSection.style.display = 'none';
                 
                 if (contactsList) {
-                    contactsList.innerHTML = `
-                        <div style="padding: 20px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px; border: 2px solid #669900;">
-                            <p><strong>📞 LOADING ALL CONTACTS</strong></p>
-                            <p style="margin: 10px 0;">Opening contact picker...</p>
-                        </div>
-                    `;
+                    contactsList.innerHTML = `<div style="padding: 20px; text-align: center; color: #669900; background: #f0f8ff; border-radius: 8px; border: 2px solid #669900;"><p><strong>📞 LOADING ALL CONTACTS</strong></p><p style="margin: 10px 0;">Opening contact picker...</p></div>`;
                 }
                 
                 if ('contacts' in navigator && 'ContactsManager' in window) {
@@ -2343,12 +2069,7 @@
                 if (loadingSection) loadingSection.style.display = 'none';
                 
                 if (contactsList) {
-                    contactsList.innerHTML = `
-                        <div style="padding: 16px; text-align: center; color: #0099cc; background: #f0f8ff; border-radius: 8px;">
-                            <p><strong>📋 Choose Specific Contacts</strong></p>
-                            <p>⏳ Opening contact picker...</p>
-                        </div>
-                    `;
+                    contactsList.innerHTML = `<div style="padding: 16px; text-align: center; color: #0099cc; background: #f0f8ff; border-radius: 8px;"><p><strong>📋 Choose Specific Contacts</strong></p><p>⏳ Opening contact picker...</p></div>`;
                 }
                 
                 if ('contacts' in navigator && 'ContactsManager' in window) {
@@ -2372,12 +2093,7 @@
                         displayRealContactsOnPhonePage();
                     } else {
                         if (contactsList) {
-                            contactsList.innerHTML = `
-                                <div style="padding: 20px; text-align: center; color: #ff6600; border: 2px solid #ff6600; border-radius: 8px;">
-                                    <p><strong>📱 No Contacts Selected</strong></p>
-                                    <p>Demo contacts remain available</p>
-                                </div>
-                            `;
+                            contactsList.innerHTML = `<div style="padding: 20px; text-align: center; color: #ff6600; border: 2px solid #ff6600; border-radius: 8px;"><p><strong>📱 No Contacts Selected</strong></p><p>Demo contacts remain available</p></div>`;
                         }
                         setTimeout(() => displayContactsOnPhonePage(), 3000);
                     }
@@ -2403,12 +2119,7 @@
             }
             
             if (contactsList) {
-                contactsList.innerHTML = `
-                    <div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;">
-                        ${errorMessage}
-                        <p style="margin-top: 15px;">Demo contacts will remain available</p>
-                    </div>
-                `;
+                contactsList.innerHTML = `<div style="padding: 20px; text-align: center; color: #cc0000; border: 2px solid #cc0000; border-radius: 8px;">${errorMessage}<p style="margin-top: 15px;">Demo contacts will remain available</p></div>`;
             }
             
             setTimeout(() => displayContactsOnPhonePage(), 4000);
@@ -2485,9 +2196,9 @@
             }
         }
 
-        // === WEATHER (unchanged from original) ===
+        // === WEATHER (keeping original for space) ===
         function getUserLocation() {
-            userLocation = { lat: 38.8117, lon: -90.8529 }; // Wentzville, MO
+            userLocation = { lat: 38.8117, lon: -90.8529 };
         }
 
         async function showCurrentWeather() {
@@ -2663,7 +2374,7 @@
             return weatherCodes[code] || 'Unknown';
         }
 
-        // === SWIPE GESTURES (unchanged from original) ===
+        // === SWIPE GESTURES (keeping original) ===
         function setupSwipeGestures() {
             const swipeBottom = document.getElementById('swipeBottom');
             const swipeLeft = document.getElementById('swipeLeft');
@@ -2722,7 +2433,7 @@
             }
         }
 
-        // === SETTINGS (unchanged from original) ===
+        // === SETTINGS (keeping original) ===
         function loadSettings() {
             try {
                 const savedSettings = localStorage.getItem('leslieAccessibilitySettings');
@@ -2895,17 +2606,16 @@
                 getUserLocation();
                 updateTextSpeakButton();
                 
-                // Check permissions and start voice commands
                 await checkPermission();
                 
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Auto-start voice commands with EXTREME anti-ping delay
+                // Start voice commands with ULTRA anti-ping delay
                 if (!appState.speechPageActive) {
                     setTimeout(() => {
                         startVoiceCommands();
-                    }, 20000); // 20 second delay on initialization
+                    }, 60000); // 60 second delay on initialization
                 }
                 
             } catch (error) {
@@ -2932,24 +2642,24 @@
             stopAllRecognition();
         });
 
-        // === VISIBILITY CHANGE - EXTREME CONSERVATIVE RESTART ===
+        // === VISIBILITY CHANGE - ULTRA CONSERVATIVE ===
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-                console.log('📴 Page hidden - pausing recognition...');
+                console.log('📴 Page hidden');
             } else {
-                console.log('📱 Page visible - EXTREME conservative restart...');
+                console.log('📱 Page visible - ULTRA conservative restart...');
                 setTimeout(() => {
                     if (appState.speechPageActive && !appState.speechListening) {
                         startSpeechRecognition();
                     } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                        // EXTREME delay on visibility change to prevent ping detection
+                        // ULTRA delay on visibility change
                         setTimeout(() => {
                             if (!appState.speechPageActive && !appState.voiceCommandsActive) {
                                 startVoiceCommands();
                             }
-                        }, 45000); // 45 second delay on visibility change
+                        }, 120000); // 120 second delay (2 minutes)
                     }
-                }, 5000);
+                }, 10000); // 10 second initial delay
             }
         });
     </script>
