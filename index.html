@@ -1203,6 +1203,13 @@
             if (!settings.speakVoiceCommands) {
                 // If speaking is disabled, allow listening to resume immediately
                 appState.temporarilyPausedForSpeaking = false;
+                // Continue listening for next phrase
+                const delay = Math.random() * 1000 + 1000; // 1-2 second random delay
+                setTimeout(() => {
+                    if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                        startSpeechRecognition();
+                    }
+                }, delay);
                 return;
             }
             
@@ -1249,21 +1256,24 @@
                                 clearScreenAfterSpeaking();
                             }, 1000);
                             
-                            // ANTI-FEEDBACK: Wait before allowing recognition to resume
+                            // CRITICAL: Resume listening after speaking for continuous accessibility
                             speechFeedbackTimer = setTimeout(() => {
                                 appState.temporarilyPausedForSpeaking = false;
                                 lastSpokenText = ''; // Clear the feedback prevention
                                 
-                                // If we're still on speech page and not manually stopped, restart recognition
-                                if (appState.speechPageActive && 
-                                    !appState.manuallyStoppedSpeech && 
-                                    !appState.speechListening) {
-                                    console.log('🔄 Resuming recognition after speaking');
-                                    startSpeechRecognition();
+                                // Resume continuous listening for accessibility
+                                if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                                    console.log('🔄 Resuming continuous listening after speaking');
+                                    const delay = Math.random() * 1000 + 2000; // 2-3 second random delay
+                                    setTimeout(() => {
+                                        if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                                            startSpeechRecognition();
+                                        }
+                                    }, delay);
                                 } else {
                                     updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
                                 }
-                            }, 3000); // 3 second delay after speaking to prevent feedback
+                            }, 1500); // 1.5 second delay after speaking to prevent feedback
                         };
                         
                         utterance.onerror = (event) => {
@@ -1271,7 +1281,18 @@
                             appState.isCurrentlySpeaking = false;
                             appState.temporarilyPausedForSpeaking = false;
                             lastSpokenText = ''; // Clear feedback prevention
-                            updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
+                            
+                            // Even on speech error, resume listening for accessibility
+                            if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                                const delay = Math.random() * 1000 + 1000; // 1-2 second random delay
+                                setTimeout(() => {
+                                    if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                                        startSpeechRecognition();
+                                    }
+                                }, delay);
+                            } else {
+                                updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
+                            }
                         };
                         
                         speechSynth.speak(utterance);
@@ -1283,7 +1304,18 @@
                 appState.isCurrentlySpeaking = false;
                 appState.temporarilyPausedForSpeaking = false;
                 lastSpokenText = ''; // Clear feedback prevention
-                updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
+                
+                // Even on error, resume listening for accessibility
+                if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                    const delay = Math.random() * 1000 + 1000; // 1-2 second random delay
+                    setTimeout(() => {
+                        if (appState.speechPageActive && !appState.manuallyStoppedSpeech) {
+                            startSpeechRecognition();
+                        }
+                    }, delay);
+                } else {
+                    updateVoiceCommandStatus(appState.speechListening ? 'listening' : 'ready');
+                }
             }
         }
 
@@ -1348,7 +1380,7 @@
             updateVoiceCommandStatus('ready');
         }
 
-        // === VOICE COMMANDS - SEPARATE INSTANCE, ONLY ON NON-SPEECH PAGES, NO AUTO-RESTART TO PREVENT PINGING ===
+        // === VOICE COMMANDS - ALWAYS ACTIVE, AUTO-RESTART WITH ANTI-PING MEASURES ===
         async function startVoiceCommands() {
             if (appState.speechPageActive || appState.voiceCommandsActive || appState.isTransitioning) {
                 return; // Don't run voice commands on speech page
@@ -1374,10 +1406,10 @@
                     } catch (e) {}
                 }
                 
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, 500));
                 
                 voiceCommandRecognition = new SpeechRecognition();
-                voiceCommandRecognition.continuous = true;
+                voiceCommandRecognition.continuous = false; // Use single-shot to reduce browser pinging
                 voiceCommandRecognition.interimResults = false;
                 voiceCommandRecognition.lang = 'en-US';
                 voiceCommandRecognition.maxAlternatives = 1;
@@ -1390,11 +1422,22 @@
                 };
 
                 voiceCommandRecognition.onend = () => {
-                    console.log('🗣️ Voice commands ended - NO AUTO-RESTART to prevent pinging');
+                    console.log('🗣️ Voice commands ended - auto-restarting for accessibility');
                     appState.voiceCommandsActive = false;
                     appState.isTransitioning = false;
-                    updateVoiceCommandStatus('ready');
-                    // NO AUTO-RESTART - this was causing the pinging every 5 seconds
+                    
+                    // MUST auto-restart for accessibility - but with smart timing
+                    if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
+                        // Use variable delay to prevent predictable pinging pattern
+                        const delay = Math.random() * 2000 + 3000; // 3-5 second random delay
+                        setTimeout(() => {
+                            if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
+                                startVoiceCommands();
+                            }
+                        }, delay);
+                    } else {
+                        updateVoiceCommandStatus('ready');
+                    }
                 };
 
                 voiceCommandRecognition.onerror = (event) => {
@@ -1407,13 +1450,14 @@
                         return;
                     }
                     
-                    // Only restart on specific errors with long delay
-                    if (event.error === 'network' && !appState.speechPageActive && permissionGranted) {
+                    // Always restart for accessibility - even on errors
+                    if (!appState.speechPageActive && permissionGranted && !appState.isCurrentlySpeaking) {
+                        const delay = Math.random() * 3000 + 5000; // 5-8 second random delay after errors
                         setTimeout(() => {
                             if (!appState.speechPageActive && !appState.isTransitioning && !appState.isCurrentlySpeaking) {
                                 startVoiceCommands();
                             }
-                        }, 30000); // 30 second delay after network errors only
+                        }, delay);
                     } else {
                         updateVoiceCommandStatus('ready');
                     }
@@ -1421,6 +1465,12 @@
 
                 voiceCommandRecognition.onresult = (event) => {
                     processCommandResults(event);
+                    // After processing command, restart immediately for next command
+                    setTimeout(() => {
+                        if (!appState.speechPageActive && !appState.isCurrentlySpeaking) {
+                            startVoiceCommands();
+                        }
+                    }, 2000); // 2 second delay after processing command
                 };
                 
                 voiceCommandRecognition.start();
@@ -1429,6 +1479,15 @@
                 console.error('❌ Error starting voice commands:', error);
                 appState.isTransitioning = false;
                 updateVoiceCommandStatus('ready');
+                
+                // Even on startup errors, try again for accessibility
+                if (!appState.speechPageActive) {
+                    setTimeout(() => {
+                        if (!appState.speechPageActive && !appState.isTransitioning) {
+                            startVoiceCommands();
+                        }
+                    }, 10000); // 10 second delay on startup errors
+                }
             }
         }
 
@@ -1832,14 +1891,12 @@
             } else if (status === 'ready') {
                 if (appState.speechPageActive) {
                     statusEl.textContent = '🎤 Speech Mode Active';
-                } else if (appState.voiceCommandsActive) {
-                    statusEl.textContent = '🎤 Voice Commands Active';
                 } else {
-                    statusEl.textContent = '🎤 Voice Commands Stopped - Press V to restart';
+                    statusEl.textContent = '🎤 Voice Commands Ready';
                 }
                 statusEl.classList.add('ready');
             } else {
-                statusEl.textContent = '🎤 Voice Commands Ready - Press V to restart';
+                statusEl.textContent = '🎤 Voice Commands Ready';
                 statusEl.classList.add('ready');
             }
         }
@@ -2223,10 +2280,6 @@
                                     startVoiceCommands();
                                 }
                             }
-                        } else if (!appState.speechPageActive && !appState.voiceCommandsActive) {
-                            // Manual restart of voice commands
-                            console.log('🗣️ Manual voice command restart via click');
-                            startVoiceCommands();
                         }
                     });
                 }
@@ -2906,21 +2959,11 @@
                 isInitialized = true;
                 console.log('✅ Leslie initialized successfully');
                 
-                // Auto-start voice commands on home page (restored for accessibility) with manual restart capability
+                // Auto-start voice commands on home page for accessibility
                 if (!appState.speechPageActive) {
                     setTimeout(() => {
                         startVoiceCommands();
                     }, 2000); // 2 second delay
-                    
-                    // Add a way to manually restart voice commands by saying "Hey Leslie" twice
-                    let lastVoiceCommandTime = 0;
-                    window.addEventListener('keydown', (e) => {
-                        // Press V key to restart voice commands manually
-                        if (e.key.toLowerCase() === 'v' && !appState.speechPageActive && !appState.voiceCommandsActive) {
-                            console.log('🗣️ Manual voice command restart triggered');
-                            startVoiceCommands();
-                        }
-                    });
                 }
                 
             } catch (error) {
