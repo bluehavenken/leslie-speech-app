@@ -2755,4 +2755,197 @@ const MIN_RESTART_INTERVAL_MS = 25000;
 })();
 </script>
 
+
+<script>
+/* ===== Leslie SR v10: Stable, page-aware, no background pings ===== */
+(function(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { console.log('Web Speech API not available'); return; }
+
+  // Global-ish state (does not replace your appState; we cooperate if it exists)
+  const state = window.__leslieSRState ||= {
+    rec: null,
+    running: false,
+    manuallyStopped: false,
+    idleTimer: null,
+    onSpeechPage: false
+  };
+
+  function isSpeechPageDOM(){
+    try {
+      // Heuristics: presence of a Stop Listening button or a heading that says Start Listening
+      const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn');
+      const head = Array.from(document.querySelectorAll('h1,h2,h3,.page-title')).map(e => e.textContent.trim().toLowerCase());
+      if (stopBtn) return true;
+      if (head.some(t => t.includes('start listening') || t.includes('start talking'))) return true;
+      // Common containers by id/class that might indicate the speech page
+      if (document.getElementById('speechPage') || document.querySelector('.start-talking-page')) return true;
+    } catch(e){}
+    return false;
+  }
+
+  function markSpeechPage(active){
+    state.onSpeechPage = !!active;
+    if (window.appState) appState.speechPageActive = !!active;
+  }
+
+  function clearIdleTimer(){
+    if (state.idleTimer) clearTimeout(state.idleTimer);
+    state.idleTimer = null;
+  }
+  function startIdleTimer(){
+    clearIdleTimer();
+    state.idleTimer = setTimeout(() => {
+      // After 2 minutes of silence, stop and DO NOT restart automatically
+      try { state.manuallyStopped = true; } catch(e){}
+      try { state.rec && state.rec.stop(); } catch(e){}
+    }, 120000);
+  }
+
+  function hardStop(){
+    clearIdleTimer();
+    state.manuallyStopped = true;
+    state.running = false;
+    if (state.rec){
+      try { state.rec.onend = null; } catch(e){}
+      try { state.rec.stop(); } catch(e){}
+    }
+  }
+
+  async function ensurePermission(){
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      try { s.getTracks().forEach(t => t.stop()); } catch(e){}
+      return true;
+    } catch(e){
+      return false;
+    }
+  }
+
+  async function startSR(){
+    if (!SR) return;
+    if (state.running) return;
+    if (!state.onSpeechPage) return; // never start on Home or other pages
+
+    state.manuallyStopped = false;
+
+    if (!state.rec){
+      const rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+
+      rec.onstart = () => { state.running = true; startIdleTimer(); };
+
+      rec.onresult = (e) => {
+        startIdleTimer();
+        try {
+          let finalText = '';
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+          }
+          finalText = finalText.trim();
+          if (finalText.length > 0) {
+            if (typeof window.onTranscriptFinal === 'function') {
+              window.onTranscriptFinal(finalText);
+            } else if (typeof window.addRecognizedPhrase === 'function') {
+              window.addRecognizedPhrase(finalText);
+            }
+            // If your app normally speaks the phrase, leave that to your existing handlers
+          }
+        } catch(err){}
+      };
+
+      rec.onerror = (ev) => {
+        // Do not auto-loop on errors; we only run while onSpeechPage=true
+        console.log('rec.onerror', ev && ev.error);
+      };
+
+      rec.onend = () => {
+        state.running = false;
+        clearIdleTimer();
+        // Absolutely no restart unless still on the Speech page AND not manually stopped
+        if (state.onSpeechPage && !state.manuallyStopped && document.visibilityState === 'visible') {
+          try { rec.start(); startIdleTimer(); } catch(e){}
+        }
+      };
+
+      state.rec = rec;
+    }
+
+    try {
+      await ensurePermission(); // triggers Android prompt if needed
+      state.rec.start();
+      startIdleTimer();
+    } catch(e){ console.log('startSR failed', e && e.message); }
+  }
+
+  function stopSR(){
+    hardStop();
+  }
+
+  // Expose to global without replacing your originals if any
+  if (!window.startContinuousRecognition) window.startContinuousRecognition = startSR;
+  if (!window.stopContinuousRecognition)  window.stopContinuousRecognition  = stopSR;
+
+  // Bind the four Home buttons by their visible text (case-insensitive)
+  function bindHomeButtons(){
+    const buttons = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
+    const findByText = (txt) => buttons.find(b => (b.textContent||'').trim().toLowerCase().includes(txt));
+    const bStartListen = findByText('start listening') || findByText('start talking');
+    const bStartText   = findByText('start texting');
+    const bPhone       = findByText('phone call');
+    const bCommands    = findByText('leslie commands');
+
+    if (bStartListen && !bStartListen.__leslieBound) {
+      bStartListen.addEventListener('click', () => { markSpeechPage(true); setTimeout(startSR, 50); }, { passive: true });
+      bStartListen.__leslieBound = true;
+    }
+    if (bStartText && !bStartText.__leslieBound) {
+      bStartText.addEventListener('click', () => { markSpeechPage(false); stopSR(); }, { passive: true });
+      bStartText.__leslieBound = true;
+    }
+    if (bPhone && !bPhone.__leslieBound) {
+      bPhone.addEventListener('click', () => { markSpeechPage(false); stopSR(); }, { passive: true });
+      bPhone.__leslieBound = true;
+    }
+    if (bCommands && !bCommands.__leslieBound) {
+      bCommands.addEventListener('click', () => { markSpeechPage(false); stopSR(); }, { passive: true });
+      bCommands.__leslieBound = true;
+    }
+  }
+
+  // Observe navigation/content changes and toggle SR accordingly
+  const mo = new MutationObserver(() => {
+    const nowSpeech = isSpeechPageDOM();
+    if (nowSpeech !== state.onSpeechPage) {
+      markSpeechPage(nowSpeech);
+      if (nowSpeech) startSR(); else stopSR();
+    }
+    // Re-bind buttons if Home is visible
+    bindHomeButtons();
+  });
+  mo.observe(document.documentElement, { childList: true, subtree: true });
+
+  // Also react to hashchange/popstate
+  window.addEventListener('hashchange', () => {
+    const nowSpeech = isSpeechPageDOM();
+    markSpeechPage(nowSpeech);
+    if (nowSpeech) startSR(); else stopSR();
+  });
+
+  // On first load, assume Home -> not speech page; we won't start SR until Start Listening page is shown
+  markSpeechPage(isSpeechPageDOM());
+  bindHomeButtons();
+  if (state.onSpeechPage) startSR(); else stopSR();
+
+  // Stop when hidden to avoid any background ping
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') stopSR();
+  }, { passive: true });
+
+})();
+</script>
+
 </body></html>
