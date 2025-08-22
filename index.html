@@ -2550,4 +2550,68 @@ const MIN_RESTART_INTERVAL_MS = 25000;
 })();
 </script>
 
+
+<script>
+// ===== Auto-start Listening on Page Load (Android Chrome friendly) =====
+(function(){
+  async function requestMicPermission() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      try { stream.getTracks().forEach(t => t.stop()); } catch(e) {}
+      return true;
+    } catch (e) {
+      console.log('Mic permission request failed:', e && e.message);
+      return false;
+    }
+  }
+
+  function fallbackStartRecognition() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { console.log('Web Speech API not available'); return; }
+    if (window.__leslieAutoSR) { try { window.__leslieAutoSR.start(); } catch(e){} return; }
+    const rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+    let idleTimer = null;
+    function resetIdle() {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        try { rec.stop(); } catch(e) {}
+      }, 120000); // 2 minutes idle
+    }
+    rec.onresult = function(){ resetIdle(); };
+    rec.onend = function(){
+      // keep listening unless user explicitly stopped elsewhere
+      try { rec.start(); resetIdle(); } catch(e) {}
+    };
+    try { rec.start(); resetIdle(); } catch(e) {}
+    window.__leslieAutoSR = rec;
+  }
+
+  async function autoStartOnLoad(){
+    // 1) Ask for mic permission to trigger the Android prompt
+    await requestMicPermission();
+
+    // 2) Prefer app's own starter if present (keeps all your logic intact)
+    try {
+      if (typeof startContinuousRecognition === 'function') {
+        try { if (window.appState) { appState.manuallyStoppedSpeech = false; appState.speechPageActive = true; } } catch(e){}
+        startContinuousRecognition();
+        return;
+      }
+    } catch(e){}
+
+    // 3) Fallback: create a lightweight continuous recognizer
+    fallbackStartRecognition();
+  }
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    autoStartOnLoad();
+  } else {
+    document.addEventListener('DOMContentLoaded', autoStartOnLoad, { once: true });
+  }
+})();
+</script>
+
 </body></html>
