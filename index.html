@@ -2614,4 +2614,145 @@ const MIN_RESTART_INTERVAL_MS = 25000;
 })();
 </script>
 
+
+<script>
+// ===== Stable SR controller (singleton, no ping loops) =====
+(function(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { console.log('Web Speech API not available'); return; }
+
+  if (!window.leslieSR) window.leslieSR = { rec: null, running: false, manuallyStopped: false, idleTimer: null };
+
+  function clearIdleTimer(){
+    if (window.leslieSR.idleTimer) clearTimeout(window.leslieSR.idleTimer);
+    window.leslieSR.idleTimer = null;
+  }
+  function resetIdleTimer(){
+    clearIdleTimer();
+    window.leslieSR.idleTimer = setTimeout(() => {
+      try { window.leslieSR.manuallyStopped = true; window.leslieSR.rec && window.leslieSR.rec.stop(); } catch(e){}
+    }, 120000); // 2 minutes
+  }
+
+  // Safe wrappers we prefer to use (but won't remove existing ones)
+  window.stopContinuousRecognition = function stopContinuousRecognition(){
+    try { window.leslieSR.manuallyStopped = true; } catch(e){}
+    try { window.leslieSR.running = false; } catch(e){}
+    clearIdleTimer();
+    if (window.leslieSR.rec) {
+      try { window.leslieSR.rec.onend = null; } catch(e){}
+      try { window.leslieSR.rec.stop(); } catch(e){}
+    }
+  };
+
+  window.startContinuousRecognition = async function startContinuousRecognition(){
+    if (!SR) return;
+    if (document.visibilityState !== 'visible') return; // avoid background ping
+    if (window.leslieSR.running) return; // already running
+    window.leslieSR.manuallyStopped = false;
+
+    let rec = window.leslieSR.rec;
+    if (!rec) {
+      rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+
+      rec.onstart = function(){ window.leslieSR.running = true; resetIdleTimer(); };
+
+      rec.onresult = function(e){
+        resetIdleTimer();
+        try {
+          let finalText = '';
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+          }
+          if (finalText.trim().length > 0) {
+            // Route to app handlers if they exist
+            if (typeof window.onTranscriptFinal === 'function') {
+              window.onTranscriptFinal(finalText.trim());
+            } else if (typeof window.addRecognizedPhrase === 'function') {
+              window.addRecognizedPhrase(finalText.trim());
+            }
+            // Optional: speak back the full phrase if your app normally does
+            try {
+              if (window.settings && window.settings.autoSpeakRecognized) {
+                speechSynthesis.cancel();
+                const u = new SpeechSynthesisUtterance(finalText.trim());
+                u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
+                u.lang = 'en-US';
+                speechSynthesis.speak(u);
+              }
+            } catch(e){}
+          }
+        } catch(err){ console.log('onresult err', err); }
+      };
+
+      rec.onerror = function(ev){
+        // Do not loop on 'no-speech' or 'aborted'
+        console.log('rec.onerror', ev && ev.error);
+      };
+
+      rec.onend = function(){
+        window.leslieSR.running = false;
+        clearIdleTimer();
+        // Only auto-restart on Speech page / while visible / not manually stopped
+        const onSpeechPage = !!(window.appState && window.appState.speechPageActive);
+        if (!window.leslieSR.manuallyStopped && document.visibilityState === 'visible' && onSpeechPage) {
+          setTimeout(() => {
+            try { if (!window.leslieSR.running) { rec.start(); resetIdleTimer(); } } catch(e){}
+          }, 400); // gentle restart, avoids ping storms
+        }
+      };
+
+      window.leslieSR.rec = rec;
+    }
+
+    try {
+      // Ensure permission (Android-friendly): do not throw if already granted
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try { 
+          const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+          try { s.getTracks().forEach(t => t.stop()); } catch(e){}
+        } catch(e){ /* ignore to avoid blocking */ }
+      }
+      rec.start();
+      resetIdleTimer();
+    } catch(e) {
+      console.log('startContinuousRecognition failed', e && e.message);
+    }
+  };
+
+  // Ensure visibility changes don't cause ping storms
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') {
+      window.stopContinuousRecognition();
+    }
+  }, { passive: true });
+
+  // Wire common UI buttons if present (does not remove your existing handlers)
+  function bindButtonsOnce(){
+    const startBtn = document.getElementById('startListeningButton') || document.getElementById('startListeningBtn');
+    const stopBtn  = document.getElementById('stopListeningButton')  || document.getElementById('stopListeningBtn');
+    if (startBtn && !startBtn.__leslieBound) {
+      startBtn.addEventListener('click', () => {
+        if (window.appState) { appState.speechPageActive = true; appState.manuallyStoppedSpeech = false; }
+        startContinuousRecognition();
+      });
+      startBtn.__leslieBound = true;
+    }
+    if (stopBtn && !stopBtn.__leslieBound) {
+      stopBtn.addEventListener('click', () => {
+        if (window.appState) { appState.manuallyStoppedSpeech = true; }
+        stopContinuousRecognition();
+      });
+      stopBtn.__leslieBound = true;
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') bindButtonsOnce();
+  else document.addEventListener('DOMContentLoaded', bindButtonsOnce, { once: true });
+
+})();
+</script>
+
 </body></html>
