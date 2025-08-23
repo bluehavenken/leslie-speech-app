@@ -2596,108 +2596,60 @@
         });
     </script>
 
-<!-- Leslie Controller v13: Home hotword + stable dictation, minimal intrusion -->
+<!-- Leslie Controller v14: fix pinging, restore Text Speak, full-phrase dictation -->
 <script>
 (function(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { console.log('Web Speech API not available'); return; }
-
-  const state = {
-    hotwordRunning: false,
-    dictationRunning: false,
-    hotwordRec: null,
-    dictationRec: null,
-    idleTimer: null,
-    lastRestartAt: 0
-  };
+  // ---- Utilities ----
+  function isVisible(el){
+    if (!el) return false;
+    const cs = window.getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+    const r = el.getBoundingClientRect();
+    return (r.width > 0 && r.height > 0);
+  }
+  function findVisibleByText(txt){
+    txt = txt.toLowerCase();
+    const nodes = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
+    return nodes.find(n => isVisible(n) && ((n.textContent||'').trim().toLowerCase().includes(txt)));
+  }
 
   function isHomePage(){
     try {
-      const buttons = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-      const labels = buttons.map(b => (b.textContent||'').trim().toLowerCase());
-      return labels.some(t => t.includes('start listening') || t.includes('start talking'))
-          && labels.some(t => t.includes('start texting'))
-          && labels.some(t => t.includes('phone call'))
-          && labels.some(t => t.includes('leslie commands'));
+      const a = findVisibleByText('start listening') || findVisibleByText('start talking');
+      const b = findVisibleByText('start texting');
+      const c = findVisibleByText('phone call');
+      const d = findVisibleByText('leslie commands');
+      // Need at least two of the four visible to consider it Home
+      return [a,b,c,d].filter(Boolean).length >= 2;
     } catch(e){ return false; }
   }
 
   function isSpeechPage(){
     try {
       const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn');
-      const h = (document.querySelector('h1,h2,h3,.page-title') || {}).textContent || '';
-      return !!stopBtn || (h.toLowerCase().includes('start listening') || h.toLowerCase().includes('start talking')) || !!document.getElementById('speechPage') || !!document.querySelector('.start-talking-page');
+      if (isVisible(stopBtn)) return true;
+      const h = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
+      const speechHeading = h.toLowerCase().includes('start listening') || h.toLowerCase().includes('start talking');
+      return speechHeading && !isHomePage();
     } catch(e){ return false; }
   }
 
-  function clearIdleTimer(){
-    if (state.idleTimer) clearTimeout(state.idleTimer);
-    state.idleTimer = null;
-  }
-  function startIdleTimer(ms){
-    clearIdleTimer();
-    state.idleTimer = setTimeout(() => { stopDictation(); }, ms || 120000);
-  }
-
-  function speakBack(text){
-    try {
-      if (!text || !window.speechSynthesis) return;
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
-      u.lang = 'en-US';
-      speechSynthesis.speak(u);
-    } catch(e){}
-  }
-
-  function clickByText(txt){
-    const buttons = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-    const el = buttons.find(b => (b.textContent||'').trim().toLowerCase().includes(txt));
-    if (el) { el.click(); return true; }
-    return false;
-  }
-
-  function routeVoiceCommand(textLC){
-    if (!textLC) return false;
-    // Normalize trigger phrases
-    let acted = false;
-    if (/\bleslie commands?\b/.test(textLC) || textLC.includes('show commands')) {
-      acted = clickByText('leslie commands');
-    } else if (textLC.includes('start listening') || textLC.includes('start talking')) {
-      acted = clickByText('start listening') || clickByText('start talking');
-    } else if (textLC.includes('start texting') || textLC.startsWith('text ')) {
-      acted = clickByText('start texting');
-    } else if (textLC.includes('phone call') || textLC.startsWith('call')) {
-      acted = clickByText('phone call');
-    }
-    return acted;
-  }
-
-  async function ensureMic(){
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-      try { s.getTracks().forEach(t => t.stop()); } catch(e){}
-      return true;
-    } catch(e){ return false; }
-  }
-
-  // ---------- HOTWORD (Home) ----------
+  // ---- Hotword (Home) ----
+  const hotword = { rec: null, running: false, lastStart: 0, cooldownMs: 45000 };
   function startHotword(){
     if (!SR) return;
-    if (state.hotwordRunning) return;
-    // Never run if dictation is active
-    if (state.dictationRunning) return;
-
+    if (hotword.running) return;
+    if (!isHomePage()) return; // Only on visible Home
     const now = Date.now();
-    if (now - state.lastRestartAt < 60000) { return; } // throttle restarts to 60s min
+    if (now - hotword.lastStart < hotword.cooldownMs) return;
 
     const rec = new SR();
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = 'en-US';
 
-    rec.onstart = () => { state.hotwordRunning = true; state.lastRestartAt = Date.now(); };
+    rec.onstart = () => { hotword.running = true; hotword.lastStart = Date.now(); };
     rec.onresult = (e) => {
       let finalText = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -2705,138 +2657,171 @@
       }
       finalText = finalText.trim().toLowerCase();
       if (!finalText) return;
-      // Expect "hey leslie ..." or direct "leslie commands"
+
+      // Only react to phrases that include "leslie"
       if (finalText.includes('leslie')) {
-        // Try to route
-        const acted = routeVoiceCommand(finalText);
-        if (acted) {
-          stopHotword(); // let navigation occur; dictation may start on next page
-          // Optional feedback, very short to avoid "pingy" feel
-          try { speakBack('Okay'); } catch(e){}
+        if (finalText.includes('commands')) {
+          const btn = findVisibleByText('leslie commands'); if (btn) btn.click();
+        } else if (finalText.includes('start listening') || finalText.includes('start talking')) {
+          const btn = findVisibleByText('start listening') || findVisibleByText('start talking'); if (btn) btn.click();
+        } else if (finalText.includes('start texting') || finalText.startsWith('text ')) {
+          const btn = findVisibleByText('start texting'); if (btn) btn.click();
+        } else if (finalText.includes('phone call') || finalText.startsWith('call')) {
+          const btn = findVisibleByText('phone call'); if (btn) btn.click();
         }
+        // Do not speak back to avoid "ping" audio
       }
     };
-    rec.onerror = () => { /* do not loop aggressively */ };
+    rec.onerror = () => { /* stay quiet */ };
     rec.onend = () => {
-      state.hotwordRunning = false;
-      // Do not auto-restart immediately; page observer will restart if still on Home and after throttle
-      setTimeout(() => { if (isHomePage() && !state.dictationRunning) startHotword(); }, 1200);
+      hotword.running = false;
+      // Do not restart immediately; observer will restart later if still on Home and cooldown passed
     };
-    // Best effort mic check; don't block if already granted
-    ensureMic().then(() => { try { rec.start(); } catch(e){} });
-    state.hotwordRec = rec;
+    try { rec.start(); } catch(e){}
+    hotword.rec = rec;
   }
-
   function stopHotword(){
-    if (state.hotwordRec){
-      try { state.hotwordRec.onend = null; } catch(e){}
-      try { state.hotwordRec.stop(); } catch(e){}
+    if (hotword.rec){
+      try { hotword.rec.onend = null; } catch(e){}
+      try { hotword.rec.stop(); } catch(e){}
     }
-    state.hotwordRunning = false;
+    hotword.running = false;
   }
 
-  // ---------- DICTATION (Start Listening page) ----------
+  // ---- Dictation (Start Listening) with phrase aggregation ----
+  const dict = { rec: null, running: false, idleTimer:null, buffer:'', finalTimer:null, minRestartMs: 10000, lastEnd: 0 };
+  function clearTimers(){ if (dict.idleTimer) clearTimeout(dict.idleTimer); dict.idleTimer=null; if (dict.finalTimer) clearTimeout(dict.finalTimer); dict.finalTimer=null; }
+  function scheduleIdle(){ clearTimers(); dict.idleTimer=setTimeout(stopDictation, 120000); }
+  function flushBuffer(){
+    const text = dict.buffer.trim();
+    dict.buffer = '';
+    if (!text) return;
+    try {
+      if (typeof window.onTranscriptFinal === 'function') {
+        window.onTranscriptFinal(text);
+      } else if (typeof window.addRecognizedPhrase === 'function') {
+        window.addRecognizedPhrase(text);
+        try { speechSynthesis.cancel(); } catch(e){}
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
+        u.lang = 'en-US';
+        u.onend = () => {};
+        speechSynthesis.speak(u);
+      } else {
+        try { speechSynthesis.cancel(); } catch(e){}
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
+        u.lang = 'en-US';
+        speechSynthesis.speak(u);
+      }
+    } catch(e){}
+  }
   function startDictation(){
     if (!SR) return;
-    if (state.dictationRunning) return;
-    // Stop hotword while dictating
-    stopHotword();
+    if (dict.running) return;
+    if (!isSpeechPage()) return; // Only on visible Start Listening page
 
-    const rec = state.dictationRec || new SR();
+    const rec = dict.rec || new SR();
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = 'en-US';
 
-    rec.onstart = () => { state.dictationRunning = true; startIdleTimer(120000); };
+    rec.onstart = () => { dict.running = true; dict.buffer=''; scheduleIdle(); };
     rec.onresult = (e) => {
-      startIdleTimer(120000);
-      let finalText = '';
+      scheduleIdle();
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
-      }
-      finalText = finalText.trim();
-      if (!finalText) return;
-
-      // Give your app first shot
-      if (typeof window.onTranscriptFinal === 'function') {
-        window.onTranscriptFinal(finalText);
-      } else if (typeof window.addRecognizedPhrase === 'function') {
-        window.addRecognizedPhrase(finalText);
-        speakBack(finalText);
-      } else {
-        speakBack(finalText);
+        const res = e.results[i];
+        if (res.isFinal) {
+          dict.buffer += (res[0].transcript || '');
+          // Debounce finalization: speak after short pause so we get the whole phrase
+          if (dict.finalTimer) clearTimeout(dict.finalTimer);
+          dict.finalTimer = setTimeout(flushBuffer, 600); // 600ms after last final
+        }
       }
     };
-    rec.onerror = () => { /* don't loop on error */ };
+    rec.onerror = () => { /* suppress looping */ };
     rec.onend = () => {
-      state.dictationRunning = false;
-      clearIdleTimer();
-      // Restart only if still on speech page and visible
+      dict.running = false;
+      clearTimers();
+      dict.lastEnd = Date.now();
+      // restart only if still on speech page and enough time passed to avoid frequent beeps
       if (isSpeechPage() && document.visibilityState === 'visible') {
-        setTimeout(() => { try { rec.start(); startIdleTimer(120000); } catch(e){} }, 500);
+        const wait = Math.max(0, dict.minRestartMs - (Date.now() - dict.lastEnd));
+        setTimeout(() => { try { rec.start(); scheduleIdle(); } catch(e){} }, wait || 1500);
       } else {
-        // If left speech page, optionally resume hotword on Home
-        if (isHomePage()) { startHotword(); }
+        // If not on speech page, stop entirely
       }
     };
 
-    ensureMic().then(() => { try { rec.start(); } catch(e){} });
-    state.dictationRec = rec;
+    try { rec.start(); scheduleIdle(); } catch(e){}
+    dict.rec = rec;
   }
-
   function stopDictation(){
-    clearIdleTimer();
-    if (state.dictationRec) {
-      try { state.dictationRec.onend = null; } catch(e){}
-      try { state.dictationRec.stop(); } catch(e){};
+    clearTimers();
+    if (dict.rec){
+      try { dict.rec.onend = null; } catch(e){}
+      try { dict.rec.stop(); } catch(e){}
     }
-    state.dictationRunning = false;
-    // Resume hotword if on Home
-    if (isHomePage()) startHotword();
+    dict.running = false;
   }
 
-  // ---------- Wiring (non-invasive) ----------
-  function bindHomeButtons(){
-    const buttons = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-    const find = (txt) => buttons.find(b => (b.textContent||'').trim().toLowerCase().includes(txt));
-    const bStart = find('start listening') || find('start talking');
-    const bText  = find('start texting');
-    const bPhone = find('phone call');
-    const bCmds  = find('leslie commands');
+  // Expose wrappers without removing your originals
+  window.startContinuousRecognition = (window.startContinuousRecognition || startDictation);
+  window.stopContinuousRecognition  = (window.stopContinuousRecognition  || stopDictation);
 
-    if (bStart && !bStart.__leslieBound) {
-      bStart.addEventListener('click', () => { setTimeout(startDictation, 80); }, { passive: true });
-      bStart.__leslieBound = true;
+  // ---- Restore/ensure Speak button on Start Texting ----
+  function ensureTextSpeak(){
+    // Try known id first
+    let btn = document.getElementById('speakTextBtn') || document.getElementById('speakTextButton');
+    if (!btn){
+      // Create a fallback button if missing
+      btn = document.createElement('button');
+      btn.id = 'speakTextBtnFallback';
+      btn.textContent = 'Speak';
+      btn.style.cssText = 'position:fixed; right:16px; bottom:16px; z-index:99999; padding:12px 18px; border-radius:999px; font-size:16px; box-shadow:0 4px 12px rgba(0,0,0,.25);';
+      document.body.appendChild(btn);
     }
-    [bText, bPhone, bCmds].forEach(btn => {
-      if (btn && !btn.__leslieBound) {
-        btn.addEventListener('click', () => { stopDictation(); }, { passive: true });
-        btn.__leslieBound = true;
-      }
-    });
+    if (!btn.__leslieBound){
+      btn.addEventListener('click', function(){
+        try { speechSynthesis.cancel(); } catch(e){}
+        const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"]');
+        const text = (field && (field.value || field.innerText || field.textContent) || '').trim();
+        if (!text) return;
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
+        u.lang = 'en-US';
+        speechSynthesis.speak(u);
+      }, { passive: true });
+      btn.__leslieBound = true;
+    }
+    // Only show the button if we're NOT on the speech page and there is a text input visible
+    const onTextPage = !!document.querySelector('#largeTextInputField, textarea, [contenteditable="true"]');
+    btn.style.display = (onTextPage && !isSpeechPage()) ? 'inline-flex' : 'none';
   }
 
-  // Observe for page changes and manage modes
-  const mo = new MutationObserver(() => {
-    bindHomeButtons();
-    if (isSpeechPage()) {
-      stopHotword(); startDictation();
-    } else if (isHomePage()) {
+  // ---- Observers and lifecycle ----
+  function tick(){
+    // Manage which engine runs
+    if (isHomePage()){
       stopDictation(); startHotword();
+    } else if (isSpeechPage()){
+      stopHotword(); startDictation();
     } else {
-      stopDictation(); stopHotword();
+      stopHotword(); stopDictation();
     }
-  });
+    // Keep Text Speak button available
+    ensureTextSpeak();
+  }
+
+  const mo = new MutationObserver(() => { try { tick(); } catch(e){} });
   mo.observe(document.documentElement, { childList: true, subtree: true });
+  window.addEventListener('hashchange', () => { try { tick(); } catch(e){} });
 
-  // Initial mode
-  bindHomeButtons();
-  if (isSpeechPage()) startDictation();
-  else if (isHomePage()) startHotword();
+  if (document.readyState === 'complete' || document.readyState === 'interactive') tick();
+  else document.addEventListener('DOMContentLoaded', tick, { once: true });
 
-  // Stop everything when hidden
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') { stopDictation(); stopHotword(); }
+    if (document.visibilityState !== 'visible'){ stopHotword(); stopDictation(); }
   }, { passive: true });
 })();
 </script>
