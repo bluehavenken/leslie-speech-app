@@ -2596,54 +2596,52 @@
         });
     </script>
 
-<!-- Leslie Controller v30 (Recovery Mode) -->
+<!-- Leslie Controller v31 -->
 <script>
 (function(){
+  // All guarded to avoid freezes
   try {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     // ---------- helpers ----------
-    const H = {
-      vis(el){ try { if (!el) return false; const cs = getComputedStyle(el);
+    const U = {
+      vis(el){ try { if (!el) return false; const cs=getComputedStyle(el);
         if (cs.display==='none'||cs.visibility==='hidden'||+cs.opacity===0) return false;
-        const r = el.getBoundingClientRect(); return r.width>0 && r.height>0; } catch(e){ return false; } },
+        const r=el.getBoundingClientRect(); return r.width>0 && r.height>0; } catch(e){ return false; } },
       btns(){ try { return Array.from(document.querySelectorAll('button, a, .btn, [role="button"], [onclick]')); } catch(e){ return []; } },
-      byText(t){ try { const s=(t||'').toLowerCase(); return H.btns().find(n=>((n.textContent||'').trim().toLowerCase().includes(s))); } catch(e){ return null; } },
-      visByText(t){ try { const s=(t||'').toLowerCase(); return H.btns().find(n=>H.vis(n) && ((n.textContent||'').trim().toLowerCase().includes(s))); } catch(e){ return null; } },
-      atTextField(){ try {
-        return document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"], input[type="text"], input[type="search"]');
-      } catch(e){ return null; } }
+      visByText(t){ try { const s=(t||'').toLowerCase(); return U.btns().find(n=>U.vis(n) && ((n.textContent||'').trim().toLowerCase().includes(s))); } catch(e){ return null; } },
+      textField(){ try { return document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable], input[type="text"], input[type="search"], input:not([type])'); } catch(e){ return null; } },
     };
 
     function isHome(){
       try {
-        const a = H.visByText('start talking') || H.visByText('start listening');
-        const b = H.visByText('start texting');
-        const c = H.visByText('phone call');
-        const d = H.visByText('leslie commands');
+        const a = U.visByText('start talking') || U.visByText('start listening');
+        const b = U.visByText('start texting');
+        const c = U.visByText('phone call');
+        const d = U.visByText('leslie commands');
         return [a,b,c,d].filter(Boolean).length >= 2;
       } catch(e){ return false; }
     }
     function isSpeech(){
       try {
-        const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn') || H.visByText('stop listening') || H.visByText('stop');
-        if (H.vis(stopBtn)) return true;
+        const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn') || U.visByText('stop listening') || U.visByText('stop');
+        if (U.vis(stopBtn)) return true;
         const h = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
         const head = (h||'').toLowerCase();
         return (head.includes('start talking') || head.includes('start listening')) && !isHome();
       } catch(e){ return false; }
     }
     function isText(){
-      try { return !!H.atTextField() && !isHome(); } catch(e){ return false; }
+      try { return !!U.textField() && !isHome(); } catch(e){ return false; }
     }
 
-    // ---------- Home label + font match ----------
+    // ---------- Home label fix & font match ----------
     function fixHomeStart(){
       try {
-        const btn = H.visByText('start listening') || H.visByText('start talking');
+        const btn = U.visByText('start listening') || U.visByText('start talking');
         if (!btn) return;
         try { btn.innerHTML = btn.innerHTML.replace(/start\s*listening/ig, 'Start Talking'); } catch(e){ btn.textContent = 'Start Talking'; }
-        const sib = H.visByText('start texting') || H.visByText('phone call') || H.visByText('leslie commands');
+        const sib = U.visByText('start texting') || U.visByText('phone call') || U.visByText('leslie commands');
         if (sib){
           const cs = getComputedStyle(sib);
           ['fontSize','fontWeight','fontFamily','letterSpacing','lineHeight','padding'].forEach(p=>{ try{ btn.style[p]=cs[p]; }catch(e){} });
@@ -2652,86 +2650,41 @@
       } catch(e){}
     }
 
-    // ---------- Text page Speak (top-right) ----------
-    function ensureSpeakTopRight(){
+    // ---------- Calm foreign recognizers (no prototype overrides) ----------
+    function calmForeign(){
       try{
-        let btn = document.getElementById('speakTextBtn_top');
-        if (!btn){
-          // reuse existing Speak if found, else create
-          btn = H.btns().find(b => /(^|\s)speak(\s|$)/i.test((b.textContent||''))) || document.createElement('button');
-          btn.id = 'speakTextBtn_top';
-          if (!/speak/i.test(btn.textContent||'')) btn.textContent = 'Speak';
-          if (!btn.parentElement) document.body.appendChild(btn);
+        if (window.speechRecognition && !window.speechRecognition.__quiet){
+          try { window.speechRecognition.onend=null; window.speechRecognition.onerror=null; window.speechRecognition.stop && window.speechRecognition.stop(); } catch(e){}
+          window.speechRecognition.__quiet = true;
         }
-        btn.style.position='fixed'; btn.style.right='12px'; btn.style.top='12px'; btn.style.zIndex='99999';
-        btn.style.padding='10px 14px'; btn.style.borderRadius='999px'; btn.style.fontSize='16px';
-        btn.style.boxShadow='0 4px 12px rgba(0,0,0,.25)'; btn.style.background='#6b46c1'; btn.style.color='#fff'; btn.style.border='none';
-        if (!btn.__bound){
-          btn.addEventListener('click', ()=>{
-            try {
-              stopAppSR(); stopOurSR();
-              const field = H.atTextField();
-              const text = (field && (field.value || field.innerText || field.textContent) || '').trim();
-              if (!text) return;
-              try { speechSynthesis && speechSynthesis.cancel(); } catch(e){}
-              const u = new SpeechSynthesisUtterance(text);
-              u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
-              u.lang = 'en-US';
-              speechSynthesis && speechSynthesis.speak(u);
-            } catch(e){}
-          }, { passive:true });
-          btn.__bound = true;
-        }
-        btn.style.display = isText() ? 'inline-flex' : 'none';
-        // hide any bottom-right dup speaks
-        try {
-          H.btns().forEach(b=>{
-            if (b!==btn && /speak/i.test((b.textContent||'')) && H.vis(b)){
-              const r=b.getBoundingClientRect();
-              if (r.right >= window.innerWidth - 60 && r.bottom >= window.innerHeight - 120){ b.style.display='none'; }
-            }
-          });
-        } catch(e){}
-      } catch(e){}
+      }catch(e){}
     }
 
-    // ---------- Prefer app's SR if present ----------
-    function startAppSR(){
-      try {
-        if (typeof window.startContinuousRecognition==='function'){ window.startContinuousRecognition(); return true; }
-        if (typeof window.startSpeechRecognition==='function'){ window.startSpeechRecognition(); return true; }
-        if (typeof window.startListening==='function'){ window.startListening(); return true; }
-      } catch(e){}
-      return false;
-    }
-    function stopAppSR(){
-      try {
-        if (typeof window.stopContinuousRecognition==='function'){ window.stopContinuousRecognition(); return true; }
-        if (typeof window.stopSpeechRecognition==='function'){ window.stopSpeechRecognition(); return true; }
-        if (typeof window.stopListening==='function'){ window.stopListening(); return true; }
-      } catch(e){}
-      return false;
-    }
+    // ---------- Our SR controller (hands‑free, continuous) ----------
+    const S = { rec:null, running:false, speaking:false, want:false, buf:'', flushT:null, idleT:null, lastFinalAt:0, lastStartAt:0, quickEnds:0, lock:true };
 
-    // ---------- Our minimal SR fallback ----------
-    const S = { rec:null, running:false, speaking:false, want:false, buf:'', flushT:null, idleT:null, lastStart:0, quick:0 };
-    function idleArm(){ try { if (S.idleT) clearTimeout(S.idleT); S.idleT = setTimeout(()=>{ try{ S.want=false; stopOurSR(); }catch(e){} }, 120000); }catch(e){} }
-    function ensureOurSR(){
+    function idleArm(){ try { if (S.idleT) clearTimeout(S.idleT); S.idleT=setTimeout(()=>{ try{ if (S.want){ userStop(); } }catch(e){} }, 120000); } catch(e){} } // 2 min
+
+    function ensureRec(){
       try {
         if (!SR) return null;
         if (!S.rec){
           const r = new SR();
-          r.continuous = true; r.interimResults = true; r.lang = 'en-US';
-          r.onstart = ()=>{ try{ S.running=true; S.lastStart=Date.now(); idleArm(); setToggle(true); }catch(e){} };
+          r.continuous = true;
+          r.interimResults = true;
+          r.lang = 'en-US';
+          r.onstart = ()=>{ try{ S.running=true; S.lastStartAt=Date.now(); setToggle(true); idleArm(); }catch(e){} };
           r.onresult = (e)=>{ try{
             idleArm();
             if (S.speaking) return;
             for (let i=e.resultIndex;i<e.results.length;i++){
               const res = e.results[i];
               if (res.isFinal){
-                S.buf += (res[0].transcript||'');
+                S.lastFinalAt = Date.now();
+                S.buf += (res[0].transcript || '');
                 if (S.flushT) clearTimeout(S.flushT);
-                S.flushT = setTimeout(flushSpeak, 1000); // 1s aggregator
+                // Wait for a pause of 1200ms to collect the whole phrase
+                S.flushT = setTimeout(flushSpeak, 1200);
               }
             }
           }catch(e){} };
@@ -2739,11 +2692,12 @@
           r.onend = ()=>{ try{
             S.running=false; setToggle(false);
             if (S.flushT) clearTimeout(S.flushT); if (S.idleT) clearTimeout(S.idleT);
-            const dur = Date.now()-S.lastStart;
-            if (S.want && isSpeech()){
-              if (dur < 3000) S.quick++; else S.quick=0;
-              const delay = Math.min(6000, 1200 + S.quick*1200);
-              setTimeout(()=>{ try{ if (S.want && !S.running && isSpeech()) r.start(); }catch(e){} }, delay);
+            // Keep listening if user/page still want it and we're on the page
+            if (S.want && S.lock && isSpeech()){
+              const dur = Date.now() - S.lastStartAt;
+              if (dur < 3000) S.quickEnds++; else S.quickEnds = 0;
+              const delay = Math.min(7000, 1000 + S.quickEnds*1500);
+              setTimeout(()=>{ try{ if (S.want && S.lock && !S.running && isSpeech()) r.start(); }catch(e){} }, delay);
             }
           }catch(e){} };
           S.rec = r;
@@ -2751,33 +2705,59 @@
         return S.rec;
       } catch(e){ return null; }
     }
+
     function flushSpeak(){
-      try {
-        const text = (S.buf||'').trim(); S.buf=''; if (!text) return;
-        try{ if (typeof window.onTranscriptFinal==='function') window.onTranscriptFinal(text); }catch(e){}
-        try{ if (typeof window.addRecognizedPhrase==='function') window.addRecognizedPhrase(text); }catch(e){}
+      try{
+        const text = (S.buf||'').trim();
+        S.buf='';
+        if (!text) return;
+        try { if (typeof window.onTranscriptFinal==='function') window.onTranscriptFinal(text); } catch(e){}
+        try { if (typeof window.addRecognizedPhrase==='function') window.addRecognizedPhrase(text); } catch(e){}
         S.speaking = true;
-        try{ speechSynthesis && speechSynthesis.cancel(); }catch(e){}
+        try { speechSynthesis.cancel(); } catch(e){}
         const u = new SpeechSynthesisUtterance(text);
         u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
         u.lang = 'en-US';
         u.onend = ()=>{ try{ S.speaking=false; idleArm(); }catch(e){} };
-        speechSynthesis && speechSynthesis.speak(u);
-      } catch(e){}
+        speechSynthesis.speak(u);
+      }catch(e){}
     }
-    function startOurSR(){ try { const r=ensureOurSR(); if (!r) return; if (!S.running){ S.quick=0; r.start(); } } catch(e){} }
-    function stopOurSR(){ try {
-      if (S.flushT) clearTimeout(S.flushT); if (S.idleT) clearTimeout(S.idleT);
-      if (S.rec){ try{ S.rec.onend=null; S.rec.stop(); }catch(e){} }
-      S.running=false; S.speaking=false; S.buf=''; setToggle(false);
-    } catch(e){} }
 
-    // ---------- Toggle button ----------
+    function startListen(){
+      try{
+        S.lock = true; S.want = true;
+        const r = ensureRec(); if (!r) return;
+        if (!S.running){ S.quickEnds=0; r.start(); }
+      }catch(e){}
+    }
+    function userStop(){
+      try{
+        S.want=false; S.lock=false;
+        if (S.flushT) clearTimeout(S.flushT);
+        if (S.idleT) clearTimeout(S.idleT);
+        if (S.rec){ try{ S.rec.onend=null; S.rec.stop(); }catch(e){} }
+        S.running=false; S.speaking=false; S.buf=''; setToggle(false);
+      }catch(e){}
+    }
+
+    // ---------- Prefer app SR if available ----------
+    function appStart(){ try {
+      if (typeof window.startContinuousRecognition==='function'){ window.startContinuousRecognition(); return true; }
+      if (typeof window.startSpeechRecognition==='function'){ window.startSpeechRecognition(); return true; }
+      if (typeof window.startListening==='function'){ window.startListening(); return true; }
+    } catch(e){} return false; }
+    function appStop(){ try {
+      if (typeof window.stopContinuousRecognition==='function'){ window.stopContinuousRecognition(); return true; }
+      if (typeof window.stopSpeechRecognition==='function'){ window.stopSpeechRecognition(); return true; }
+      if (typeof window.stopListening==='function'){ window.stopListening(); return true; }
+    } catch(e){} return false; }
+
+    // ---------- Toggle button on Start Talking ----------
     function toggleBtn(){
       if (isHome()) return null;
       const ids=['startListeningButton','startListeningBtn','startTalkingButton','toggleListeningButton'];
-      for (const id of ids){ const el = document.getElementById(id); if (H.vis(el)) return el; }
-      return H.visByText('start talking') || H.visByText('start listening');
+      for (const id of ids){ const el = document.getElementById(id); if (U.vis(el)) return el; }
+      return U.visByText('start talking') || U.visByText('start listening');
     }
     function setToggle(active){
       try{
@@ -2802,8 +2782,8 @@
           btn.addEventListener('click', ()=>{
             try{
               const active = (btn.dataset.listening==='true');
-              if (active){ S.want=false; stopAppSR(); stopOurSR(); }
-              else { S.want=true; if (!startAppSR()) startOurSR(); }
+              if (active){ appStop(); userStop(); }
+              else { if (!appStart()) startListen(); else { S.lock=true; S.want=true; setToggle(true); } }
             }catch(e){}
           }, { passive:true });
           btn.__bound = true;
@@ -2811,30 +2791,76 @@
       }catch(e){}
     }
 
-    // ---------- gentle ticker (no observers) ----------
+    // ---------- Text page Speak (force top-right) ----------
+    function ensureSpeakTopRight(){
+      try{
+        let btn = document.getElementById('speakTextBtn_top');
+        if (!btn){
+          // Reuse an existing 'Speak' button if present
+          btn = U.btns().find(b => /(^|\s)speak(\s|$)/i.test((b.textContent||''))) || document.createElement('button');
+          btn.id = 'speakTextBtn_top';
+          if (!/speak/i.test(btn.textContent||'')) btn.textContent = 'Speak';
+          if (!btn.parentElement) document.body.appendChild(btn);
+        }
+        // Style
+        btn.style.position='fixed'; btn.style.right='12px'; btn.style.top='12px'; btn.style.zIndex='99999';
+        btn.style.padding='10px 14px'; btn.style.borderRadius='999px'; btn.style.fontSize='16px';
+        btn.style.boxShadow='0 4px 12px rgba(0,0,0,.25)'; btn.style.background='#6b46c1'; btn.style.color='#fff'; btn.style.border='none';
+        if (!btn.__speakBound){
+          btn.addEventListener('click', ()=>{
+            try{
+              appStop(); userStop();
+              const field = U.textField();
+              const text = (field && (field.value || field.innerText || field.textContent) || '').trim();
+              if (!text) return;
+              try{ speechSynthesis.cancel(); }catch(e){}
+              const u = new SpeechSynthesisUtterance(text);
+              u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
+              u.lang = 'en-US';
+              speechSynthesis.speak(u);
+            }catch(e){}
+          }, { passive:true });
+          btn.__speakBound = true;
+        }
+        btn.style.display = isText() ? 'inline-flex' : 'none';
+        // Hide duplicate bottom-right speaks
+        try{
+          U.btns().forEach(b=>{
+            if (b!==btn && /speak/i.test((b.textContent||'')) && U.vis(b)){
+              const r=b.getBoundingClientRect();
+              if (r.right >= innerWidth-60 && r.bottom >= innerHeight-120) b.style.display='none';
+            }
+          });
+        }catch(e){}
+      }catch(e){}
+    }
+
+    // ---------- main ticker ----------
     function tick(){
-      try {
+      try{
+        calmForeign();
         fixHomeStart();
         bindToggle();
         if (isHome()){
-          stopAppSR(); stopOurSR(); S.want=false;
+          appStop(); // stay silent
+          if (S.lock){ /* do not force stop mid-transition */ } else { userStop(); }
         } else if (isSpeech()){
-          if (!S.running){ S.want=true; if (!startAppSR()) startOurSR(); }
+          // Hands‑free: ensure we are listening
+          if (!S.running){ if (!appStart()) startListen(); else { S.lock=true; S.want=true; setToggle(true); } }
         } else if (isText()){
-          stopAppSR(); stopOurSR(); S.want=false; ensureSpeakTopRight();
+          appStop(); if (!S.lock) userStop();
+          ensureSpeakTopRight();
         } else {
-          stopAppSR(); stopOurSR(); S.want=false;
+          appStop(); if (!S.lock) userStop();
         }
         ensureSpeakTopRight();
-      } catch(e){}
+      }catch(e){}
     }
 
-    setInterval(tick, 700);
-    document.addEventListener('visibilitychange', ()=>{ try{ if (document.visibilityState!=='visible'){ stopAppSR(); stopOurSR(); S.want=false; } }catch(e){} }, { passive:true });
-    try { tick(); } catch(e){}
-  } catch(err) {
-    // swallow init errors
-  }
+    setInterval(tick, 600);
+    document.addEventListener('visibilitychange', ()=>{ try{ if (document.visibilityState!=='visible'){ appStop(); userStop(); } }catch(e){} }, { passive:true });
+    try{ tick(); }catch(e){}
+  } catch(err) { /* swallow */ }
 })();
 </script>
 </body>
