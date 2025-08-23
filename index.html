@@ -2596,13 +2596,13 @@
         });
     </script>
 
-<!-- Leslie Controller v19: hard gate SR starts, full-phrase TTS, silent Home/Text -->
+<!-- Leslie Controller v20: silent Home, working Start Talking, top-right Speak -->
 <script>
 (function(){
   const NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!NativeSR) { console.log('Web Speech API not available'); return; }
 
-  // ===== Page detectors =====
+  // ===== Page detection =====
   function isVisible(el){
     if (!el) return false;
     const cs = getComputedStyle(el);
@@ -2615,56 +2615,67 @@
     return nodes.find(n => isVisible(n) && ((n.textContent||'').trim().toLowerCase().includes(want)));
   }
   function isHomePage(){
-    const a = byTextVisible('start listening') || byTextVisible('start talking');
+    const a = byTextVisible('start talking') || byTextVisible('start listening');
     const b = byTextVisible('start texting');
     const c = byTextVisible('phone call');
     const d = byTextVisible('leslie commands');
     return [a,b,c,d].filter(Boolean).length >= 2;
   }
   function isSpeechPage(){
-    const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn');
+    // Strong signals
+    const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn') || byTextVisible('stop');
     if (isVisible(stopBtn)) return true;
+    // Heading/text hints
     const h = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
-    return (h.toLowerCase().includes('start listening') || h.toLowerCase().includes('start talking')) && !isHomePage();
+    const headTalk = h.toLowerCase().includes('start talking') || h.toLowerCase().includes('start listening');
+    if (headTalk && !isHomePage()) return true;
+    // Forced mode after Home click
+    if (window.__leslie_force_speech_until && Date.now() < window.__leslie_force_speech_until) return true;
+    return false;
   }
   function isTextPage(){
     const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"]');
     return !!field && !isSpeechPage();
   }
 
-  // ===== Global SR gate: block ALL non-approved starts =====
+  // ===== Rename Home button label to "Start Talking" =====
+  function renameHomeStartButton(){
+    const btn = byTextVisible('start listening');
+    if (btn) {
+      try { btn.textContent = btn.textContent.replace(/start\s+listening/i, 'Start Talking'); } catch(e){}
+    }
+  }
+
+  // ===== Global SR gate: block ANY start unless it's OUR instance on Speech page =====
   (function installGate(){
-    if (window.__leslie_gate) return;
-    const ALLOWED_MARK = '__leslie_allowed_instance';
+    if (window.__leslie_gate_v20) return;
+    const ALLOWED = '__leslie_allowed_instance_v20';
     const _start = NativeSR.prototype.start;
     const _stop  = NativeSR.prototype.stop;
 
     NativeSR.prototype.start = function(){
-      // Allow ONLY our approved instance AND ONLY while on the Speech page
-      if (!this[ALLOWED_MARK] || !isSpeechPage()) {
-        try { console.log('[SR] start blocked'); } catch(e){}
+      if (!this[ALLOWED] || !isSpeechPage()) {
+        // Block rogue starts on Home/Text/etc
         return;
       }
       try { return _start.apply(this, arguments); } catch(e){}
     };
     NativeSR.prototype.stop = function(){
-      try { return _stop.apply(this, arguments); } catch(e){}
+      try { return _stop.apply(this, arguments); } catch(e) {}
     };
 
-    // Expose helpers so our controller can mark an instance as allowed
-    window.__leslie_gate = { ALLOWED_MARK, approve(inst){ try { inst[ALLOWED_MARK] = true; } catch(e){} } };
+    window.__leslie_gate_v20 = { ALLOWED, approve(inst){ try { inst[ALLOWED] = true; } catch(e){} } };
   })();
 
-  // ===== Controlled recognizer on Start Talking =====
-  const ctrl = { rec: null, running:false, speaking:false, buf:'', flushTimer:null, idleTimer:null };
+  // ===== Controlled SR on Start Talking =====
+  const ctrl = { rec:null, running:false, speaking:false, buf:'', flushTimer:null, idleTimer:null };
   function clearTimers(){ if (ctrl.flushTimer) clearTimeout(ctrl.flushTimer); ctrl.flushTimer=null; if (ctrl.idleTimer) clearTimeout(ctrl.idleTimer); ctrl.idleTimer=null; }
   function scheduleIdle(){ clearTimers(); ctrl.idleTimer = setTimeout(stopDictation, 120000); }
 
   function ensureRec(){
     if (!ctrl.rec){
       const rec = new NativeSR();
-      // mark as approved for the gate
-      if (window.__leslie_gate) window.__leslie_gate.approve(rec);
+      if (window.__leslie_gate_v20) window.__leslie_gate_v20.approve(rec);
       rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
       rec.onstart = ()=>{ ctrl.running = true; scheduleIdle(); };
       rec.onresult = (e)=>{
@@ -2683,7 +2694,7 @@
       rec.onend = ()=>{
         ctrl.running = false;
         clearTimers();
-        // Do NOT auto-restart here. After TTS we resume once; otherwise the page observer will start it.
+        // DO NOT auto-restart here (prevents periodic ping)
       };
       ctrl.rec = rec;
     }
@@ -2696,21 +2707,13 @@
     if (!text) return;
     try { if (typeof window.onTranscriptFinal === 'function') window.onTranscriptFinal(text); } catch(e){}
     try { if (typeof window.addRecognizedPhrase === 'function') window.addRecognizedPhrase(text); } catch(e){}
-    // Speak full phrase once. Stop SR during TTS to avoid partial cutoffs; resume once after.
-    try { ctrl.rec && ctrl.rec.stop(); } catch(e){}
+    // Speak full phrase once; keep SR running (no stop/start beeps), but ignore results while speaking.
     ctrl.speaking = true;
     try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch(e){}
     const u = new SpeechSynthesisUtterance(text);
     u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
     u.lang = 'en-US';
-    u.onend = () => {
-      ctrl.speaking = false;
-      scheduleIdle();
-      // Resume listening ONCE if still on the Speech page (one ping per phrase max)
-      if (isSpeechPage()) {
-        try { ensureRec().start(); } catch(e){}
-      }
-    };
+    u.onend = () => { ctrl.speaking = false; scheduleIdle(); };
     try { window.speechSynthesis && window.speechSynthesis.speak(u); } catch(e){ ctrl.speaking=false; }
   }
 
@@ -2726,7 +2729,7 @@
     ctrl.running=false; ctrl.buf=''; ctrl.speaking=false;
   }
 
-  // ===== Text page: top-right Speak =====
+  // ===== Text page: top-right Speak button =====
   function ensureTextSpeak(){
     let btn = document.getElementById('speakTextBtn') || document.getElementById('speakTextButton') || document.getElementById('speakTextBtn_top');
     if (!btn){
@@ -2738,8 +2741,7 @@
     }
     if (!btn.__leslieBound){
       btn.addEventListener('click', function(){
-        // Force silence before TTS
-        stopDictation();
+        stopDictation(); // ensure silence, then TTS
         const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"]');
         const text = (field && (field.value || field.innerText || field.textContent) || '').trim();
         if (!text) return;
@@ -2754,10 +2756,25 @@
     btn.style.display = isTextPage() ? 'inline-flex' : 'none';
   }
 
-  // ===== Router: SILENT Home/Text; Dictation only on Speech page =====
+  // ===== Bind Home "Start Talking" click to start SR immediately =====
+  function bindHomeStart(){
+    const startBtn = byTextVisible('start talking') || byTextVisible('start listening');
+    if (startBtn && !startBtn.__leslieBound){
+      startBtn.addEventListener('click', function(){
+        // Force speech mode true for a few seconds to let SR start immediately
+        window.__leslie_force_speech_until = Date.now() + 8000;
+        setTimeout(startDictation, 50);
+      }, { passive:true });
+      startBtn.__leslieBound = true;
+    }
+  }
+
+  // ===== Router: Silent Home & Text, Dictation only on Speech page =====
   function tick(){
+    renameHomeStartButton();
+    bindHomeStart();
     if (isHomePage()){
-      stopDictation(); // Gate blocks all other SR starts => silent
+      stopDictation();
     } else if (isSpeechPage()){
       startDictation();
     } else if (isTextPage()){
