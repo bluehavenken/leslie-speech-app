@@ -2596,13 +2596,13 @@
         });
     </script>
 
-<!-- Leslie Controller v23 -->
+<!-- Leslie Controller v24 -->
 <script>
 (function(){
   const NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!NativeSR) { console.log('Web Speech API not available'); return; }
 
-  // ========= helpers =========
+  // ===== Helpers & page detectors =====
   function isVisible(el){
     if (!el) return false;
     const cs = getComputedStyle(el);
@@ -2618,7 +2618,6 @@
     const want = (substr||'').toLowerCase();
     return nodesAll().find(n => isVisible(n) && ((n.textContent||'').trim().toLowerCase().includes(want)));
   }
-
   function isHomePage(){
     const a = findVisibleByText('start talking') || findVisibleByText('start listening');
     const b = findVisibleByText('start texting');
@@ -2640,72 +2639,113 @@
     return !!field && !isHomePage() && !isSpeechPage();
   }
 
-  // ========= rename & match Home button styling =========
+  // ===== Unify Home Start button label & styles (match siblings) =====
   function unifyHomeStartButton(){
     const startBtn = findVisibleByText('start listening') || findVisibleByText('start talking');
     if (!startBtn) return;
-    // 1) rename text only (keeps style)
     if (/start\s+listening/i.test(startBtn.textContent||'')) {
       startBtn.textContent = (startBtn.textContent||'').replace(/start\s+listening/ig, 'Start Talking');
     }
-    // 2) try to match classes with a sibling button (Start Texting or Phone Call)
     const sibling = findVisibleByText('start texting') || findVisibleByText('phone call') || findVisibleByText('leslie commands');
     if (sibling){
       sibling.classList.forEach(c => { if (!startBtn.classList.contains(c)) startBtn.classList.add(c); });
-      // Also align font via computed style if class copy didn't reflect immediately
       const s = getComputedStyle(sibling);
       try {
         startBtn.style.fontSize = s.fontSize;
         startBtn.style.fontFamily = s.fontFamily;
         startBtn.style.fontWeight = s.fontWeight;
         startBtn.style.letterSpacing = s.letterSpacing;
+        startBtn.style.padding = s.padding;
       } catch(e){}
     }
   }
 
-  // ========= global SR gate =========
+  // ===== Global gate + stop-guard to prevent rogue 5s shutdowns =====
   (function gateInstall(){
-    if (window.__leslie_gate_v23) return;
-    const ALLOWED = '__leslie_allowed_instance_v23';
+    if (window.__leslie_gate_v24) return;
+    const ALLOWED = '__leslie_allowed_instance_v24';
+    const OURSTOP = '__leslie_permit_stop';
     const _start = NativeSR.prototype.start;
     const _stop  = NativeSR.prototype.stop;
+    const _abort = NativeSR.prototype.abort || function(){};
+
     NativeSR.prototype.start = function(){
       if (!this[ALLOWED] || !window.__leslie_speech_mode || !isSpeechPage()) {
-        return; // silence rogue starts
+        return; // blocks any other recognizer from starting
       }
       try { return _start.apply(this, arguments); } catch(e){}
     };
     NativeSR.prototype.stop = function(){
+      // Only allow stops we explicitly permit (user pressed Stop or leaving page)
+      if (this[ALLOWED] && window.__leslie_speech_mode && !this[OURSTOP]) {
+        return; // block external stop on our instance
+      }
       try { return _stop.apply(this, arguments); } catch(e){}
     };
-    window.__leslie_gate_v23 = { ALLOWED, approve(inst){ try { inst[ALLOWED] = true; } catch(e){} } };
+    NativeSR.prototype.abort = function(){
+      if (this[ALLOWED] && window.__leslie_speech_mode && !this[OURSTOP]) {
+        return; // block external abort on our instance
+      }
+      try { return _abort.apply(this, arguments); } catch(e){}
+    };
+
+    window.__leslie_gate_v24 = {
+      ALLOWED, OURSTOP,
+      approve(inst){ try { inst[ALLOWED] = true; } catch(e){} },
+      permitStop(inst, yes){ try { inst[OURSTOP] = !!yes; } catch(e){} }
+    };
   })();
 
-  // ========= controlled recognizer (toggle) =========
-  const state = { rec:null, running:false, speaking:false, want:false, buf:'', flushTimer:null, idleTimer:null };
+  // ===== Controlled recognizer (auto-start, stay on, no cutoffs) =====
+  const state = {
+    rec:null, running:false, speaking:false, want:true, // want=true => hands-free auto-on
+    buf:'', flushTimer:null, idleTimer:null, lastStartAt:0, lastEndAt:0
+  };
+
   function clearTimers(){ if (state.flushTimer) clearTimeout(state.flushTimer); state.flushTimer=null; if (state.idleTimer) clearTimeout(state.idleTimer); state.idleTimer=null; }
-  function scheduleIdle(){ clearTimers(); state.idleTimer = setTimeout(()=>{ if (state.want){ stopDictation(); setToggleVisual(false); } }, 120000); }
+  function scheduleIdle(){ clearTimers(); state.idleTimer = setTimeout(()=>{ if (state.want){ userStop(); } }, 120000); } // 2 minutes
 
   function ensureRec(){
     if (!state.rec){
       const rec = new NativeSR();
-      if (window.__leslie_gate_v23) window.__leslie_gate_v23.approve(rec);
-      rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
-      rec.onstart = ()=>{ state.running=true; scheduleIdle(); setToggleVisual(true); };
+      if (window.__leslie_gate_v24) window.__leslie_gate_v24.approve(rec);
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+
+      rec.onstart = ()=>{ state.running = true; state.lastStartAt = Date.now(); setToggleVisual(true); scheduleIdle(); };
       rec.onresult = (e)=>{
         scheduleIdle();
-        if (state.speaking) return;
+        if (state.speaking) return; // ignore echoes while TTS
         for (let i=e.resultIndex;i<e.results.length;i++){
           const r = e.results[i];
           if (r.isFinal){
             state.buf += (r[0].transcript || '');
             if (state.flushTimer) clearTimeout(state.flushTimer);
-            state.flushTimer = setTimeout(flushSpeakOnce, 650);
+            state.flushTimer = setTimeout(flushSpeakOnce, 600);
           }
         }
       };
-      rec.onerror = ()=>{};
-      rec.onend = ()=>{ state.running=false; clearTimers(); setToggleVisual(false); };
+      rec.onerror = (ev)=>{
+        // don't loop; will rely on onend to optionally restart
+      };
+      rec.onend = ()=>{
+        state.running = false;
+        state.lastEndAt = Date.now();
+        setToggleVisual(false);
+        clearTimers();
+        // If user still wants listening and we're still on the page, restart gently.
+        if (state.want && window.__leslie_speech_mode && isSpeechPage()){
+          const sinceStart = Date.now() - state.lastStartAt;
+          // If it died very quickly (< 4000ms), wait longer to avoid 5s loops
+          const delay = sinceStart < 4000 ? 3000 : 800;
+          setTimeout(()=>{
+            if (state.want && window.__leslie_speech_mode && isSpeechPage()){
+              try { ensureRec().start(); } catch(e){}
+            }
+          }, delay);
+        }
+      };
       state.rec = rec;
     }
     return state.rec;
@@ -2717,6 +2757,7 @@
     if (!text) return;
     try { if (typeof window.onTranscriptFinal === 'function') window.onTranscriptFinal(text); } catch(e){}
     try { if (typeof window.addRecognizedPhrase === 'function') window.addRecognizedPhrase(text); } catch(e){}
+    // Speak the full phrase; keep SR running (avoids beeps), ignore results during TTS
     state.speaking = true;
     try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch(e){}
     const u = new SpeechSynthesisUtterance(text);
@@ -2726,27 +2767,27 @@
     try { window.speechSynthesis && window.speechSynthesis.speak(u); } catch(e){ state.speaking=false; }
   }
 
-  function startDictation(){
+  function startDictationAuto(){
     if (!isSpeechPage()) return;
     if (state.running) return;
     window.__leslie_speech_mode = true;
     state.want = true;
     try { ensureRec().start(); } catch(e){}
   }
-  function stopDictation(){
-    state.want = false;
+  function userStop(){
+    // Allow stop and then disable mode
+    if (state.rec && window.__leslie_gate_v24) window.__leslie_gate_v24.permitStop(state.rec, true);
+    try { state.rec && state.rec.stop(); } catch(e){}
+    if (state.rec && window.__leslie_gate_v24) window.__leslie_gate_v24.permitStop(state.rec, false);
     window.__leslie_speech_mode = false;
-    clearTimers();
-    if (state.rec){ try { state.rec.onend = null; } catch(e){} try { state.rec.stop(); } catch(e){} }
-    state.running=false; state.buf=''; state.speaking=false;
+    state.running=false; state.want=false; state.buf=''; state.speaking=false; clearTimers(); setToggleVisual(false);
   }
 
-  // ========= toggle button on Start Talking =========
+  // ===== Toggle button visuals & binding on Start Talking page =====
   function getSpeechToggle(){
     if (isHomePage()) return null;
     const ids = ['startListeningButton','startListeningBtn','startTalkingButton','toggleListeningButton'];
     for (const id of ids){ const el = document.getElementById(id); if (isVisible(el)) return el; }
-    // fallback by text
     return findVisibleByText('start talking') || findVisibleByText('start listening');
   }
   function setToggleVisual(active){
@@ -2756,7 +2797,6 @@
       btn.dataset.listening='true';
       btn.__originalText = btn.__originalText || btn.textContent;
       btn.textContent = 'Stop Listening';
-      // red visual cue without changing layout classes
       btn.__originalBg = btn.__originalBg || btn.style.background;
       btn.__originalColor = btn.__originalColor || btn.style.color;
       btn.style.background = '#c53030';
@@ -2773,14 +2813,14 @@
     if (btn && !btn.__leslieBound){
       btn.addEventListener('click', function(){
         const active = (btn.dataset.listening === 'true');
-        if (active){ stopDictation(); setToggleVisual(false); }
-        else { window.__leslie_speech_mode = true; setToggleVisual(true); setTimeout(startDictation, 30); }
+        if (active){ userStop(); }
+        else { window.__leslie_speech_mode = true; state.want = true; setToggleVisual(true); setTimeout(startDictationAuto, 30); }
       }, { passive:true });
       btn.__leslieBound = true;
     }
   }
 
-  // ========= Text page Speak button (top-right) =========
+  // ===== Text page Speak button (top-right) =====
   function ensureTextSpeak(){
     let btn = document.getElementById('speakTextBtn') || document.getElementById('speakTextButton') || document.getElementById('speakTextBtn_top');
     if (!btn){
@@ -2792,7 +2832,7 @@
     }
     if (!btn.__leslieBound){
       btn.addEventListener('click', function(){
-        stopDictation();
+        userStop(); // ensure silence, then TTS
         const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"], input[type="text"], input[type="search"]');
         const text = (field && (field.value || field.innerText || field.textContent) || '').trim();
         if (!text) return;
@@ -2807,20 +2847,21 @@
     btn.style.display = isTextPage() ? 'inline-flex' : 'none';
   }
 
-  // ========= main observer =========
+  // ===== Main loop =====
   function tick(){
     unifyHomeStartButton();
     bindSpeechToggle();
+
     if (isHomePage()){
-      stopDictation(); // silent
+      userStop(); // absolute silence
     } else if (isSpeechPage()){
-      // only start after user toggles; no auto-start to avoid pings
-      if (state.want && !state.running) startDictation();
+      // HANDS-FREE: auto start when on the page
+      startDictationAuto();
     } else if (isTextPage()){
-      stopDictation();
+      userStop();
       ensureTextSpeak();
     } else {
-      stopDictation();
+      userStop();
     }
     ensureTextSpeak();
   }
@@ -2828,7 +2869,9 @@
   const mo = new MutationObserver(()=>{ try { tick(); } catch(e){} });
   mo.observe(document.documentElement, { childList:true, subtree:true });
   window.addEventListener('hashchange', ()=>{ try { tick(); } catch(e){} });
-  document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState !== 'visible') stopDictation(); }, { passive:true });
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.visibilityState !== 'visible'){ userStop(); }
+  }, { passive:true });
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') tick();
   else document.addEventListener('DOMContentLoaded', tick, { once:true });
