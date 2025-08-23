@@ -2596,20 +2596,22 @@
         });
     </script>
 
-<!-- Leslie Controller v15: stop pinging, full-phrase TTS, restore Text Speak -->
+<!-- Leslie Controller v16 -->
 <script>
 (function(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  // ===== helpers =====
+
+  // ---------- helpers ----------
   function isVisible(el){
     if (!el) return false;
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) return false;
-    const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
   }
   function byTextVisible(txt){
     txt = (txt||'').toLowerCase();
-    const nodes = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
+    const nodes = Array.from(document.querySelectorAll('button, a, .btn, [role='+"\"button\""+"]"));
     return nodes.find(n => isVisible(n) && ((n.textContent||'').trim().toLowerCase().includes(txt)));
   }
   function isHomePage(){
@@ -2625,171 +2627,187 @@
     const h = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
     return (h.toLowerCase().includes('start listening') || h.toLowerCase().includes('start talking')) && !isHomePage();
   }
-  async function ensureMicOnce(){
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
-    if (ensureMicOnce._done) return true;
-    try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); try { s.getTracks().forEach(t=>t.stop()); } catch(e){}; ensureMicOnce._done = true; return true; } catch(e){ return false; }
+  function isTextPage(){
+    const input = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"]');
+    return !!input && !isSpeechPage();
   }
 
-  // ===== Home hotword (no frequent restarts) =====
-  const hot = { rec:null, running:false, lastStart:0, restartDelayMs: 120000 };
+  function hardStopAnySR(){
+    try { if (window.stopContinuousRecognition) window.stopContinuousRecognition(); } catch(e){}
+    try { if (window.speechRecognition) { window.speechRecognition.onend = null; window.speechRecognition.stop(); } } catch(e){}
+    try { if (window.appState) { appState.speechPageActive = false; appState.manuallyStoppedSpeech = true; } } catch(e){}
+  }
+
+  // ---------- HOME HOTWORD (no fast restarts, supports "home") ----------
+  const hot = { rec:null, running:false, restartTimer:null, lastStart:0, minGap: 45000 };
   function startHotword(){
     if (!SR) return;
-    if (hot.running) return;
     if (!isHomePage()) return;
+    if (hot.running) return;
     const now = Date.now();
-    if (now - hot.lastStart < 1500) return; // collapse rapid calls
+    if (now - hot.lastStart < 1000) return; // debounce
     hot.lastStart = now;
 
-    const rec = hot.rec || new SR();
+    if (!hot.rec) hot.rec = new SR();
+    const rec = hot.rec;
     rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
-    rec.onstart = () => { hot.running = true; };
-    rec.onresult = (e) => {
+    rec.onstart = ()=>{ hot.running = true; };
+    rec.onresult = (e)=>{
       let t = '';
       for (let i=e.resultIndex;i<e.results.length;i++){ if (e.results[i].isFinal) t += e.results[i][0].transcript; }
       t = t.trim().toLowerCase(); if (!t) return;
-      if (t.includes('leslie')) {
-        if (t.includes('commands')) { const b = byTextVisible('leslie commands'); if (b) b.click(); }
-        else if (t.includes('start listening') || t.includes('start talking')) { const b = byTextVisible('start listening') || byTextVisible('start talking'); if (b) b.click(); }
-        else if (t.includes('start texting') || t.startsWith('text ')) { const b = byTextVisible('start texting'); if (b) b.click(); }
-        else if (t.includes('phone call') || t.startsWith('call')) { const b = byTextVisible('phone call'); if (b) b.click(); }
-        // no TTS feedback to avoid any extra audio artifacts
+      if (!t.includes('leslie')) return;
+      // route
+      if (t.includes('home')) {
+        const homeBtn = byTextVisible('home');
+        if (homeBtn) homeBtn.click(); else window.scrollTo({top:0, behavior:'smooth'});
+      } else if (t.includes('commands')) {
+        const b = byTextVisible('leslie commands'); if (b) b.click();
+      } else if (t.includes('start listening') || t.includes('start talking')) {
+        const b = byTextVisible('start listening') || byTextVisible('start talking'); if (b) b.click();
+      } else if (t.includes('start texting') || t.startsWith('text ')) {
+        const b = byTextVisible('start texting'); if (b) b.click();
+      } else if (t.includes('phone call') || t.startsWith('call')) {
+        const b = byTextVisible('phone call'); if (b) b.click();
       }
+      // no TTS feedback (prevents ping/static)
     };
-    rec.onerror = () => {};
-    rec.onend = () => {
+    rec.onerror = ()=>{};
+    rec.onend = ()=>{
       hot.running = false;
-      // DO NOT auto-restart immediately; allow page observer to decide later.
-      // If we need a safety restart (engine stops), wait long to prevent ping: 
-      setTimeout(()=>{ if (isHomePage() && !dict.running) { try { rec.start(); } catch(e){} } }, hot.restartDelayMs);
+      if (hot.restartTimer) clearTimeout(hot.restartTimer);
+      // restart after a long gap only if still on Home and visible
+      hot.restartTimer = setTimeout(()=>{
+        if (document.visibilityState === 'visible' && isHomePage()) {
+          try { rec.start(); } catch(e){}
+        }
+      }, hot.minGap);
     };
-    hot.rec = rec;
-    ensureMicOnce().then(()=>{ try { rec.start(); } catch(e){} });
+    try { rec.start(); } catch(e){}
   }
   function stopHotword(){
+    if (hot.restartTimer) { clearTimeout(hot.restartTimer); hot.restartTimer = null; }
     if (hot.rec){ try { hot.rec.onend = null; } catch(e){} try { hot.rec.stop(); } catch(e){} }
     hot.running = false;
   }
 
-  // ===== Dictation with full-phrase TTS and NO restart loops =====
-  const dict = { rec:null, running:false, buff:'', idleTimer:null, flushTimer:null, speaking:false };
-  function clearTimers(){ if (dict.idleTimer) clearTimeout(dict.idleTimer); dict.idleTimer=null; if (dict.flushTimer) clearTimeout(dict.flushTimer); dict.flushTimer=null; }
-  function scheduleIdle(){ clearTimers(); dict.idleTimer = setTimeout(stopDictation, 120000); }
-  function flushBufferSpeak(){
-    const text = dict.buff.trim(); dict.buff='';
+  // ---------- START TALKING (dictation) — full phrase, no loops ----------
+  const dict = { rec:null, running:false, buff:'', flushTimer:null, idleTimer:null, restarting:false };
+  function clearDictTimers(){ if (dict.flushTimer) clearTimeout(dict.flushTimer); dict.flushTimer=null; if (dict.idleTimer) clearTimeout(dict.idleTimer); dict.idleTimer=null; }
+  function scheduleIdle(){ clearDictTimers(); dict.idleTimer = setTimeout(stopDictation, 120000); }
+  function flushSpeak(){
+    const text = (dict.buff||'').trim();
+    dict.buff = '';
     if (!text) return;
-    try {
-      if (typeof window.onTranscriptFinal === 'function') window.onTranscriptFinal(text);
-      else if (typeof window.addRecognizedPhrase === 'function') window.addRecognizedPhrase(text);
-    } catch(e){}
-    // Speak full phrase once; PAUSE recognition during TTS to avoid early cut-off
-    try {
-      if (SR && dict.running && dict.rec){ try { dict.rec.stop(); } catch(e){} }
-      dict.speaking = true;
-      if (window.speechSynthesis){
-        try { window.speechSynthesis.cancel(); } catch(e){}
-        const u = new SpeechSynthesisUtterance(text);
-        u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
-        u.lang = 'en-US';
-        u.onend = () => {
-          dict.speaking = false;
-          // resume recognition after a short delay WITHOUT loops
-          setTimeout(()=>{ if (isSpeechPage()) { try { dict.rec && dict.rec.start(); scheduleIdle(); } catch(e){} } }, 500);
-        };
-        window.speechSynthesis.speak(u);
-      }
-    } catch(e){}
+    // Update UI if app has a function, but avoid double-speaking; let us speak.
+    try { if (typeof window.onTranscriptFinal === 'function') window.onTranscriptFinal(text); } catch(e){}
+    try { if (typeof window.addRecognizedPhrase === 'function') window.addRecognizedPhrase(text); } catch(e){}
+    // Pause recognition during TTS
+    try { if (dict.rec) { dict.rec.onend = null; dict.rec.stop(); } } catch(e){}
+    if (window.speechSynthesis){
+      try { window.speechSynthesis.cancel(); } catch(e){}
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
+      u.lang = 'en-US';
+      u.onend = () => {
+        // resume once, gently
+        setTimeout(()=>{ if (isSpeechPage()) { try { dict.rec && dict.rec.start(); scheduleIdle(); } catch(e){} } }, 600);
+      };
+      window.speechSynthesis.speak(u);
+    }
   }
   function startDictation(){
     if (!SR) return;
-    if (dict.running) return;
     if (!isSpeechPage()) return;
+    if (!dict.rec) dict.rec = new SR();
+    const rec = dict.rec;
+    if (dict.running) return;
 
-    const rec = dict.rec || new SR();
     rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
-    rec.onstart = () => { dict.running = true; dict.buff=''; scheduleIdle(); };
-    rec.onresult = (e) => {
+    rec.onstart = ()=>{ dict.running=true; dict.buff=''; scheduleIdle(); };
+    rec.onresult = (e)=>{
       scheduleIdle();
       for (let i=e.resultIndex;i<e.results.length;i++){
         const r = e.results[i];
-        if (r.isFinal) { dict.buff += (r[0].transcript||''); if (dict.flushTimer) clearTimeout(dict.flushTimer); dict.flushTimer = setTimeout(flushBufferSpeak, 600); }
+        if (r.isFinal){ dict.buff += (r[0].transcript||''); if (dict.flushTimer) clearTimeout(dict.flushTimer); dict.flushTimer=setTimeout(flushSpeak, 650); }
       }
     };
-    rec.onerror = () => {};
-    rec.onend = () => {
-      dict.running = false;
-      clearTimers();
-      // DO NOT auto-restart here to prevent ping storms. We only restart after TTS end (above) or user action.
+    rec.onerror = ()=>{};
+    rec.onend = ()=>{
+      dict.running=false;
+      clearDictTimers();
+      // Do not loop; resume only after TTS or when page observer calls startDictation again.
     };
-    dict.rec = rec;
-    ensureMicOnce().then(()=>{ try { rec.start(); } catch(e){} });
+    try { rec.start(); } catch(e){}
   }
   function stopDictation(){
-    clearTimers();
+    clearDictTimers();
     if (dict.rec){ try { dict.rec.onend = null; } catch(e){} try { dict.rec.stop(); } catch(e){} }
-    dict.running = false; dict.buff=''; dict.speaking=false;
+    dict.running=false; dict.buff='';
   }
 
-  // expose (without replacing your existing if defined)
-  if (!window.startContinuousRecognition) window.startContinuousRecognition = startDictation;
-  if (!window.stopContinuousRecognition)  window.stopContinuousRecognition  = stopDictation;
-
-  // ===== Restore/ensure Speak button on Start Texting =====
+  // ---------- TEXT PAGE: Speak button at top-right + ensure no SR ----------
   function ensureTextSpeak(){
-    let btn = document.getElementById('speakTextBtn') || document.getElementById('speakTextButton');
+    let btn = document.getElementById('speakTextBtn') || document.getElementById('speakTextButton') || document.getElementById('speakTextBtn_fallback_top');
+    const needFallback = !btn;
     if (!btn){
       btn = document.createElement('button');
-      btn.id = 'speakTextBtn_fallback';
+      btn.id = 'speakTextBtn_fallback_top';
       btn.textContent = 'Speak';
-      btn.style.cssText = 'position:fixed; right:16px; bottom:16px; z-index:99999; padding:12px 18px; border-radius:999px; font-size:16px; box-shadow:0 4px 12px rgba(0,0,0,.25); background:#6b46c1; color:#fff; border:none;';
+      btn.style.cssText = 'position:fixed; right:12px; top:12px; z-index:99999; padding:10px 14px; border-radius:999px; font-size:16px; box-shadow:0 4px 12px rgba(0,0,0,.25); background:#6b46c1; color:#fff; border:none;';
       document.body.appendChild(btn);
     }
     if (!btn.__bound){
-      btn.addEventListener('click', () => {
-        try { window.speechSynthesis.cancel(); } catch(e){}
+      btn.addEventListener('click', function(){
+        // Hard stop any SR to avoid interference beeps
+        try { stopHotword(); stopDictation(); hardStopAnySR(); } catch(e){}
         const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"]');
-        const txt = (field && (field.value || field.innerText || field.textContent) || '').trim();
-        if (!txt) return;
-        const u = new SpeechSynthesisUtterance(txt);
+        const text = (field && (field.value || field.innerText || field.textContent) || '').trim();
+        if (!text) return;
+        try { window.speechSynthesis.cancel(); } catch(e){}
+        const u = new SpeechSynthesisUtterance(text);
         u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
         u.lang = 'en-US';
         window.speechSynthesis.speak(u);
       }, { passive:true });
       btn.__bound = true;
     }
-    // Only show on Text page (input visible), hide on Speech page
-    const onText = !!document.querySelector('#largeTextInputField, textarea, [contenteditable="true"]');
-    btn.style.display = (onText && !isSpeechPage()) ? 'inline-flex' : 'none';
+    // Show only on Text page
+    btn.style.display = isTextPage() ? 'inline-flex' : 'none';
   }
 
-  // ===== Wiring & observers =====
-  function bindHomeButtons(){
-    const bStart = byTextVisible('start listening') || byTextVisible('start talking');
-    const bText  = byTextVisible('start texting');
-    const bPhone = byTextVisible('phone call');
-    const bCmds  = byTextVisible('leslie commands');
-    if (bStart && !bStart.__bound){ bStart.addEventListener('click', ()=>{ setTimeout(startDictation, 80); }, {passive:true}); bStart.__bound=true; }
-    [bText,bPhone,bCmds].forEach(btn=>{ if (btn && !btn.__bound){ btn.addEventListener('click', ()=>{ stopDictation(); }, {passive:true}); btn.__bound=true; }});
-  }
-
+  // ---------- main observer ----------
   function tick(){
-    if (isHomePage()){ stopDictation(); startHotword(); }
-    else if (isSpeechPage()){ stopHotword(); startDictation(); }
-    else { stopHotword(); stopDictation(); ensureTextSpeak(); }
+    if (isHomePage()){
+      // Home: hotword on; kill all dictation/other SR
+      stopDictation();
+      startHotword();
+    } else if (isSpeechPage()){
+      // Speech page: dictation on; hotword off
+      stopHotword();
+      startDictation();
+    } else if (isTextPage()){
+      // Text page: all SR off; show Speak button
+      stopHotword(); stopDictation(); hardStopAnySR();
+      ensureTextSpeak();
+    } else {
+      // Other pages: all SR off
+      stopHotword(); stopDictation(); hardStopAnySR();
+    }
+    // Keep Text speak presence updated
     ensureTextSpeak();
-    bindHomeButtons();
   }
 
   const mo = new MutationObserver(()=>{ try { tick(); } catch(e){} });
   mo.observe(document.documentElement, { childList:true, subtree:true });
+
   window.addEventListener('hashchange', ()=>{ try { tick(); } catch(e){} });
-
-  if (document.readyState === 'complete' || document.readyState === 'interactive') tick();
-  else document.addEventListener('DOMContentLoaded', tick, { once:true });
-
   document.addEventListener('visibilitychange', ()=>{
     if (document.visibilityState !== 'visible'){ stopHotword(); stopDictation(); }
   }, { passive:true });
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') tick();
+  else document.addEventListener('DOMContentLoaded', tick, { once:true });
 })();
 </script>
 
