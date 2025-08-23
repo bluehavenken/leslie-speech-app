@@ -2596,51 +2596,54 @@
         });
     </script>
 
-<!-- Leslie Controller v29 (Ultra-Safe) -->
+<!-- Leslie Controller v30 (Recovery Mode) -->
 <script>
 (function(){
-  // Avoid breaking the page at all costs
   try {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    // ---- helpers ----
-    const Q = {
+    // ---------- helpers ----------
+    const H = {
       vis(el){ try { if (!el) return false; const cs = getComputedStyle(el);
         if (cs.display==='none'||cs.visibility==='hidden'||+cs.opacity===0) return false;
         const r = el.getBoundingClientRect(); return r.width>0 && r.height>0; } catch(e){ return false; } },
       btns(){ try { return Array.from(document.querySelectorAll('button, a, .btn, [role="button"], [onclick]')); } catch(e){ return []; } },
-      byText(t){ try { const s=(t||'').toLowerCase(); return Q.btns().find(n=>((n.textContent||'').trim().toLowerCase().includes(s))); } catch(e){ return null; } },
-      visByText(t){ try { const s=(t||'').toLowerCase(); return Q.btns().find(n=>Q.vis(n) && ((n.textContent||'').trim().toLowerCase().includes(s))); } catch(e){ return null; } },
+      byText(t){ try { const s=(t||'').toLowerCase(); return H.btns().find(n=>((n.textContent||'').trim().toLowerCase().includes(s))); } catch(e){ return null; } },
+      visByText(t){ try { const s=(t||'').toLowerCase(); return H.btns().find(n=>H.vis(n) && ((n.textContent||'').trim().toLowerCase().includes(s))); } catch(e){ return null; } },
+      atTextField(){ try {
+        return document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"], input[type="text"], input[type="search"]');
+      } catch(e){ return null; } }
     };
 
-    function isHome(){ try {
-      const a = Q.visByText('start talking') || Q.visByText('start listening');
-      const b = Q.visByText('start texting');
-      const c = Q.visByText('phone call');
-      const d = Q.visByText('leslie commands');
-      return [a,b,c,d].filter(Boolean).length >= 2;
-    } catch(e){ return false; } }
-
-    function isText(){ try {
-      const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"], input[type="text"], input[type="search"]');
-      return !!field && !isHome();
-    } catch(e){ return false; } }
-
-    function isSpeech(){ try {
-      const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn') || Q.visByText('stop listening') || Q.visByText('stop');
-      if (Q.vis(stopBtn)) return true;
-      const h = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
-      const head = (h||'').toLowerCase();
-      return (head.includes('start talking') || head.includes('start listening')) && !isHome();
-    } catch(e){ return false; } }
-
-    // ---- Home label & font ----
-    function fixHomeButton(){
+    function isHome(){
       try {
-        const btn = Q.visByText('start listening') || Q.visByText('start talking');
+        const a = H.visByText('start talking') || H.visByText('start listening');
+        const b = H.visByText('start texting');
+        const c = H.visByText('phone call');
+        const d = H.visByText('leslie commands');
+        return [a,b,c,d].filter(Boolean).length >= 2;
+      } catch(e){ return false; }
+    }
+    function isSpeech(){
+      try {
+        const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn') || H.visByText('stop listening') || H.visByText('stop');
+        if (H.vis(stopBtn)) return true;
+        const h = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
+        const head = (h||'').toLowerCase();
+        return (head.includes('start talking') || head.includes('start listening')) && !isHome();
+      } catch(e){ return false; }
+    }
+    function isText(){
+      try { return !!H.atTextField() && !isHome(); } catch(e){ return false; }
+    }
+
+    // ---------- Home label + font match ----------
+    function fixHomeStart(){
+      try {
+        const btn = H.visByText('start listening') || H.visByText('start talking');
         if (!btn) return;
         try { btn.innerHTML = btn.innerHTML.replace(/start\s*listening/ig, 'Start Talking'); } catch(e){ btn.textContent = 'Start Talking'; }
-        const sib = Q.visByText('start texting') || Q.visByText('phone call') || Q.visByText('leslie commands');
+        const sib = H.visByText('start texting') || H.visByText('phone call') || H.visByText('leslie commands');
         if (sib){
           const cs = getComputedStyle(sib);
           ['fontSize','fontWeight','fontFamily','letterSpacing','lineHeight','padding'].forEach(p=>{ try{ btn.style[p]=cs[p]; }catch(e){} });
@@ -2649,108 +2652,132 @@
       } catch(e){}
     }
 
-    // ---- Foreign SR (soft stop) ----
-    function calmForeign(){
+    // ---------- Text page Speak (top-right) ----------
+    function ensureSpeakTopRight(){
       try{
-        if (window.speechRecognition && !window.speechRecognition.__leslieSilent){
-          try { window.speechRecognition.onend=null; window.speechRecognition.onerror=null; window.speechRecognition.stop && window.speechRecognition.stop(); } catch(e){}
-          window.speechRecognition.__leslieSilent = true;
+        let btn = document.getElementById('speakTextBtn_top');
+        if (!btn){
+          // reuse existing Speak if found, else create
+          btn = H.btns().find(b => /(^|\s)speak(\s|$)/i.test((b.textContent||''))) || document.createElement('button');
+          btn.id = 'speakTextBtn_top';
+          if (!/speak/i.test(btn.textContent||'')) btn.textContent = 'Speak';
+          if (!btn.parentElement) document.body.appendChild(btn);
         }
-      }catch(e){}
+        btn.style.position='fixed'; btn.style.right='12px'; btn.style.top='12px'; btn.style.zIndex='99999';
+        btn.style.padding='10px 14px'; btn.style.borderRadius='999px'; btn.style.fontSize='16px';
+        btn.style.boxShadow='0 4px 12px rgba(0,0,0,.25)'; btn.style.background='#6b46c1'; btn.style.color='#fff'; btn.style.border='none';
+        if (!btn.__bound){
+          btn.addEventListener('click', ()=>{
+            try {
+              stopAppSR(); stopOurSR();
+              const field = H.atTextField();
+              const text = (field && (field.value || field.innerText || field.textContent) || '').trim();
+              if (!text) return;
+              try { speechSynthesis && speechSynthesis.cancel(); } catch(e){}
+              const u = new SpeechSynthesisUtterance(text);
+              u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
+              u.lang = 'en-US';
+              speechSynthesis && speechSynthesis.speak(u);
+            } catch(e){}
+          }, { passive:true });
+          btn.__bound = true;
+        }
+        btn.style.display = isText() ? 'inline-flex' : 'none';
+        // hide any bottom-right dup speaks
+        try {
+          H.btns().forEach(b=>{
+            if (b!==btn && /speak/i.test((b.textContent||'')) && H.vis(b)){
+              const r=b.getBoundingClientRect();
+              if (r.right >= window.innerWidth - 60 && r.bottom >= window.innerHeight - 120){ b.style.display='none'; }
+            }
+          });
+        } catch(e){}
+      } catch(e){}
     }
 
-    // ---- Our SR fallback (guarded) ----
-    const F = { rec:null, running:false, speaking:false, want:false, buf:'', flushT:null, idleT:null, lastStart:0, quick:0 };
+    // ---------- Prefer app's SR if present ----------
+    function startAppSR(){
+      try {
+        if (typeof window.startContinuousRecognition==='function'){ window.startContinuousRecognition(); return true; }
+        if (typeof window.startSpeechRecognition==='function'){ window.startSpeechRecognition(); return true; }
+        if (typeof window.startListening==='function'){ window.startListening(); return true; }
+      } catch(e){}
+      return false;
+    }
+    function stopAppSR(){
+      try {
+        if (typeof window.stopContinuousRecognition==='function'){ window.stopContinuousRecognition(); return true; }
+        if (typeof window.stopSpeechRecognition==='function'){ window.stopSpeechRecognition(); return true; }
+        if (typeof window.stopListening==='function'){ window.stopListening(); return true; }
+      } catch(e){}
+      return false;
+    }
 
-    function idleArm(){ try {
-      if (F.idleT) clearTimeout(F.idleT);
-      F.idleT = setTimeout(()=>{ try{ F.want=false; stopOur(); }catch(e){} }, 120000);
-    }catch(e){} }
-
-    function ensureRec(){
-      try{
+    // ---------- Our minimal SR fallback ----------
+    const S = { rec:null, running:false, speaking:false, want:false, buf:'', flushT:null, idleT:null, lastStart:0, quick:0 };
+    function idleArm(){ try { if (S.idleT) clearTimeout(S.idleT); S.idleT = setTimeout(()=>{ try{ S.want=false; stopOurSR(); }catch(e){} }, 120000); }catch(e){} }
+    function ensureOurSR(){
+      try {
         if (!SR) return null;
-        if (!F.rec){
+        if (!S.rec){
           const r = new SR();
           r.continuous = true; r.interimResults = true; r.lang = 'en-US';
-          r.onstart = ()=>{ try{ F.running=true; F.lastStart=Date.now(); idleArm(); setToggle(true); }catch(e){} };
+          r.onstart = ()=>{ try{ S.running=true; S.lastStart=Date.now(); idleArm(); setToggle(true); }catch(e){} };
           r.onresult = (e)=>{ try{
             idleArm();
-            if (F.speaking) return;
+            if (S.speaking) return;
             for (let i=e.resultIndex;i<e.results.length;i++){
               const res = e.results[i];
               if (res.isFinal){
-                F.buf += (res[0].transcript||'');
-                if (F.flushT) clearTimeout(F.flushT);
-                F.flushT = setTimeout(speakFlush, 1000);
+                S.buf += (res[0].transcript||'');
+                if (S.flushT) clearTimeout(S.flushT);
+                S.flushT = setTimeout(flushSpeak, 1000); // 1s aggregator
               }
             }
           }catch(e){} };
           r.onerror = ()=>{};
           r.onend = ()=>{ try{
-            F.running=false; setToggle(false);
-            if (F.flushT) clearTimeout(F.flushT); if (F.idleT) clearTimeout(F.idleT);
-            const dur = Date.now()-F.lastStart;
-            if (F.want && isSpeech()){
-              if (dur < 3000) F.quick++; else F.quick=0;
-              const delay = Math.min(6000, 1200 + F.quick*1200);
-              setTimeout(()=>{ try{ if (F.want && !F.running && isSpeech()) r.start(); }catch(e){} }, delay);
+            S.running=false; setToggle(false);
+            if (S.flushT) clearTimeout(S.flushT); if (S.idleT) clearTimeout(S.idleT);
+            const dur = Date.now()-S.lastStart;
+            if (S.want && isSpeech()){
+              if (dur < 3000) S.quick++; else S.quick=0;
+              const delay = Math.min(6000, 1200 + S.quick*1200);
+              setTimeout(()=>{ try{ if (S.want && !S.running && isSpeech()) r.start(); }catch(e){} }, delay);
             }
           }catch(e){} };
-          F.rec = r;
+          S.rec = r;
         }
-        return F.rec;
-      }catch(e){ return null; }
+        return S.rec;
+      } catch(e){ return null; }
     }
-
-    function speakFlush(){
-      try{
-        const text = (F.buf||'').trim(); F.buf='';
-        if (!text) return;
+    function flushSpeak(){
+      try {
+        const text = (S.buf||'').trim(); S.buf=''; if (!text) return;
         try{ if (typeof window.onTranscriptFinal==='function') window.onTranscriptFinal(text); }catch(e){}
         try{ if (typeof window.addRecognizedPhrase==='function') window.addRecognizedPhrase(text); }catch(e){}
-        F.speaking = true;
-        try{ speechSynthesis.cancel(); }catch(e){}
+        S.speaking = true;
+        try{ speechSynthesis && speechSynthesis.cancel(); }catch(e){}
         const u = new SpeechSynthesisUtterance(text);
         u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
         u.lang = 'en-US';
-        u.onend = ()=>{ try{ F.speaking=false; idleArm(); }catch(e){} };
-        speechSynthesis.speak(u);
-      }catch(e){}
+        u.onend = ()=>{ try{ S.speaking=false; idleArm(); }catch(e){} };
+        speechSynthesis && speechSynthesis.speak(u);
+      } catch(e){}
     }
+    function startOurSR(){ try { const r=ensureOurSR(); if (!r) return; if (!S.running){ S.quick=0; r.start(); } } catch(e){} }
+    function stopOurSR(){ try {
+      if (S.flushT) clearTimeout(S.flushT); if (S.idleT) clearTimeout(S.idleT);
+      if (S.rec){ try{ S.rec.onend=null; S.rec.stop(); }catch(e){} }
+      S.running=false; S.speaking=false; S.buf=''; setToggle(false);
+    } catch(e){} }
 
-    function startOur(){
-      try{
-        const r = ensureRec(); if (!r) return;
-        if (!F.running){ F.quick=0; r.start(); }
-      }catch(e){}
-    }
-    function stopOur(){
-      try{
-        if (F.flushT) clearTimeout(F.flushT); if (F.idleT) clearTimeout(F.idleT);
-        if (F.rec){ try{ F.rec.onend=null; F.rec.stop(); }catch(e){} }
-        F.running=false; F.speaking=false; F.buf=''; setToggle(false);
-      }catch(e){}
-    }
-
-    // Prefer app functions
-    function appStart(){ try {
-      if (typeof window.startContinuousRecognition==='function'){ window.startContinuousRecognition(); return true; }
-      if (typeof window.startSpeechRecognition==='function'){ window.startSpeechRecognition(); return true; }
-      if (typeof window.startListening==='function'){ window.startListening(); return true; }
-    } catch(e){} return false; }
-    function appStop(){ try {
-      if (typeof window.stopContinuousRecognition==='function'){ window.stopContinuousRecognition(); return true; }
-      if (typeof window.stopSpeechRecognition==='function'){ window.stopSpeechRecognition(); return true; }
-      if (typeof window.stopListening==='function'){ window.stopListening(); return true; }
-    } catch(e){} return false; }
-
-    // ---- Toggle button ----
+    // ---------- Toggle button ----------
     function toggleBtn(){
       if (isHome()) return null;
       const ids=['startListeningButton','startListeningBtn','startTalkingButton','toggleListeningButton'];
-      for (const id of ids){ const el = document.getElementById(id); if (Q.vis(el)) return el; }
-      return Q.visByText('start talking') || Q.visByText('start listening');
+      for (const id of ids){ const el = document.getElementById(id); if (H.vis(el)) return el; }
+      return H.visByText('start talking') || H.visByText('start listening');
     }
     function setToggle(active){
       try{
@@ -2771,86 +2798,42 @@
     function bindToggle(){
       try{
         const btn = toggleBtn();
-        if (btn && !btn.__leslieBound){
+        if (btn && !btn.__bound){
           btn.addEventListener('click', ()=>{
-            const active = (btn.dataset.listening==='true');
-            if (active){ F.want=false; appStop(); stopOur(); }
-            else { F.want=true; if (!appStart()) startOur(); }
-          }, { passive:true });
-          btn.__leslieBound = true;
-        }
-      }catch(e){}
-    }
-
-    // ---- Text page Speak ----
-    function placeSpeak(){
-      try{
-        const existing = document.getElementById('speakTextBtn') || document.getElementById('speakTextButton') || Q.btns().find(b => /(^|\s)speak(\s|$)/i.test((b.textContent||'')));
-        let btn = existing;
-        if (!btn){
-          btn = document.createElement('button');
-          btn.id = 'speakTextBtn_top';
-          btn.textContent = 'Speak';
-          document.body.appendChild(btn);
-        }
-        // top-right
-        btn.style.position='fixed'; btn.style.right='12px'; btn.style.top='12px'; btn.style.zIndex='99999';
-        btn.style.padding='10px 14px'; btn.style.borderRadius='999px'; btn.style.fontSize='16px';
-        btn.style.boxShadow='0 4px 12px rgba(0,0,0,.25)'; btn.style.background='#6b46c1'; btn.style.color='#fff'; btn.style.border='none';
-        if (!btn.__leslieBoundSpeak){
-          btn.addEventListener('click', ()=>{
-            try{ appStop(); stopOur(); }catch(e){}
-            let text='';
             try{
-              const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"], input[type="text"], input[type="search"]');
-              text = (field && (field.value || field.innerText || field.textContent) || '').trim();
+              const active = (btn.dataset.listening==='true');
+              if (active){ S.want=false; stopAppSR(); stopOurSR(); }
+              else { S.want=true; if (!startAppSR()) startOurSR(); }
             }catch(e){}
-            if (!text) return;
-            try{ speechSynthesis.cancel(); }catch(e){}
-            const u = new SpeechSynthesisUtterance(text);
-            u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
-            u.lang = 'en-US'; speechSynthesis.speak(u);
           }, { passive:true });
-          btn.__leslieBoundSpeak = true;
+          btn.__bound = true;
         }
-        btn.style.display = isText() ? 'inline-flex' : 'none';
-        // hide dup bottom-right
-        try{
-          Q.btns().forEach(b=>{
-            if (b!==btn && /speak/i.test((b.textContent||'')) && Q.vis(b)){
-              const r = b.getBoundingClientRect();
-              if (r.right >= window.innerWidth-60 && r.bottom >= window.innerHeight-120){ b.style.display='none'; }
-            }
-          });
-        }catch(e){}
       }catch(e){}
     }
 
-    // ---- ticker (safe; no observers) ----
+    // ---------- gentle ticker (no observers) ----------
     function tick(){
-      try{
-        calmForeign();
-        fixHomeButton();
+      try {
+        fixHomeStart();
         bindToggle();
         if (isHome()){
-          appStop(); stopOur(); F.want=false;
+          stopAppSR(); stopOurSR(); S.want=false;
         } else if (isSpeech()){
-          if (!F.running){ F.want=true; if (!appStart()) startOur(); }
+          if (!S.running){ S.want=true; if (!startAppSR()) startOurSR(); }
         } else if (isText()){
-          appStop(); stopOur(); F.want=false; placeSpeak();
+          stopAppSR(); stopOurSR(); S.want=false; ensureSpeakTopRight();
         } else {
-          appStop(); stopOur(); F.want=false;
+          stopAppSR(); stopOurSR(); S.want=false;
         }
-        placeSpeak();
-      }catch(e){}
+        ensureSpeakTopRight();
+      } catch(e){}
     }
 
-    setInterval(tick, 600); // gentle
-    document.addEventListener('visibilitychange', ()=>{ try{ if (document.visibilityState!=='visible'){ appStop(); stopOur(); F.want=false; } }catch(e){} }, { passive:true });
-    // initial
-    try{ tick(); }catch(e){}
+    setInterval(tick, 700);
+    document.addEventListener('visibilitychange', ()=>{ try{ if (document.visibilityState!=='visible'){ stopAppSR(); stopOurSR(); S.want=false; } }catch(e){} }, { passive:true });
+    try { tick(); } catch(e){}
   } catch(err) {
-    // swallow any init errors to avoid white screen
+    // swallow init errors
   }
 })();
 </script>
