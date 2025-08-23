@@ -506,7 +506,69 @@
             background-color: #f8f9fa;
             margin-bottom: 16px;
         }
-        /* voice-command-status removed */
+        .voice-command-status {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            background: rgba(255, 193, 7, 0.9);
+            color: #333;
+            padding: 10px 15px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 1000;
+            display: none;
+            border: 2px solid rgba(255, 193, 7, 0.3);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        .voice-command-status.active {
+            background: rgba(40, 167, 69, 0.9);
+            color: white;
+            display: block;
+            border-color: rgba(40, 167, 69, 0.3);
+            animation: pulse 2s infinite;
+        }
+        .voice-command-status.permission-needed {
+            background: rgba(220, 53, 69, 0.9);
+            color: white;
+            display: block;
+            border-color: rgba(220, 53, 69, 0.3);
+            animation: bounce 2s infinite;
+            transform: scale(1.1);
+            font-size: 16px;
+            padding: 12px 18px;
+        }
+        .voice-command-status.ready {
+            background: rgba(40, 167, 69, 0.9);
+            color: white;
+            display: block;
+            border-color: rgba(40, 167, 69, 0.3);
+        }
+        .voice-command-status.processing {
+            background: rgba(255, 193, 7, 0.9);
+            color: #333;
+            display: block;
+            border-color: rgba(255, 193, 7, 0.3);
+        }
+        .voice-command-status.speaking {
+            background: rgba(153, 102, 255, 0.9);
+            color: white;
+            display: block;
+            border-color: rgba(153, 102, 255, 0.3);
+        }
+        .voice-command-status.listening {
+            background: rgba(0, 153, 204, 0.9);
+            color: white;
+            display: block;
+            border-color: rgba(0, 153, 204, 0.3);
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0) scale(1.1); }
             40% { transform: translateY(-4px) scale(1.1); }
             60% { transform: translateY(-2px) scale(1.1); }
         }
@@ -841,6 +903,8 @@
         <div id="swipeLeft" class="swipe-edge swipe-left"></div>
         <div id="swipeRight" class="swipe-edge swipe-right"></div>
 
+        <!-- Voice Command Status Indicator -->
+        <div id="voiceCommandStatus" class="voice-command-status">🎤 Voice Commands Ready</div>
     </div>
 
     <script>
@@ -880,10 +944,7 @@
         let lastProcessedText = '';
         let lastProcessedTime = 0;
 
-        // === RESTART THROTTLE ===
-let lastRestartAt = 0;
-const MIN_RESTART_INTERVAL_MS = 25000;
-// === PERMISSION CHECK (STOP THE LOOP) ===
+        // === PERMISSION CHECK (STOP THE LOOP) ===
         async function checkPermission() {
             // Only check once to prevent endless loops
             if (permissionChecked) {
@@ -910,7 +971,7 @@ const MIN_RESTART_INTERVAL_MS = 25000;
         }
 
         // === MANUAL VOICE COMMAND RESTART (NO AUTO-PINGING) ===
-        async function restartVoiceCommandsIfNeeded() {
+        function restartVoiceCommandsIfNeeded() {
             if (!appState.speechPageActive && !appState.isListening && permissionGranted) {
                 console.log('🎤 Manually restarting voice commands');
                 startContinuousRecognition();
@@ -1699,7 +1760,16 @@ const MIN_RESTART_INTERVAL_MS = 25000;
             }
         }
 
-        function updateVoiceCommandStatus(status=null){} else if (status === 'active') {
+        function updateVoiceCommandStatus(status = null) {
+            const statusEl = document.getElementById('voiceCommandStatus');
+            if (!statusEl) return;
+            
+            statusEl.className = 'voice-command-status';
+            
+            if (status === 'permission-needed') {
+                statusEl.textContent = '🔴 Click Here to Enable Microphone';
+                statusEl.classList.add('permission-needed');
+            } else if (status === 'active') {
                 statusEl.textContent = '🎤 Voice Commands Active - Say "Hey Leslie"';
                 statusEl.classList.add('active');
             } else if (status === 'processing') {
@@ -1788,7 +1858,7 @@ const MIN_RESTART_INTERVAL_MS = 25000;
                 });
                 
                 // Voice command status click - manual permission request only
-                document.getElementByIdasync ('voiceCommandStatus')?.addEventListener('click', async () => {
+                document.getElementById('voiceCommandStatus')?.addEventListener('click', async () => {
                     console.log('🎤 Voice status clicked');
                     
                     if (!permissionGranted) {
@@ -2089,7 +2159,7 @@ const MIN_RESTART_INTERVAL_MS = 25000;
             displayContactsOnPhonePage();
         }
 
-        async function callContact(contact) {
+        function callContact(contact) {
             const phoneNumber = contact.phone.replace(/[^0-9]/g, '');
             if (phoneNumber) {
                 window.location.href = `tel:${phoneNumber}`;
@@ -2097,7 +2167,7 @@ const MIN_RESTART_INTERVAL_MS = 25000;
         }
 
         // === WEATHER ===
-        async function getUserLocation() {
+        function getUserLocation() {
             userLocation = { lat: 38.8117, lon: -90.8529 };
         }
 
@@ -2526,426 +2596,69 @@ const MIN_RESTART_INTERVAL_MS = 25000;
         });
     </script>
 
+<!-- Minimal page-aware controller: no changes to your code, only adds guards -->
 <script>
 (function(){
-  async function safeStart(){
+  // Quiet unless on Start Listening page
+  function isSpeechPage(){
     try {
-      if (typeof initApp === 'function') { await initApp(); return; }
-      if (typeof initializeApp === 'function') { await initializeApp(); return; }
-      if (typeof setupApp === 'function') { await setupApp(); return; }
-      // Fallback: dispatch DOMContentLoaded for legacy code paths
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {});
-      }
-    } catch(e) {
-      // swallow to avoid blocking on mobile
-      console.log('Bootstrap error:', e && e.message);
-    }
-  }
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    safeStart();
-  } else {
-    document.addEventListener('DOMContentLoaded', safeStart, { once: true });
-  }
-})();
-</script>
-
-
-<script>
-// ===== Auto-start Listening on Page Load (Android Chrome friendly) =====
-(function(){
-  async function requestMicPermission() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      try { stream.getTracks().forEach(t => t.stop()); } catch(e) {}
-      return true;
-    } catch (e) {
-      console.log('Mic permission request failed:', e && e.message);
-      return false;
-    }
-  }
-
-  function fallbackStartRecognition() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { console.log('Web Speech API not available'); return; }
-    if (window.__leslieAutoSR) { try { window.__leslieAutoSR.start(); } catch(e){} return; }
-    const rec = new SR();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = 'en-US';
-    let idleTimer = null;
-    function resetIdle() {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        try { rec.stop(); } catch(e) {}
-      }, 120000); // 2 minutes idle
-    }
-    rec.onresult = function(){ resetIdle(); };
-    rec.onend = function(){
-      // keep listening unless user explicitly stopped elsewhere
-      try { rec.start(); resetIdle(); } catch(e) {}
-    };
-    try { rec.start(); resetIdle(); } catch(e) {}
-    window.__leslieAutoSR = rec;
-  }
-
-  async function autoStartOnLoad(){
-    // 1) Ask for mic permission to trigger the Android prompt
-    await requestMicPermission();
-
-    // 2) Prefer app's own starter if present (keeps all your logic intact)
-    try {
-      if (typeof startContinuousRecognition === 'function') {
-        try { if (window.appState) { appState.manuallyStoppedSpeech = false; appState.speechPageActive = true; } } catch(e){}
-        startContinuousRecognition();
-        return;
-      }
-    } catch(e){}
-
-    // 3) Fallback: create a lightweight continuous recognizer
-    fallbackStartRecognition();
-  }
-
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    autoStartOnLoad();
-  } else {
-    document.addEventListener('DOMContentLoaded', autoStartOnLoad, { once: true });
-  }
-})();
-</script>
-
-
-<script>
-// ===== Stable SR controller (singleton, no ping loops) =====
-(function(){
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { console.log('Web Speech API not available'); return; }
-
-  if (!window.leslieSR) window.leslieSR = { rec: null, running: false, manuallyStopped: false, idleTimer: null };
-
-  function clearIdleTimer(){
-    if (window.leslieSR.idleTimer) clearTimeout(window.leslieSR.idleTimer);
-    window.leslieSR.idleTimer = null;
-  }
-  function resetIdleTimer(){
-    clearIdleTimer();
-    window.leslieSR.idleTimer = setTimeout(() => {
-      try { window.leslieSR.manuallyStopped = true; window.leslieSR.rec && window.leslieSR.rec.stop(); } catch(e){}
-    }, 120000); // 2 minutes
-  }
-
-  // Safe wrappers we prefer to use (but won't remove existing ones)
-  window.stopContinuousRecognition = function stopContinuousRecognition(){
-    try { window.leslieSR.manuallyStopped = true; } catch(e){}
-    try { window.leslieSR.running = false; } catch(e){}
-    clearIdleTimer();
-    if (window.leslieSR.rec) {
-      try { window.leslieSR.rec.onend = null; } catch(e){}
-      try { window.leslieSR.rec.stop(); } catch(e){}
-    }
-  };
-
-  window.startContinuousRecognition = async function startContinuousRecognition(){
-    if (!SR) return;
-    if (document.visibilityState !== 'visible') return; // avoid background ping
-    if (window.leslieSR.running) return; // already running
-    window.leslieSR.manuallyStopped = false;
-
-    let rec = window.leslieSR.rec;
-    if (!rec) {
-      rec = new SR();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = 'en-US';
-
-      rec.onstart = function(){ window.leslieSR.running = true; resetIdleTimer(); };
-
-      rec.onresult = function(e){
-        resetIdleTimer();
-        try {
-          let finalText = '';
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
-          }
-          if (finalText.trim().length > 0) {
-            // Route to app handlers if they exist
-            if (typeof window.onTranscriptFinal === 'function') {
-              window.onTranscriptFinal(finalText.trim());
-            } else if (typeof window.addRecognizedPhrase === 'function') {
-              window.addRecognizedPhrase(finalText.trim());
-            }
-            // Optional: speak back the full phrase if your app normally does
-            try {
-              if (window.settings && window.settings.autoSpeakRecognized) {
-                speechSynthesis.cancel();
-                const u = new SpeechSynthesisUtterance(finalText.trim());
-                u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
-                u.lang = 'en-US';
-                speechSynthesis.speak(u);
-              }
-            } catch(e){}
-          }
-        } catch(err){ console.log('onresult err', err); }
-      };
-
-      rec.onerror = function(ev){
-        // Do not loop on 'no-speech' or 'aborted'
-        console.log('rec.onerror', ev && ev.error);
-      };
-
-      rec.onend = function(){
-        window.leslieSR.running = false;
-        clearIdleTimer();
-        // Only auto-restart on Speech page / while visible / not manually stopped
-        const onSpeechPage = !!(window.appState && window.appState.speechPageActive);
-        if (!window.leslieSR.manuallyStopped && document.visibilityState === 'visible' && onSpeechPage) {
-          setTimeout(() => {
-            try { if (!window.leslieSR.running) { rec.start(); resetIdleTimer(); } } catch(e){}
-          }, 400); // gentle restart, avoids ping storms
-        }
-      };
-
-      window.leslieSR.rec = rec;
-    }
-
-    try {
-      // Ensure permission (Android-friendly): do not throw if already granted
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        try { 
-          const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-          try { s.getTracks().forEach(t => t.stop()); } catch(e){}
-        } catch(e){ /* ignore to avoid blocking */ }
-      }
-      rec.start();
-      resetIdleTimer();
-    } catch(e) {
-      console.log('startContinuousRecognition failed', e && e.message);
-    }
-  };
-
-  // Ensure visibility changes don't cause ping storms
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') {
-      window.stopContinuousRecognition();
-    }
-  }, { passive: true });
-
-  // Wire common UI buttons if present (does not remove your existing handlers)
-  function bindButtonsOnce(){
-    const startBtn = document.getElementById('startListeningButton') || document.getElementById('startListeningBtn');
-    const stopBtn  = document.getElementById('stopListeningButton')  || document.getElementById('stopListeningBtn');
-    if (startBtn && !startBtn.__leslieBound) {
-      startBtn.addEventListener('click', () => {
-        if (window.appState) { appState.speechPageActive = true; appState.manuallyStoppedSpeech = false; }
-        startContinuousRecognition();
-      });
-      startBtn.__leslieBound = true;
-    }
-    if (stopBtn && !stopBtn.__leslieBound) {
-      stopBtn.addEventListener('click', () => {
-        if (window.appState) { appState.manuallyStoppedSpeech = true; }
-        stopContinuousRecognition();
-      });
-      stopBtn.__leslieBound = true;
-    }
-  }
-  if (document.readyState === 'complete' || document.readyState === 'interactive') bindButtonsOnce();
-  else document.addEventListener('DOMContentLoaded', bindButtonsOnce, { once: true });
-
-})();
-</script>
-
-
-<script>
-/* ===== Leslie SR v10: Stable, page-aware, no background pings ===== */
-(function(){
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { console.log('Web Speech API not available'); return; }
-
-  // Global-ish state (does not replace your appState; we cooperate if it exists)
-  const state = window.__leslieSRState ||= {
-    rec: null,
-    running: false,
-    manuallyStopped: false,
-    idleTimer: null,
-    onSpeechPage: false
-  };
-
-  function isSpeechPageDOM(){
-    try {
-      // Heuristics: presence of a Stop Listening button or a heading that says Start Listening
-      const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn');
-      const head = Array.from(document.querySelectorAll('h1,h2,h3,.page-title')).map(e => e.textContent.trim().toLowerCase());
-      if (stopBtn) return true;
-      if (head.some(t => t.includes('start listening') || t.includes('start talking'))) return true;
-      // Common containers by id/class that might indicate the speech page
+      // Heuristic: presence of a Stop button or a Start Listening heading/container
+      if (document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn')) return true;
+      const t = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
+      if (t.toLowerCase().includes('start listening') || t.toLowerCase().includes('start talking')) return true;
       if (document.getElementById('speechPage') || document.querySelector('.start-talking-page')) return true;
     } catch(e){}
     return false;
   }
 
-  function markSpeechPage(active){
-    state.onSpeechPage = !!active;
-    if (window.appState) appState.speechPageActive = !!active;
-  }
+  // If your app exposes start/stop, we wrap them with guards (but don't remove them)
+  const origStart = window.startContinuousRecognition;
+  const origStop  = window.stopContinuousRecognition;
 
-  function clearIdleTimer(){
-    if (state.idleTimer) clearTimeout(state.idleTimer);
-    state.idleTimer = null;
-  }
-  function startIdleTimer(){
-    clearIdleTimer();
-    state.idleTimer = setTimeout(() => {
-      // After 2 minutes of silence, stop and DO NOT restart automatically
-      try { state.manuallyStopped = true; } catch(e){}
-      try { state.rec && state.rec.stop(); } catch(e){}
-    }, 120000);
-  }
-
-  function hardStop(){
-    clearIdleTimer();
-    state.manuallyStopped = true;
-    state.running = false;
-    if (state.rec){
-      try { state.rec.onend = null; } catch(e){}
-      try { state.rec.stop(); } catch(e){}
+  window.startContinuousRecognition = function(){
+    if (isSpeechPage()) {
+      try { origStart && origStart(); } catch(e){}
+    } else {
+      try { origStop && origStop(); } catch(e){}
     }
-  }
+  };
+  window.stopContinuousRecognition = function(){
+    try { origStop && origStop(); } catch(e){}
+  };
 
-  async function ensurePermission(){
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-      try { s.getTracks().forEach(t => t.stop()); } catch(e){}
-      return true;
-    } catch(e){
-      return false;
-    }
-  }
-
-  async function startSR(){
-    if (!SR) return;
-    if (state.running) return;
-    if (!state.onSpeechPage) return; // never start on Home or other pages
-
-    state.manuallyStopped = false;
-
-    if (!state.rec){
-      const rec = new SR();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = 'en-US';
-
-      rec.onstart = () => { state.running = true; startIdleTimer(); };
-
-      rec.onresult = (e) => {
-        startIdleTimer();
-        try {
-          let finalText = '';
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
-          }
-          finalText = finalText.trim();
-          if (finalText.length > 0) {
-            if (typeof window.onTranscriptFinal === 'function') {
-              window.onTranscriptFinal(finalText);
-            } else if (typeof window.addRecognizedPhrase === 'function') {
-              window.addRecognizedPhrase(finalText);
-            }
-            // If your app normally speaks the phrase, leave that to your existing handlers
-          }
-        } catch(err){}
-      };
-
-      rec.onerror = (ev) => {
-        // Do not auto-loop on errors; we only run while onSpeechPage=true
-        console.log('rec.onerror', ev && ev.error);
-      };
-
-      rec.onend = () => {
-        state.running = false;
-        clearIdleTimer();
-        // Absolutely no restart unless still on the Speech page AND not manually stopped
-        if (state.onSpeechPage && !state.manuallyStopped && document.visibilityState === 'visible') {
-          try { rec.start(); startIdleTimer(); } catch(e){}
-        }
-      };
-
-      state.rec = rec;
-    }
-
-    try {
-      await ensurePermission(); // triggers Android prompt if needed
-      state.rec.start();
-      startIdleTimer();
-    } catch(e){ console.log('startSR failed', e && e.message); }
-  }
-
-  function stopSR(){
-    hardStop();
-  }
-
-  // Expose to global without replacing your originals if any
-  if (!window.startContinuousRecognition) window.startContinuousRecognition = startSR;
-  if (!window.stopContinuousRecognition)  window.stopContinuousRecognition  = stopSR;
-
-  // Bind the four Home buttons by their visible text (case-insensitive)
-  function bindHomeButtons(){
+  // On Home, attach a safe click -> start for Start Listening button
+  function bindHome(){
     const buttons = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-    const findByText = (txt) => buttons.find(b => (b.textContent||'').trim().toLowerCase().includes(txt));
-    const bStartListen = findByText('start listening') || findByText('start talking');
-    const bStartText   = findByText('start texting');
-    const bPhone       = findByText('phone call');
-    const bCommands    = findByText('leslie commands');
+    const find = (txt) => buttons.find(b => (b.textContent||'').trim().toLowerCase().includes(txt));
+    const bStart = find('start listening') || find('start talking');
+    const bText  = find('start texting');
+    const bPhone = find('phone call');
+    const bCmds  = find('leslie commands');
 
-    if (bStartListen && !bStartListen.__leslieBound) {
-      bStartListen.addEventListener('click', () => { markSpeechPage(true); setTimeout(startSR, 50); }, { passive: true });
-      bStartListen.__leslieBound = true;
+    if (bStart && !bStart.__patched) {
+      bStart.addEventListener('click', function(){ setTimeout(() => window.startContinuousRecognition(), 80); }, { passive: true });
+      bStart.__patched = true;
     }
-    if (bStartText && !bStartText.__leslieBound) {
-      bStartText.addEventListener('click', () => { markSpeechPage(false); stopSR(); }, { passive: true });
-      bStartText.__leslieBound = true;
-    }
-    if (bPhone && !bPhone.__leslieBound) {
-      bPhone.addEventListener('click', () => { markSpeechPage(false); stopSR(); }, { passive: true });
-      bPhone.__leslieBound = true;
-    }
-    if (bCommands && !bCommands.__leslieBound) {
-      bCommands.addEventListener('click', () => { markSpeechPage(false); stopSR(); }, { passive: true });
-      bCommands.__leslieBound = true;
-    }
+    [bText,bPhone,bCmds].forEach(btn => {
+      if (btn && !btn.__patched) {
+        btn.addEventListener('click', function(){ setTimeout(() => window.stopContinuousRecognition(), 0); }, { passive: true });
+        btn.__patched = true;
+      }
+    });
   }
 
-  // Observe navigation/content changes and toggle SR accordingly
-  const mo = new MutationObserver(() => {
-    const nowSpeech = isSpeechPageDOM();
-    if (nowSpeech !== state.onSpeechPage) {
-      markSpeechPage(nowSpeech);
-      if (nowSpeech) startSR(); else stopSR();
-    }
-    // Re-bind buttons if Home is visible
-    bindHomeButtons();
-  });
+  // Rebind on DOM changes (navigation)
+  const mo = new MutationObserver(bindHome);
   mo.observe(document.documentElement, { childList: true, subtree: true });
+  if (document.readyState === 'complete' || document.readyState === 'interactive') bindHome();
+  else document.addEventListener('DOMContentLoaded', bindHome, { once: true });
 
-  // Also react to hashchange/popstate
-  window.addEventListener('hashchange', () => {
-    const nowSpeech = isSpeechPageDOM();
-    markSpeechPage(nowSpeech);
-    if (nowSpeech) startSR(); else stopSR();
-  });
-
-  // On first load, assume Home -> not speech page; we won't start SR until Start Listening page is shown
-  markSpeechPage(isSpeechPageDOM());
-  bindHomeButtons();
-  if (state.onSpeechPage) startSR(); else stopSR();
-
-  // Stop when hidden to avoid any background ping
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') stopSR();
+  // Stop when page hidden
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState !== 'visible') { try { window.stopContinuousRecognition(); } catch(e){} }
   }, { passive: true });
-
 })();
 </script>
 
-</body></html>
+</body>
+</html>
