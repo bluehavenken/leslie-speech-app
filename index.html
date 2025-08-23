@@ -2596,86 +2596,82 @@
         });
     </script>
 
-<!-- Leslie Controller v20: silent Home, working Start Talking, top-right Speak -->
+<!-- Leslie Controller v21: working Start Talking, silent Home, top-right Speak -->
 <script>
 (function(){
   const NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!NativeSR) { console.log('Web Speech API not available'); return; }
 
-  // ===== Page detection =====
+  // ==== Page detection & utilities ====
   function isVisible(el){
     if (!el) return false;
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) return false;
     const r = el.getBoundingClientRect(); return r.width>0 && r.height>0;
   }
-  function byTextVisible(txt){
-    const nodes = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-    const want = (txt||'').toLowerCase();
+  function findClickableByText(substr){
+    const want = (substr||'').toLowerCase();
+    const nodes = Array.from(document.querySelectorAll('button, a, .btn, [role="button"], [onclick]'));
     return nodes.find(n => isVisible(n) && ((n.textContent||'').trim().toLowerCase().includes(want)));
   }
   function isHomePage(){
-    const a = byTextVisible('start talking') || byTextVisible('start listening');
-    const b = byTextVisible('start texting');
-    const c = byTextVisible('phone call');
-    const d = byTextVisible('leslie commands');
+    const a = findClickableByText('start talking') || findClickableByText('start listening');
+    const b = findClickableByText('start texting');
+    const c = findClickableByText('phone call');
+    const d = findClickableByText('leslie commands');
     return [a,b,c,d].filter(Boolean).length >= 2;
-  }
-  function isSpeechPage(){
-    // Strong signals
-    const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn') || byTextVisible('stop');
-    if (isVisible(stopBtn)) return true;
-    // Heading/text hints
-    const h = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
-    const headTalk = h.toLowerCase().includes('start talking') || h.toLowerCase().includes('start listening');
-    if (headTalk && !isHomePage()) return true;
-    // Forced mode after Home click
-    if (window.__leslie_force_speech_until && Date.now() < window.__leslie_force_speech_until) return true;
-    return false;
   }
   function isTextPage(){
     const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"]');
-    return !!field && !isSpeechPage();
+    return !!field && !window.__leslie_speech_mode;
+  }
+  // Speech page if explicitly in speech mode
+  function isSpeechPage(){
+    if (window.__leslie_speech_mode) return true;
+    const stopBtn = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn') || findClickableByText('stop');
+    if (isVisible(stopBtn)) return true;
+    const h = (document.querySelector('h1,h2,h3,.page-title')||{}).textContent || '';
+    const head = h.toLowerCase();
+    if ((head.includes('start talking') || head.includes('start listening')) && !isHomePage()) return true;
+    return false;
   }
 
-  // ===== Rename Home button label to "Start Talking" =====
-  function renameHomeStartButton(){
-    const btn = byTextVisible('start listening');
-    if (btn) {
-      try { btn.textContent = btn.textContent.replace(/start\s+listening/i, 'Start Talking'); } catch(e){}
+  // ==== Rename Home label to "Start Talking" ====
+  function renameHomeStartLabel(){
+    const el = findClickableByText('start listening');
+    if (el) {
+      const t = (el.textContent||'');
+      if (/start\s+listening/i.test(t)) el.textContent = t.replace(/start\s+listening/ig, 'Start Talking');
     }
   }
 
-  // ===== Global SR gate: block ANY start unless it's OUR instance on Speech page =====
+  // ==== Global SR gate: allow only our instance while in speech mode ====
   (function installGate(){
-    if (window.__leslie_gate_v20) return;
-    const ALLOWED = '__leslie_allowed_instance_v20';
+    if (window.__leslie_gate_v21) return;
+    const ALLOWED = '__leslie_allowed_instance_v21';
     const _start = NativeSR.prototype.start;
     const _stop  = NativeSR.prototype.stop;
-
     NativeSR.prototype.start = function(){
-      if (!this[ALLOWED] || !isSpeechPage()) {
-        // Block rogue starts on Home/Text/etc
-        return;
+      if (!this[ALLOWED] || !window.__leslie_speech_mode) {
+        return; // block rogue starts => prevents ping on Home/Text
       }
       try { return _start.apply(this, arguments); } catch(e){}
     };
     NativeSR.prototype.stop = function(){
-      try { return _stop.apply(this, arguments); } catch(e) {}
+      try { return _stop.apply(this, arguments); } catch(e){}
     };
-
-    window.__leslie_gate_v20 = { ALLOWED, approve(inst){ try { inst[ALLOWED] = true; } catch(e){} } };
+    window.__leslie_gate_v21 = { ALLOWED, approve(inst){ try { inst[ALLOWED] = true; } catch(e){} } };
   })();
 
-  // ===== Controlled SR on Start Talking =====
+  // ==== Controlled recognizer (no auto-restart ping) ====
   const ctrl = { rec:null, running:false, speaking:false, buf:'', flushTimer:null, idleTimer:null };
   function clearTimers(){ if (ctrl.flushTimer) clearTimeout(ctrl.flushTimer); ctrl.flushTimer=null; if (ctrl.idleTimer) clearTimeout(ctrl.idleTimer); ctrl.idleTimer=null; }
-  function scheduleIdle(){ clearTimers(); ctrl.idleTimer = setTimeout(stopDictation, 120000); }
+  function scheduleIdle(){ clearTimers(); ctrl.idleTimer = setTimeout(stopDictation, 120000); } // 2 minutes silence
 
   function ensureRec(){
     if (!ctrl.rec){
       const rec = new NativeSR();
-      if (window.__leslie_gate_v20) window.__leslie_gate_v20.approve(rec);
+      if (window.__leslie_gate_v21) window.__leslie_gate_v21.approve(rec);
       rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
       rec.onstart = ()=>{ ctrl.running = true; scheduleIdle(); };
       rec.onresult = (e)=>{
@@ -2686,7 +2682,7 @@
           if (r.isFinal){
             ctrl.buf += (r[0].transcript || '');
             if (ctrl.flushTimer) clearTimeout(ctrl.flushTimer);
-            ctrl.flushTimer = setTimeout(flushSpeakOnce, 700);
+            ctrl.flushTimer = setTimeout(flushSpeakOnce, 650);
           }
         }
       };
@@ -2694,7 +2690,7 @@
       rec.onend = ()=>{
         ctrl.running = false;
         clearTimers();
-        // DO NOT auto-restart here (prevents periodic ping)
+        // No auto-restart to avoid ping. User can tap Start again if needed.
       };
       ctrl.rec = rec;
     }
@@ -2707,19 +2703,19 @@
     if (!text) return;
     try { if (typeof window.onTranscriptFinal === 'function') window.onTranscriptFinal(text); } catch(e){}
     try { if (typeof window.addRecognizedPhrase === 'function') window.addRecognizedPhrase(text); } catch(e){}
-    // Speak full phrase once; keep SR running (no stop/start beeps), but ignore results while speaking.
     ctrl.speaking = true;
     try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch(e){}
     const u = new SpeechSynthesisUtterance(text);
     u.rate = (window.settings && window.settings.speechSpeed) || 1.0;
     u.lang = 'en-US';
-    u.onend = () => { ctrl.speaking = false; scheduleIdle(); };
+    u.onend = ()=>{ ctrl.speaking = false; scheduleIdle(); };
     try { window.speechSynthesis && window.speechSynthesis.speak(u); } catch(e){ ctrl.speaking=false; }
   }
 
   function startDictation(){
+    window.__leslie_speech_mode = true;
     const rec = ensureRec();
-    if (!ctrl.running && isSpeechPage()){
+    if (!ctrl.running){
       try { rec.start(); } catch(e){}
     }
   }
@@ -2729,7 +2725,28 @@
     ctrl.running=false; ctrl.buf=''; ctrl.speaking=false;
   }
 
-  // ===== Text page: top-right Speak button =====
+  // ==== Wire Start/Stop buttons on the Start Talking page ====
+  function bindSpeechButtons(){
+    const startBtn = findClickableByText('start talking') || findClickableByText('start listening');
+    const stopBtn  = document.getElementById('stopListeningButton') || document.getElementById('stopListeningBtn') || findClickableByText('stop');
+    if (startBtn && !startBtn.__leslieBoundSpeech){
+      startBtn.addEventListener('click', function(){
+        // Enter speech mode and start listening
+        window.__leslie_speech_mode = true;
+        setTimeout(startDictation, 40);
+      }, { passive:true });
+      startBtn.__leslieBoundSpeech = true;
+    }
+    if (stopBtn && !stopBtn.__leslieBoundSpeech){
+      stopBtn.addEventListener('click', function(){
+        stopDictation();
+        window.__leslie_speech_mode = false;
+      }, { passive:true });
+      stopBtn.__leslieBoundSpeech = true;
+    }
+  }
+
+  // ==== Text page: persistent top-right Speak button ====
   function ensureTextSpeak(){
     let btn = document.getElementById('speakTextBtn') || document.getElementById('speakTextButton') || document.getElementById('speakTextBtn_top');
     if (!btn){
@@ -2742,6 +2759,7 @@
     if (!btn.__leslieBound){
       btn.addEventListener('click', function(){
         stopDictation(); // ensure silence, then TTS
+        window.__leslie_speech_mode = false;
         const field = document.getElementById('largeTextInputField') || document.querySelector('textarea, [contenteditable="true"]');
         const text = (field && (field.value || field.innerText || field.textContent) || '').trim();
         if (!text) return;
@@ -2756,31 +2774,25 @@
     btn.style.display = isTextPage() ? 'inline-flex' : 'none';
   }
 
-  // ===== Bind Home "Start Talking" click to start SR immediately =====
-  function bindHomeStart(){
-    const startBtn = byTextVisible('start talking') || byTextVisible('start listening');
-    if (startBtn && !startBtn.__leslieBound){
-      startBtn.addEventListener('click', function(){
-        // Force speech mode true for a few seconds to let SR start immediately
-        window.__leslie_force_speech_until = Date.now() + 8000;
-        setTimeout(startDictation, 50);
-      }, { passive:true });
-      startBtn.__leslieBound = true;
+  // ==== When leaving speech pages, disable mode ====
+  function enforceModeByPage(){
+    if (isHomePage() || isTextPage()) {
+      window.__leslie_speech_mode = false;
+      stopDictation();
     }
   }
 
-  // ===== Router: Silent Home & Text, Dictation only on Speech page =====
+  // ==== Main observer ====
   function tick(){
-    renameHomeStartButton();
-    bindHomeStart();
-    if (isHomePage()){
-      stopDictation();
-    } else if (isSpeechPage()){
+    renameHomeStartLabel();
+    bindSpeechButtons();
+    enforceModeByPage();
+    if (isSpeechPage()){
       startDictation();
     } else if (isTextPage()){
-      stopDictation(); ensureTextSpeak();
+      ensureTextSpeak();
     } else {
-      stopDictation();
+      // Home or others: silent
     }
     ensureTextSpeak();
   }
@@ -2788,8 +2800,7 @@
   const mo = new MutationObserver(()=>{ try { tick(); } catch(e){} });
   mo.observe(document.documentElement, { childList:true, subtree:true });
   window.addEventListener('hashchange', ()=>{ try { tick(); } catch(e){} });
-  document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState !== 'visible') stopDictation(); }, { passive:true });
-
+  document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState !== 'visible') { window.__leslie_speech_mode = false; stopDictation(); } }, { passive:true });
   if (document.readyState === 'complete' || document.readyState === 'interactive') tick();
   else document.addEventListener('DOMContentLoaded', tick, { once:true });
 })();
