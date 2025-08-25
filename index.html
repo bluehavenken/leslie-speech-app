@@ -916,7 +916,7 @@
         let userLocation = null;
         let isInitialized = false;
         
-        // SMART STATE MANAGEMENT
+        // ENHANCED STATE MANAGEMENT FOR COMPLETE PHRASE CAPTURE
         let appState = {
             isListening: false,
             speechPageActive: false,
@@ -924,7 +924,10 @@
             manuallyStopped: false,
             hasRecentSpeech: false,
             lastSpeechTime: 0,
-            restartCount: 0
+            restartCount: 0,
+            isSpeechResultPending: false,
+            completePhraseBuffer: '',
+            lastResultTime: 0
         };
         
         // Settings
@@ -936,17 +939,23 @@
             recognitionMode: 'free'
         };
 
-        // Speech processing
+        // ENHANCED Speech processing for complete phrases
         let currentSpeechText = '';
         let lastFinalResult = '';
+        let phraseAccumulator = '';
+        let lastSpeechTimestamp = 0;
 
         // 2-MINUTE TIMEOUT (Speech Page Only)
         let speechTimeoutTimer = null;
         let lastSpeechActivity = Date.now();
 
-        // === SMART RESTART SPEECH RECOGNITION ===
+        // PHRASE COMPLETION TIMER
+        let phraseCompletionTimer = null;
+        const PHRASE_COMPLETION_DELAY = 3000; // Wait 3 seconds for phrase completion
+
+        // === ENHANCED SPEECH RECOGNITION WITH BETTER PHRASE CAPTURE ===
         async function startSmartSpeechRecognition() {
-            console.log('Starting SMART speech recognition - auto-start for accessibility');
+            console.log('Starting ENHANCED speech recognition - complete phrase capture');
             
             if (appState.isListening) {
                 console.log('Already listening');
@@ -974,48 +983,56 @@
                 speechRecognition.maxAlternatives = 1;
 
                 speechRecognition.onstart = () => {
-                    console.log('Speech recognition STARTED - accessibility mode');
+                    console.log('Enhanced speech recognition STARTED');
                     appState.isListening = true;
+                    appState.isSpeechResultPending = false;
                     updateVoiceCommandStatus('active');
                     updateUI();
                     resetSpeechActivity();
                 };
 
-                // SMART RESTART LOGIC - Only restart when needed
+                // MUCH LESS AGGRESSIVE RESTART LOGIC
                 speechRecognition.onend = () => {
-                    console.log('Speech recognition ended - checking smart restart conditions');
+                    console.log('Speech recognition ended - checking ENHANCED restart conditions');
                     appState.isListening = false;
                     updateUI();
                     
-                    // SMART RESTART CONDITIONS:
+                    // DRASTICALLY REDUCED RESTART CONDITIONS:
+                    // Only restart if:
                     // 1. Not manually stopped
-                    // 2. Had recent speech activity (indicates user is actively using)
-                    // 3. Limit restart frequency
-                    // 4. Longer delays between restarts
+                    // 2. On speech page AND had speech in last 60 seconds
+                    // 3. OR voice commands active with recent speech (last 2 minutes)
+                    // 4. Much longer delays between restarts
+                    
+                    const timeSinceLastSpeech = Date.now() - appState.lastSpeechTime;
+                    const shouldRestartForSpeechPage = appState.speechPageActive && timeSinceLastSpeech < 60000;
+                    const shouldRestartForVoiceCommands = !appState.speechPageActive && timeSinceLastSpeech < 120000 && appState.hasRecentSpeech;
                     
                     const shouldRestart = !appState.manuallyStopped && 
-                                        (appState.hasRecentSpeech || appState.speechPageActive) &&
-                                        appState.restartCount < 10; // Limit restarts
+                                        (shouldRestartForSpeechPage || shouldRestartForVoiceCommands) &&
+                                        appState.restartCount < 5; // Much lower limit
                     
                     if (shouldRestart) {
                         appState.restartCount++;
-                        const delay = Math.min(2000 + (appState.restartCount * 1000), 10000); // Increasing delays
+                        // MUCH longer delays: 5-30 seconds between restarts
+                        const delay = Math.min(5000 + (appState.restartCount * 5000), 30000);
                         
-                        console.log(`Smart restart in ${delay}ms (restart #${appState.restartCount})`);
+                        console.log(`ENHANCED restart in ${delay}ms (restart #${appState.restartCount}) - REDUCED PINGING`);
                         setTimeout(() => {
                             if (!appState.manuallyStopped) {
-                                // Reset restart count if enough time has passed since last speech
-                                if (Date.now() - appState.lastSpeechTime > 30000) {
+                                // Reset restart count if 3+ minutes since last speech
+                                if (Date.now() - appState.lastSpeechTime > 180000) {
                                     appState.restartCount = 0;
+                                    appState.hasRecentSpeech = false;
                                 }
                                 startSmartSpeechRecognition();
                             }
                         }, delay);
                     } else {
-                        console.log('No smart restart - conditions not met');
+                        console.log('No restart - PING PREVENTION ACTIVE');
                         updateVoiceCommandStatus('ready');
                         if (appState.speechPageActive) {
-                            updateSpeechPageStatus('Recognition paused - speak to reactivate or press START LISTENING');
+                            updateSpeechPageStatus('Recognition paused - speak loudly to reactivate or press START LISTENING');
                         }
                     }
                 };
@@ -1029,27 +1046,27 @@
                         return;
                     }
                     
-                    // Don't restart immediately on errors - wait longer
+                    // MUCH longer delays on errors - NO FREQUENT PINGING
                     if (!appState.manuallyStopped && event.error === 'network') {
-                        console.log('Network error - will restart in 5 seconds');
+                        console.log('Network error - will restart in 15 seconds (ANTI-PING)');
                         setTimeout(() => {
                             if (!appState.manuallyStopped) {
                                 startSmartSpeechRecognition();
                             }
-                        }, 5000);
+                        }, 15000); // 15 second delay on network errors
                     } else {
                         updateVoiceCommandStatus('ready');
                     }
                 };
 
                 speechRecognition.onresult = (event) => {
-                    processSpeechResults(event);
+                    processEnhancedSpeechResults(event);
                     resetSpeechActivity();
                     
-                    // Mark recent speech activity for smart restart logic
+                    // Mark speech activity with timestamp
                     appState.hasRecentSpeech = true;
                     appState.lastSpeechTime = Date.now();
-                    appState.restartCount = Math.max(0, appState.restartCount - 1); // Reduce restart count on activity
+                    appState.restartCount = Math.max(0, appState.restartCount - 1);
                 };
                 
                 speechRecognition.start();
@@ -1060,59 +1077,94 @@
             }
         }
 
-        // === IMPROVED SPEECH PROCESSING ===
-        function processSpeechResults(event) {
+        // === ENHANCED SPEECH PROCESSING FOR COMPLETE PHRASES ===
+        function processEnhancedSpeechResults(event) {
             try {
-                let finalText = '';
-                let interimText = '';
+                let allInterimText = '';
+                let allFinalText = '';
                 
-                // Get latest results
-                for (let i = event.resultIndex; i < event.results.length; i++) {
+                // Process ALL results, not just from resultIndex - this captures more complete phrases
+                for (let i = 0; i < event.results.length; i++) {
                     const result = event.results[i];
                     const transcript = result[0].transcript;
                     
                     if (result.isFinal) {
-                        finalText += transcript;
+                        allFinalText += transcript + ' ';
                     } else {
-                        interimText += transcript;
+                        allInterimText += transcript + ' ';
                     }
                 }
                 
-                // Show interim on speech page
-                if (appState.speechPageActive && interimText.trim() && interimText.length > 2) {
-                    showInterimText(interimText.trim());
+                // Update last result time
+                appState.lastResultTime = Date.now();
+                
+                // Show interim results on speech page
+                if (appState.speechPageActive && allInterimText.trim().length > 2) {
+                    showEnhancedInterimText(allInterimText.trim());
                 }
                 
-                // Process final results - avoid duplicates
-                if (finalText.trim() && finalText.trim() !== lastFinalResult) {
-                    const cleanText = finalText.trim();
-                    lastFinalResult = cleanText;
-                    
-                    if (cleanText.length > 1) {
-                        console.log('Processing final speech:', cleanText);
-                        processFinalSpeech(cleanText);
-                    }
+                // Enhanced final result processing - accumulate for complete phrases
+                if (allFinalText.trim()) {
+                    handleFinalResultAccumulation(allFinalText.trim());
                 }
                 
             } catch (error) {
-                console.error('Error processing speech results:', error);
+                console.error('Error processing enhanced speech results:', error);
             }
         }
 
-        function showInterimText(text) {
+        function handleFinalResultAccumulation(finalText) {
+            console.log('Final result received:', finalText);
+            
+            // Accumulate phrases
+            if (phraseAccumulator) {
+                phraseAccumulator += ' ' + finalText;
+            } else {
+                phraseAccumulator = finalText;
+            }
+            
+            // Clear any existing phrase completion timer
+            if (phraseCompletionTimer) {
+                clearTimeout(phraseCompletionTimer);
+            }
+            
+            // Set timer to process complete phrase after pause
+            phraseCompletionTimer = setTimeout(() => {
+                if (phraseAccumulator.trim()) {
+                    const completePhrase = phraseAccumulator.trim();
+                    console.log('Processing complete accumulated phrase:', completePhrase);
+                    
+                    // Avoid duplicates
+                    if (completePhrase !== lastFinalResult && completePhrase.length > 1) {
+                        lastFinalResult = completePhrase;
+                        processCompleteFinalSpeech(completePhrase);
+                    }
+                    
+                    // Clear accumulator
+                    phraseAccumulator = '';
+                }
+            }, PHRASE_COMPLETION_DELAY);
+        }
+
+        function showEnhancedInterimText(text) {
             if (!appState.speechPageActive) return;
             
             const textEl = document.getElementById('recognizedText');
             if (textEl) {
+                // Show both accumulated phrase and current interim
+                const displayText = phraseAccumulator ? 
+                    `${phraseAccumulator} ${text}` : text;
+                
                 textEl.innerHTML = `
                     <div style="color: #666; font-style: italic; padding: 15px; border: 2px dashed #0099cc; border-radius: 8px; background: #f0f8ff;">
-                        Listening: "${text}"
+                        <div style="font-size: 18px; margin-bottom: 8px;">Capturing complete phrase...</div>
+                        <div style="font-size: 16px; font-weight: bold;">"${displayText}"</div>
                     </div>
                 `;
             }
         }
 
-        function processFinalSpeech(text) {
+        function processCompleteFinalSpeech(text) {
             currentSpeechText = text;
             
             // Check for Leslie commands
@@ -1123,10 +1175,10 @@
                                    lowerText.includes('lesley');
             
             if (isLeslieCommand) {
-                console.log('LESLIE COMMAND:', text);
+                console.log('LESLIE COMMAND DETECTED:', text);
                 processLeslieCommand(text, lowerText);
             } else {
-                console.log('REGULAR SPEECH:', text);
+                console.log('COMPLETE REGULAR SPEECH:', text);
                 processRegularSpeech(text);
             }
         }
@@ -1151,15 +1203,41 @@
 
         function processRegularSpeech(text) {
             if (appState.speechPageActive) {
-                console.log('Displaying speech on Speech Page:', text);
-                displayCleanSpeechResult(text);
+                console.log('Displaying COMPLETE speech on Speech Page:', text);
+                displayEnhancedSpeechResult(text);
                 
                 if (settings.speakVoiceCommands) {
                     speakBackText(text);
                 }
                 
-                updateSpeechPageStatus('Complete phrase captured and spoken!');
+                updateSpeechPageStatus('Complete phrase captured and will be spoken back!');
             }
+        }
+
+        // === ENHANCED CLEAN SPEECH DISPLAY ===
+        function displayEnhancedSpeechResult(text) {
+            const textEl = document.getElementById('recognizedText');
+            if (!textEl) return;
+            
+            console.log('Displaying ENHANCED complete speech result:', text);
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const wordCount = text.split(' ').length;
+            
+            // Enhanced display with complete phrase confirmation
+            textEl.innerHTML = `
+                <div style="background: #e8f5e8; padding: 25px; border-radius: 12px; border-left: 5px solid #28a745; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <div style="font-size: 22px; line-height: 1.6; text-align: center; word-wrap: break-word; margin-bottom: 15px; font-weight: 500;">
+                        "${text}"
+                    </div>
+                    <div style="font-size: 14px; color: #28a745; text-align: center; font-weight: bold; margin-bottom: 8px;">
+                        ✅ Complete phrase captured at ${timestamp}
+                    </div>
+                    <div style="font-size: 12px; color: #666; text-align: center;">
+                        ${wordCount} words • Enhanced phrase detection
+                    </div>
+                </div>
+            `;
         }
 
         // === COMMAND PROCESSING ===
@@ -1280,30 +1358,8 @@
             }
         }
 
-        // === CLEAN SPEECH DISPLAY ===
-        function displayCleanSpeechResult(text) {
-            const textEl = document.getElementById('recognizedText');
-            if (!textEl) return;
-            
-            console.log('Displaying clean speech result:', text);
-            
-            const timestamp = new Date().toLocaleTimeString();
-            
-            // Single clean display - no cascading
-            textEl.innerHTML = `
-                <div style="background: #e8f5e8; padding: 25px; border-radius: 8px; border-left: 5px solid #28a745; margin: 20px 0;">
-                    <div style="font-size: 20px; line-height: 1.6; text-align: center; word-wrap: break-word; margin-bottom: 15px;">
-                        ${text}
-                    </div>
-                    <div style="font-size: 14px; color: #28a745; text-align: center; font-weight: bold;">
-                        Complete phrase captured at ${timestamp}
-                    </div>
-                </div>
-            `;
-        }
-
         function speakBackText(text) {
-            console.log('Speaking back text:', text);
+            console.log('Speaking back COMPLETE text:', text);
             
             if (!settings.speakVoiceCommands || appState.isCurrentlySpeaking) return;
             
@@ -1324,19 +1380,20 @@
                     appState.isCurrentlySpeaking = false;
                     updateVoiceCommandStatus('active');
                     
-                    // Show ready message after speaking
+                    // Show ready message after speaking complete phrase
                     setTimeout(() => {
                         if (appState.speechPageActive) {
                             const textEl = document.getElementById('recognizedText');
                             if (textEl) {
                                 textEl.innerHTML = `
-                                    <div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">
-                                        Ready for your next complete phrase...
+                                    <div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px; border: 2px dashed #0099cc; border-radius: 8px; background: #f8fcff;">
+                                        <div style="font-size: 18px; margin-bottom: 8px;">Ready for your next complete phrase...</div>
+                                        <div style="font-size: 14px; color: #666;">Enhanced phrase detection active</div>
                                     </div>
                                 `;
                             }
                         }
-                    }, 1500);
+                    }, 2000);
                 };
                 
                 utterance.onerror = () => {
@@ -1416,10 +1473,17 @@
             appState.manuallyStopped = true;
             appState.hasRecentSpeech = false;
             appState.restartCount = 0;
+            phraseAccumulator = '';
             
+            // Clear timers
             if (speechTimeoutTimer) {
                 clearTimeout(speechTimeoutTimer);
                 speechTimeoutTimer = null;
+            }
+            
+            if (phraseCompletionTimer) {
+                clearTimeout(phraseCompletionTimer);
+                phraseCompletionTimer = null;
             }
             
             if (speechRecognition) {
@@ -1441,6 +1505,7 @@
             console.log('Manual start speech recognition');
             appState.manuallyStopped = false;
             appState.restartCount = 0;
+            phraseAccumulator = '';
             startSmartSpeechRecognition();
         }
 
@@ -1459,6 +1524,13 @@
             const wasOnSpeechPage = appState.speechPageActive;
             appState.speechPageActive = (pageId === 'speech');
             
+            // Clear phrase accumulator when changing pages
+            phraseAccumulator = '';
+            if (phraseCompletionTimer) {
+                clearTimeout(phraseCompletionTimer);
+                phraseCompletionTimer = null;
+            }
+            
             // Show the page
             document.querySelectorAll('.page').forEach(page => {
                 page.classList.remove('active');
@@ -1470,8 +1542,8 @@
                 currentPage = pageId;
                 
                 if (pageId === 'speech') {
-                    console.log('ENTERING SPEECH PAGE - AUTO-START FOR ACCESSIBILITY');
-                    updateSpeechPageStatus('Auto-starting listening mode for accessibility...');
+                    console.log('ENTERING SPEECH PAGE - ENHANCED AUTO-START');
+                    updateSpeechPageStatus('Auto-starting enhanced listening mode...');
                     
                     // Auto-start for accessibility
                     appState.manuallyStopped = false;
@@ -1479,7 +1551,7 @@
                         if (!appState.isListening) {
                             startSmartSpeechRecognition();
                         }
-                        updateSpeechPageStatus('Listening continuously - speak complete phrases!');
+                        updateSpeechPageStatus('Enhanced listening - complete phrases captured!');
                     }, 1000);
                     
                     resetSpeechActivity();
@@ -1488,8 +1560,9 @@
                     const textEl = document.getElementById('recognizedText');
                     if (textEl) {
                         textEl.innerHTML = `
-                            <div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">
-                                Auto-starting continuous listening for accessibility...
+                            <div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px; border: 2px dashed #0099cc; border-radius: 8px; background: #f8fcff;">
+                                <div style="font-size: 18px; margin-bottom: 8px;">Enhanced listening starting...</div>
+                                <div style="font-size: 14px; color: #666;">Complete phrase detection active</div>
                             </div>
                         `;
                     }
@@ -1520,13 +1593,19 @@
             const textEl = document.getElementById('recognizedText');
             if (textEl) {
                 textEl.innerHTML = `
-                    <div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px;">
-                        Ready for your next complete phrase...
+                    <div style="color: #0099cc; font-style: italic; text-align: center; padding: 20px; border: 2px dashed #0099cc; border-radius: 8px; background: #f8fcff;">
+                        <div style="font-size: 18px; margin-bottom: 8px;">Ready for your next complete phrase...</div>
+                        <div style="font-size: 14px; color: #666;">Enhanced phrase detection active</div>
                     </div>
                 `;
             }
             currentSpeechText = '';
             lastFinalResult = '';
+            phraseAccumulator = '';
+            if (phraseCompletionTimer) {
+                clearTimeout(phraseCompletionTimer);
+                phraseCompletionTimer = null;
+            }
             resetSpeechActivity();
         }
 
@@ -1563,7 +1642,7 @@
                     statusEl.classList.add('permission-needed');
                     break;
                 case 'active':
-                    statusEl.textContent = 'Voice Commands Active - Smart Restart!';
+                    statusEl.textContent = 'Voice Commands Active - Enhanced Phrases!';
                     statusEl.classList.add('active');
                     break;
                 case 'processing':
@@ -1612,7 +1691,7 @@
                     } else {
                         console.log('User manually starting recognition');
                         manualStartSpeechRecognition();
-                        updateSpeechPageStatus('Starting recognition...');
+                        updateSpeechPageStatus('Starting enhanced recognition...');
                     }
                 });
                 
@@ -2271,7 +2350,7 @@
                 return;
             }
             
-            console.log('INITIALIZING LESLIE - AUTO-START FOR ACCESSIBILITY');
+            console.log('INITIALIZING LESLIE - ENHANCED FOR ACCESSIBILITY');
             
             try {
                 if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
@@ -2287,14 +2366,14 @@
                 updateTextSpeakButton();
                 
                 isInitialized = true;
-                console.log('Leslie initialized - AUTO-STARTING for accessibility');
+                console.log('Leslie ENHANCED initialized - COMPLETE PHRASE CAPTURE');
                 
-                // AUTO-START VOICE COMMANDS FOR ACCESSIBILITY
+                // AUTO-START VOICE COMMANDS FOR ACCESSIBILITY with longer delay to reduce pinging
                 updateVoiceCommandStatus('ready');
                 setTimeout(() => {
-                    console.log('AUTO-STARTING voice commands for accessibility');
+                    console.log('AUTO-STARTING ENHANCED voice commands');
                     startSmartSpeechRecognition();
-                }, 1500); // Short delay for initialization
+                }, 2000); // Longer delay for initialization
                 
             } catch (error) {
                 console.error('Error during initialization:', error);
@@ -2312,7 +2391,10 @@
 
         // === CLEANUP ===
         window.addEventListener('beforeunload', () => {
-            console.log('Cleaning up system...');
+            console.log('Cleaning up enhanced system...');
+            if (phraseCompletionTimer) {
+                clearTimeout(phraseCompletionTimer);
+            }
             if (speechRecognition) {
                 try {
                     speechRecognition.onend = null;
